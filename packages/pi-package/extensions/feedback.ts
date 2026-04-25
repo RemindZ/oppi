@@ -2,12 +2,13 @@ import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { StringEnum } from "@mariozechner/pi-ai";
 import { Type, type Static } from "typebox";
 import { mkdir, writeFile } from "node:fs/promises";
+import { readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
-import { arch, platform, release } from "node:os";
+import { arch, homedir, platform, release } from "node:os";
 
 const DEFAULT_REPO = "RemindZ/oppi";
-const DEFAULT_ENDPOINT = "";
+const DEFAULT_ENDPOINT = "https://oppi-intake.mesh-medic.workers.dev";
 const MAX_FIELD_CHARS = 12_000;
 const MAX_LOG_CHARS = 24_000;
 
@@ -163,12 +164,46 @@ function titleFor(params: FeedbackSubmitParams): string {
   return `${prefix} ${summary}`.replace(/\s+/g, " ").trim().slice(0, 140);
 }
 
-function feedbackEndpoint(): string {
-  return process.env.OPPI_FEEDBACK_ENDPOINT || DEFAULT_ENDPOINT;
+type StoredFeedbackConfig = {
+  endpoint?: string;
+  token?: string;
+  repo?: string;
+  disabled?: boolean;
+};
+
+function readFeedbackConfigFile(path: string): StoredFeedbackConfig {
+  try {
+    const parsed = JSON.parse(readFileSync(path, "utf8")) as StoredFeedbackConfig;
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
 }
 
-function feedbackRepo(params: FeedbackSubmitParams): string {
-  return params.repo || process.env.OPPI_FEEDBACK_REPO || DEFAULT_REPO;
+function feedbackConfig(cwd: string): StoredFeedbackConfig {
+  const user = readFeedbackConfigFile(join(homedir(), ".oppi", "feedback.json"));
+  const project = readFeedbackConfigFile(join(cwd, ".oppi", "feedback.json"));
+  return { ...user, ...project };
+}
+
+function feedbackEndpoint(cwd: string): string {
+  const config = feedbackConfig(cwd);
+  return process.env.OPPI_FEEDBACK_ENDPOINT || config.endpoint || DEFAULT_ENDPOINT;
+}
+
+function feedbackToken(cwd: string): string | undefined {
+  const config = feedbackConfig(cwd);
+  return process.env.OPPI_FEEDBACK_TOKEN || config.token;
+}
+
+function feedbackDisabled(cwd: string): boolean {
+  const config = feedbackConfig(cwd);
+  return process.env.OPPI_FEEDBACK_DISABLED === "1" || config.disabled === true;
+}
+
+function feedbackRepo(params: FeedbackSubmitParams, cwd: string): string {
+  const config = feedbackConfig(cwd);
+  return params.repo || process.env.OPPI_FEEDBACK_REPO || config.repo || DEFAULT_REPO;
 }
 
 async function writeDraft(cwd: string, params: FeedbackSubmitParams, body: string): Promise<string> {
@@ -181,14 +216,14 @@ async function writeDraft(cwd: string, params: FeedbackSubmitParams, body: strin
   return file;
 }
 
-async function submitToWorker(endpoint: string, repo: string, params: FeedbackSubmitParams, body: string): Promise<string> {
+async function submitToWorker(endpoint: string, repo: string, token: string | undefined, params: FeedbackSubmitParams, body: string): Promise<string> {
   const url = `${endpoint.replace(/\/$/, "")}/v1/intake/${params.type}`;
   const headers: Record<string, string> = {
     "content-type": "application/json",
     "user-agent": "oppi-pi-package-feedback/0.0.0",
   };
-  if (process.env.OPPI_FEEDBACK_TOKEN) {
-    headers["x-oppi-intake-token"] = process.env.OPPI_FEEDBACK_TOKEN;
+  if (token) {
+    headers["x-oppi-intake-token"] = token;
   }
 
   const response = await fetch(url, {
@@ -258,7 +293,7 @@ export default function feedbackExtension(pi: ExtensionAPI) {
       "Submit a validated OPPi bug report or feature request. Use only after you have enough user-provided context. Creates a GitHub issue through the configured OPPi intake worker, or writes a local draft when no endpoint is configured.",
     parameters: feedbackSubmitSchema,
     async execute(_toolCallId, params: FeedbackSubmitParams, _signal, _onUpdate, ctx) {
-      const repo = feedbackRepo(params);
+      const repo = feedbackRepo(params, ctx.cwd);
       const sufficiency = hasEnoughContext(params);
       if (!sufficiency.ok) {
         return {
@@ -276,9 +311,10 @@ export default function feedbackExtension(pi: ExtensionAPI) {
       const includeLogs = params.includeLogs === true;
       const diagnostics = includeDiagnostics ? await collectDiagnostics(pi, ctx.cwd, includeLogs) : undefined;
       const body = renderBody(params, diagnostics);
-      const endpoint = feedbackEndpoint();
+      const endpoint = feedbackEndpoint(ctx.cwd);
+      const token = feedbackToken(ctx.cwd);
 
-      if (!endpoint || process.env.OPPI_FEEDBACK_DISABLED === "1") {
+      if (!endpoint || feedbackDisabled(ctx.cwd)) {
         const draftPath = await writeDraft(ctx.cwd, params, body);
         return {
           content: [
@@ -291,7 +327,7 @@ export default function feedbackExtension(pi: ExtensionAPI) {
         };
       }
 
-      const issueUrl = await submitToWorker(endpoint, repo, params, body);
+      const issueUrl = await submitToWorker(endpoint, repo, token, params, body);
       return {
         content: [{ type: "text", text: `Created ${params.type}: ${issueUrl}` }],
         details: { type: params.type, repo, endpoint, issueUrl, submitted: true } satisfies FeedbackDetails,
