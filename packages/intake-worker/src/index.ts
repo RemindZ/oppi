@@ -11,6 +11,8 @@ type Env = {
   /** Optional shared client token required in x-oppi-intake-token or Authorization: Bearer. */
   INTAKE_CLIENT_TOKEN?: string;
   INTAKE_SIGNING_SECRET?: string;
+  RATE_LIMIT?: KVNamespace;
+  RATE_LIMIT_MAX_PER_HOUR?: string;
 };
 
 type IntakePayload = {
@@ -41,6 +43,14 @@ function json(data: unknown, init: ResponseInit = {}): Response {
 
 function error(message: string, status = 400): Response {
   return json({ ok: false, error: message }, { status });
+}
+
+function statusForError(message: string): number {
+  if (message.includes("rate limit")) return 429;
+  if (message.includes("intake token")) return 401;
+  if (message.includes("not allowed")) return 403;
+  if (message.includes("too large")) return 413;
+  return 400;
 }
 
 function base64Url(input: ArrayBuffer | Uint8Array | string): string {
@@ -188,6 +198,31 @@ function sanitizeText(value: unknown, max: number): string {
     .trim();
 }
 
+async function sha256Base64Url(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+  return base64Url(digest);
+}
+
+async function enforceRateLimit(request: Request, env: Env): Promise<void> {
+  if (!env.RATE_LIMIT) return;
+
+  const ip =
+    request.headers.get("cf-connecting-ip") ||
+    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
+    "unknown";
+  const max = Math.max(1, Number.parseInt(env.RATE_LIMIT_MAX_PER_HOUR || "8", 10) || 8);
+  const windowSeconds = 60 * 60;
+  const bucket = Math.floor(Date.now() / 1000 / windowSeconds);
+  const key = `rl:v1:${await sha256Base64Url(ip)}:${bucket}`;
+  const current = Number.parseInt((await env.RATE_LIMIT.get(key)) || "0", 10) || 0;
+
+  if (current >= max) {
+    throw new Error(`rate limit exceeded; try again later`);
+  }
+
+  await env.RATE_LIMIT.put(key, String(current + 1), { expirationTtl: windowSeconds + 120 });
+}
+
 async function signMarker(env: Env, repo: string, type: FeedbackType, title: string): Promise<string> {
   if (!env.INTAKE_SIGNING_SECRET) return "unsigned";
   const key = await crypto.subtle.importKey(
@@ -261,13 +296,13 @@ export default {
 
     try {
       validateClientToken(request, env);
+      await enforceRateLimit(request, env);
       const payload = await readJsonPayload(request);
       const type = normalizeType(url.pathname, payload.type);
       return await createIssue(env, payload, type);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      const status = message.includes("intake token") ? 401 : message.includes("not allowed") ? 403 : message.includes("too large") ? 413 : 400;
-      return error(message, status);
+      return error(message, statusForError(message));
     }
   },
 };

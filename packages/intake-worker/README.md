@@ -10,7 +10,7 @@ POST /v1/intake/feature-request
 GET  /health
 ```
 
-and creates GitHub issues in allowlisted repositories using a GitHub App installation token.
+and creates GitHub issues in allowlisted repositories using Worker-held GitHub credentials. The public OPPi endpoint intentionally does not require a bundled client token; any token shipped in the package would be public and should not be treated as a secret.
 
 ## Required Cloudflare secrets
 
@@ -30,13 +30,13 @@ wrangler secret put GITHUB_TOKEN
 wrangler secret put INTAKE_SIGNING_SECRET
 ```
 
-Optional but recommended for private alpha intake:
+Optional for private/internal deployments only:
 
 ```bash
 wrangler secret put INTAKE_CLIENT_TOKEN
 ```
 
-When `INTAKE_CLIENT_TOKEN` is set, clients must send the same value via `x-oppi-intake-token`. The Pi package reads this from `OPPI_FEEDBACK_TOKEN`.
+When `INTAKE_CLIENT_TOKEN` is set, clients must send the same value via `x-oppi-intake-token`. Do not set this for the public OPPi endpoint unless you also own client distribution, because a bundled token is extractable from the package.
 
 `GITHUB_APP_PRIVATE_KEY` must be PKCS#8 PEM with `-----BEGIN PRIVATE KEY-----`. If GitHub gives you `-----BEGIN RSA PRIVATE KEY-----`, convert it first:
 
@@ -60,7 +60,10 @@ Configured in `wrangler.toml`:
 ```toml
 DEFAULT_REPO = "RemindZ/oppi"
 ALLOWED_REPOS = "RemindZ/oppi"
+RATE_LIMIT_MAX_PER_HOUR = "8"
 ```
+
+Rate limiting uses the `RATE_LIMIT` Workers KV binding configured in `wrangler.toml`.
 
 ## Deploy
 

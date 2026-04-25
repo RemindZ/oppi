@@ -6,3 +6,8 @@ workers_dev = true
 [vars]
 DEFAULT_REPO = "RemindZ/oppi"
 ALLOWED_REPOS = "RemindZ/oppi"
+RATE_LIMIT_MAX_PER_HOUR = "8"
+
+[[kv_namespaces]]
+binding = "RATE_LIMIT"
+id = "f4f8cc7f25eb4a769db776a994933b81"
