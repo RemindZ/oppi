@@ -30,6 +30,14 @@ wrangler secret put GITHUB_TOKEN
 wrangler secret put INTAKE_SIGNING_SECRET
 ```
 
+Optional but recommended for private alpha intake:
+
+```bash
+wrangler secret put INTAKE_CLIENT_TOKEN
+```
+
+When `INTAKE_CLIENT_TOKEN` is set, clients must send the same value via `x-oppi-intake-token`. The Pi package reads this from `OPPI_FEEDBACK_TOKEN`.
+
 `GITHUB_APP_PRIVATE_KEY` must be PKCS#8 PEM with `-----BEGIN PRIVATE KEY-----`. If GitHub gives you `-----BEGIN RSA PRIVATE KEY-----`, convert it first:
 
 ```bash

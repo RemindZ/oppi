@@ -26,6 +26,9 @@ yarn-error.log*
 .oppi/
 .oppi-local/
 
+# Cloudflare local deploy/cache state
+.wrangler/
+
 # Local-only planning and research notes.
 # These are for agent/user handoff and should not be published.
 .oppi-plans/

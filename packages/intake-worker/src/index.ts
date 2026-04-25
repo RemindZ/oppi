@@ -8,6 +8,8 @@ type Env = {
   GITHUB_APP_PRIVATE_KEY?: string;
   /** Optional fallback for early setup. Prefer GitHub App credentials for production. */
   GITHUB_TOKEN?: string;
+  /** Optional shared client token required in x-oppi-intake-token or Authorization: Bearer. */
+  INTAKE_CLIENT_TOKEN?: string;
   INTAKE_SIGNING_SECRET?: string;
 };
 
@@ -31,7 +33,7 @@ function json(data: unknown, init: ResponseInit = {}): Response {
       "content-type": "application/json; charset=utf-8",
       "access-control-allow-origin": "*",
       "access-control-allow-methods": "GET,POST,OPTIONS",
-      "access-control-allow-headers": "content-type",
+      "access-control-allow-headers": "content-type, authorization, x-oppi-intake-token",
       ...init.headers,
     },
   });
@@ -152,6 +154,15 @@ function normalizeRepo(env: Env, repo: string | undefined): string {
   return value;
 }
 
+function validateClientToken(request: Request, env: Env): void {
+  if (!env.INTAKE_CLIENT_TOKEN) return;
+  const headerToken = request.headers.get("x-oppi-intake-token")?.trim();
+  const auth = request.headers.get("authorization")?.trim() || "";
+  const bearerToken = auth.toLowerCase().startsWith("bearer ") ? auth.slice(7).trim() : "";
+  if (headerToken === env.INTAKE_CLIENT_TOKEN || bearerToken === env.INTAKE_CLIENT_TOKEN) return;
+  throw new Error("missing or invalid OPPi intake token");
+}
+
 function normalizeType(pathname: string, bodyType: unknown): FeedbackType {
   const fromPath = pathname.endsWith("/bug-report")
     ? "bug-report"
@@ -249,12 +260,13 @@ export default {
     }
 
     try {
+      validateClientToken(request, env);
       const payload = await readJsonPayload(request);
       const type = normalizeType(url.pathname, payload.type);
       return await createIssue(env, payload, type);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      const status = message.includes("not allowed") ? 403 : message.includes("too large") ? 413 : 400;
+      const status = message.includes("intake token") ? 401 : message.includes("not allowed") ? 403 : message.includes("too large") ? 413 : 400;
       return error(message, status);
     }
   },

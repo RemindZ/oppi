@@ -183,12 +183,17 @@ async function writeDraft(cwd: string, params: FeedbackSubmitParams, body: strin
 
 async function submitToWorker(endpoint: string, repo: string, params: FeedbackSubmitParams, body: string): Promise<string> {
   const url = `${endpoint.replace(/\/$/, "")}/v1/intake/${params.type}`;
+  const headers: Record<string, string> = {
+    "content-type": "application/json",
+    "user-agent": "oppi-pi-package-feedback/0.0.0",
+  };
+  if (process.env.OPPI_FEEDBACK_TOKEN) {
+    headers["x-oppi-intake-token"] = process.env.OPPI_FEEDBACK_TOKEN;
+  }
+
   const response = await fetch(url, {
     method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "user-agent": "oppi-pi-package-feedback/0.0.0",
-    },
+    headers,
     body: JSON.stringify({
       repo,
       type: params.type,
