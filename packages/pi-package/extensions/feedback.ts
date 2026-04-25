@@ -239,15 +239,15 @@ function triagePrompt(type: FeedbackKind, initialDescription: string): string {
 export default function feedbackExtension(pi: ExtensionAPI) {
   pi.registerCommand("bug-report", {
     description: "Create an OPPi bug report via the feedback intake flow. Usage: /bug-report [description]",
-    handler: async (args, ctx) => {
-      await ctx.sendUserMessage(triagePrompt("bug-report", args));
+    handler: async (args, _ctx) => {
+      pi.sendUserMessage(triagePrompt("bug-report", args));
     },
   });
 
   pi.registerCommand("feature-request", {
     description: "Create an OPPi feature request via the feedback intake flow. Usage: /feature-request [description]",
-    handler: async (args, ctx) => {
-      await ctx.sendUserMessage(triagePrompt("feature-request", args));
+    handler: async (args, _ctx) => {
+      pi.sendUserMessage(triagePrompt("feature-request", args));
     },
   });
 
