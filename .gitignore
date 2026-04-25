@@ -1,0 +1,41 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build outputs
+dist/
+build/
+coverage/
+.turbo/
+.cache/
+*.tsbuildinfo
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Environment/secrets
+.env
+.env.*
+!.env.example
+
+# Local OPPi runtime data
+.oppi/
+.oppi-local/
+
+# Local-only planning and research notes.
+# These are for agent/user handoff and should not be published.
+.oppi-plans/
+
+# Local reference clones are intentionally excluded from public history.
+reference/
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.example.json

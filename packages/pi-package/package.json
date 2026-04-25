@@ -1,0 +1,31 @@
+{
+  "name": "@oppi/pi-package",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "OPPi Pi package: extensions, skills, prompts, and themes.",
+  "license": "MIT",
+  "keywords": [
+    "pi-package",
+    "oppi",
+    "coding-agent"
+  ],
+  "peerDependencies": {
+    "@mariozechner/pi-ai": "*",
+    "@mariozechner/pi-coding-agent": "*",
+    "@mariozechner/pi-tui": "*",
+    "typebox": "*"
+  },
+  "pi": {
+    "extensions": [],
+    "skills": [
+      "./skills"
+    ],
+    "prompts": [
+      "./prompts"
+    ],
+    "themes": [
+      "./themes"
+    ]
+  }
+}

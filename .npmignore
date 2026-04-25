@@ -1,0 +1,8 @@
+.oppi-plans/
+reference/
+.env*
+*.log
+node_modules/
+dist/
+build/
+coverage/

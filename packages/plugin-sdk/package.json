@@ -1,0 +1,11 @@
+{
+  "name": "@oppi/plugin-sdk",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "OPPi plugin and marketplace manifest types/helpers.",
+  "license": "MIT",
+  "devDependencies": {
+    "typescript": "^5.8.0"
+  }
+}

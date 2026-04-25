@@ -1,0 +1,17 @@
+{
+  "name": "@oppi/cli",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "OPPi CLI wrapper and future harness.",
+  "license": "MIT",
+  "bin": {
+    "oppi": "./dist/main.js"
+  },
+  "dependencies": {
+    "@mariozechner/pi-coding-agent": "*"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.0"
+  }
+}

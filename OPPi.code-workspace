@@ -1,0 +1,115 @@
+{
+  "folders": [
+    {
+      "name": "OPPi",
+      "path": "."
+    }
+  ],
+  "settings": {
+    "workbench.colorTheme": "Catppuccin Mocha",
+    "workbench.iconTheme": "catppuccin-mocha",
+    "workbench.startupEditor": "readme",
+    "workbench.editor.labelFormat": "medium",
+    "workbench.tree.indent": 14,
+    "workbench.tree.renderIndentGuides": "always",
+
+    "editor.fontFamily": "Cascadia Code, CaskaydiaCove Nerd Font, JetBrains Mono, Consolas, 'Courier New', monospace",
+    "editor.fontLigatures": true,
+    "editor.fontSize": 14,
+    "editor.lineHeight": 22,
+    "editor.cursorBlinking": "smooth",
+    "editor.cursorSmoothCaretAnimation": "on",
+    "editor.guides.bracketPairs": "active",
+    "editor.guides.indentation": true,
+    "editor.renderWhitespace": "selection",
+    "editor.semanticHighlighting.enabled": true,
+    "editor.minimap.enabled": false,
+    "editor.stickyScroll.enabled": true,
+    "editor.wordWrap": "on",
+
+    "terminal.integrated.fontFamily": "Cascadia Code, CaskaydiaCove Nerd Font, JetBrains Mono, Consolas, monospace",
+    "terminal.integrated.fontSize": 13,
+    "terminal.integrated.lineHeight": 1.2,
+    "terminal.integrated.minimumContrastRatio": 1,
+    "terminal.integrated.cursorStyle": "line",
+    "terminal.integrated.cursorBlinking": true,
+
+    "files.trimTrailingWhitespace": true,
+    "files.insertFinalNewline": true,
+    "files.exclude": {
+      "**/node_modules": true,
+      "**/dist": true,
+      "**/build": true,
+      "**/.turbo": true
+    },
+    "search.exclude": {
+      "**/node_modules": true,
+      "**/dist": true,
+      "**/build": true,
+      "**/reference": true
+    },
+
+    "workbench.colorCustomizations": {
+      "focusBorder": "#67E8F9AA",
+      "selection.background": "#67E8F933",
+      "textLink.foreground": "#67E8F9",
+      "textLink.activeForeground": "#A5F3FC",
+
+      "activityBar.background": "#11111B",
+      "activityBar.foreground": "#CFFAFE",
+      "activityBar.activeBorder": "#67E8F9",
+      "activityBarBadge.background": "#06B6D4",
+      "activityBarBadge.foreground": "#001018",
+
+      "sideBar.background": "#11111B",
+      "sideBar.foreground": "#D6EAF0",
+      "sideBarSectionHeader.background": "#181825",
+      "sideBarSectionHeader.foreground": "#A5F3FC",
+
+      "titleBar.activeBackground": "#0B1220",
+      "titleBar.activeForeground": "#E0F7FA",
+      "titleBar.inactiveBackground": "#0B1220CC",
+      "titleBar.inactiveForeground": "#94A3B8",
+
+      "statusBar.background": "#083344",
+      "statusBar.foreground": "#E0F7FA",
+      "statusBar.noFolderBackground": "#083344",
+      "statusBar.debuggingBackground": "#164E63",
+      "statusBarItem.remoteBackground": "#0891B2",
+      "statusBarItem.remoteForeground": "#001018",
+
+      "editor.background": "#0F111A",
+      "editor.foreground": "#DDEBF0",
+      "editorCursor.foreground": "#67E8F9",
+      "editorLineNumber.foreground": "#475569",
+      "editorLineNumber.activeForeground": "#A5F3FC",
+      "editor.selectionBackground": "#155E7555",
+      "editor.inactiveSelectionBackground": "#164E6333",
+      "editor.wordHighlightBackground": "#67E8F91F",
+      "editor.wordHighlightStrongBackground": "#22D3EE2E",
+      "editorBracketMatch.border": "#67E8F9AA",
+
+      "terminal.background": "#0B1020",
+      "terminal.foreground": "#DDEBF0",
+      "terminalCursor.foreground": "#67E8F9",
+      "terminal.ansiCyan": "#67E8F9",
+      "terminal.ansiBrightCyan": "#A5F3FC",
+      "terminal.ansiBlue": "#38BDF8",
+      "terminal.ansiBrightBlue": "#7DD3FC",
+      "terminal.ansiGreen": "#86EFAC",
+      "terminal.ansiYellow": "#FDE68A",
+      "terminal.ansiRed": "#FDA4AF",
+      "terminal.ansiMagenta": "#C4B5FD",
+      "terminal.ansiWhite": "#E2E8F0",
+      "terminal.ansiBrightWhite": "#F8FAFC",
+      "terminal.ansiBlack": "#020617",
+      "terminal.ansiBrightBlack": "#64748B"
+    }
+  },
+  "extensions": {
+    "recommendations": [
+      "Catppuccin.catppuccin-vsc",
+      "Catppuccin.catppuccin-vsc-icons"
+    ]
+  }
+}

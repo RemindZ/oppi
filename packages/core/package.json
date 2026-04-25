@@ -1,0 +1,11 @@
+{
+  "name": "@oppi/core",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Core OPPi services: config, model roles, plugins, memory, artifacts.",
+  "license": "MIT",
+  "devDependencies": {
+    "typescript": "^5.8.0"
+  }
+}
