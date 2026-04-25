@@ -1,0 +1,8 @@
+name = "oppi-intake"
+main = "src/index.ts"
+compatibility_date = "2026-04-25"
+workers_dev = true
+
+[vars]
+DEFAULT_REPO = "RemindZ/oppi"
+ALLOWED_REPOS = "RemindZ/oppi"

@@ -27,6 +27,17 @@ packages/
 
 Local planning docs live in `.oppi-plans/` and are intentionally gitignored. If you are an AI agent working in this repository and the directory exists, read `.oppi-plans/INDEX.md` before making architectural changes.
 
+## Feedback intake
+
+OPPi is planned to accept new project feedback through its own commands so reports include enough context and sanitized diagnostics:
+
+```text
+/bug-report <what went wrong>
+/feature-request <what you want OPPi to do>
+```
+
+Direct GitHub issues may be closed automatically once the intake workflow is enabled. Comments on existing GitHub issues are welcome.
+
 ## Status
 
 Early planning/scaffold stage.

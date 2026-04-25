@@ -13,7 +13,8 @@
     "check": "pnpm -r --if-present check",
     "build": "pnpm -r --if-present build",
     "test": "pnpm -r --if-present test",
-    "setup:references": "node scripts/setup-references.mjs"
+    "setup:references": "node scripts/setup-references.mjs",
+    "setup:feedback-github": "node scripts/setup-feedback-github.mjs"
   },
   "devDependencies": {
     "typescript": "^5.8.0"

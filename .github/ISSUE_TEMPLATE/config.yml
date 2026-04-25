@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report an OPPi bug
+    url: https://github.com/RemindZ/oppi#feedback-intake
+    about: Please use /bug-report from OPPi so logs and context are captured safely.
+  - name: Request an OPPi feature
+    url: https://github.com/RemindZ/oppi#feedback-intake
+    about: Please use /feature-request from OPPi so the request includes enough context.

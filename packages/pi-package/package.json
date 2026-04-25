@@ -17,7 +17,9 @@
     "typebox": "*"
   },
   "pi": {
-    "extensions": [],
+    "extensions": [
+      "./extensions/feedback.ts"
+    ],
     "skills": [
       "./skills"
     ],
