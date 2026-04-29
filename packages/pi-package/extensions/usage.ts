@@ -1,12 +1,20 @@
 import { Buffer } from "node:buffer";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext, Theme } from "@mariozechner/pi-coding-agent";
-import { DynamicBorder } from "@mariozechner/pi-coding-agent";
-import { Container, matchesKey, Text, truncateToWidth, visibleWidth } from "@mariozechner/pi-tui";
+import { DynamicBorder, getAgentDir } from "@mariozechner/pi-coding-agent";
+import { Container, matchesKey, Text, truncateToWidth, visibleWidth, type KeyId } from "@mariozechner/pi-tui";
+import { BACKGROUND_TASKS_SHORTCUT_LABEL } from "./background-tasks";
 
 const OPENAI_CODEX_BASE_URL = "https://chatgpt.com/backend-api";
 const USAGE_REFRESH_MS = 60_000;
 const FIVE_HOURS_MS = 5 * 60 * 60 * 1_000;
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1_000;
+export const FOOTER_HELP_SHORTCUT = "alt+k" satisfies KeyId;
+export const FOOTER_HELP_SHORTCUT_LABEL = "Alt+K";
+export const FOOTER_CONFIG_CHANGED_EVENT = "oppi.footer.configChanged";
+const FOOTER_HELP_SHORTCUT_ALIASES = ["ctrl+alt+k"] satisfies KeyId[];
+const FOOTER_HELP_SHORTCUTS = [FOOTER_HELP_SHORTCUT, ...FOOTER_HELP_SHORTCUT_ALIASES] satisfies KeyId[];
 
 type ModelLike = {
   id: string;
@@ -50,6 +58,37 @@ type UsageReport = {
   generatedAt: number;
 };
 
+export type FooterUsageDisplay = "session-weekly" | "session" | "weekly" | "off";
+
+export type FooterConfig = {
+  showPath: boolean;
+  showHelpBar: boolean;
+  usageDisplay: FooterUsageDisplay;
+  showModel: boolean;
+  showPermission: boolean;
+  showMemory: boolean;
+  showContext: boolean;
+};
+
+export const FOOTER_USAGE_DISPLAY_VALUES: FooterUsageDisplay[] = ["session-weekly", "session", "weekly", "off"];
+const FOOTER_CONFIG_KEYS = ["showPath", "showHelpBar", "usageDisplay", "showModel", "showPermission", "showMemory", "showContext"] satisfies (keyof FooterConfig)[];
+
+const DEFAULT_FOOTER_CONFIG: FooterConfig = {
+  showPath: true,
+  showHelpBar: true,
+  usageDisplay: "session-weekly",
+  showModel: true,
+  showPermission: true,
+  showMemory: true,
+  showContext: true,
+};
+
+type OppiSettingsFile = Record<string, any> & {
+  oppi?: {
+    footer?: Partial<FooterConfig>;
+  };
+};
+
 type OpenAIRateLimitWindow = {
   usedPercent: number;
   windowMinutes?: number;
@@ -70,11 +109,112 @@ type HeaderLimit = {
   label: string;
 };
 
-let requestRender: (() => void) | undefined;
+let requestRender: ((force?: boolean) => void) | undefined;
 let permissionMode = "auto-review";
+const footerContexts = new Set<ExtensionContext>();
+const footerInputUnsubscribers = new WeakMap<ExtensionContext, () => void>();
 const remoteUsageCache = new Map<string, UsageSnapshot>();
 const headerLimitCache = new Map<string, HeaderLimit>();
 const refreshTimes = new Map<string, number>();
+
+function globalSettingsPath(): string {
+  return join(getAgentDir(), "settings.json");
+}
+
+function projectSettingsPath(cwd: string): string {
+  return join(cwd, ".pi", "settings.json");
+}
+
+function readJson(path: string): OppiSettingsFile {
+  try {
+    if (!existsSync(path)) return {};
+    return JSON.parse(readFileSync(path, "utf8"));
+  } catch {
+    return {};
+  }
+}
+
+function writeJson(path: string, data: OppiSettingsFile): void {
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, `${JSON.stringify(data, null, 2)}\n`, "utf8");
+}
+
+export function coerceFooterUsageDisplay(value: unknown): FooterUsageDisplay {
+  return FOOTER_USAGE_DISPLAY_VALUES.includes(value as FooterUsageDisplay) ? value as FooterUsageDisplay : DEFAULT_FOOTER_CONFIG.usageDisplay;
+}
+
+export function footerUsageDisplayLabel(value: FooterUsageDisplay): string {
+  switch (value) {
+    case "session-weekly": return "session + weekly";
+    case "session": return "session";
+    case "weekly": return "weekly";
+    default: return "off";
+  }
+}
+
+function normalizeFooterConfig(raw: unknown): FooterConfig {
+  const config = raw && typeof raw === "object" ? raw as Partial<FooterConfig> : {};
+  return {
+    showPath: typeof config.showPath === "boolean" ? config.showPath : DEFAULT_FOOTER_CONFIG.showPath,
+    showHelpBar: typeof config.showHelpBar === "boolean" ? config.showHelpBar : DEFAULT_FOOTER_CONFIG.showHelpBar,
+    usageDisplay: coerceFooterUsageDisplay(config.usageDisplay),
+    showModel: typeof config.showModel === "boolean" ? config.showModel : DEFAULT_FOOTER_CONFIG.showModel,
+    showPermission: typeof config.showPermission === "boolean" ? config.showPermission : DEFAULT_FOOTER_CONFIG.showPermission,
+    showMemory: typeof config.showMemory === "boolean" ? config.showMemory : DEFAULT_FOOTER_CONFIG.showMemory,
+    showContext: typeof config.showContext === "boolean" ? config.showContext : DEFAULT_FOOTER_CONFIG.showContext,
+  };
+}
+
+function readGlobalFooterConfig(): FooterConfig {
+  // Deliberately do not cache: memory.ts can import this module through a
+  // different jiti resolution path than the active footer extension. Reading
+  // the tiny settings file on render keeps live settings changes visible
+  // without requiring /reload.
+  return normalizeFooterConfig(readJson(globalSettingsPath()).oppi?.footer);
+}
+
+export function readFooterConfig(cwd?: string): FooterConfig {
+  const global = readGlobalFooterConfig();
+  const project = cwd ? readJson(projectSettingsPath(cwd)).oppi?.footer : undefined;
+  return normalizeFooterConfig({ ...global, ...(project ?? {}) });
+}
+
+export function writeGlobalFooterConfig(config: FooterConfig): void {
+  const path = globalSettingsPath();
+  const data = readJson(path);
+  data.oppi ??= {};
+  data.oppi.footer = normalizeFooterConfig(config);
+  writeJson(path, data);
+  requestRender?.(true);
+}
+
+export function writeFooterConfig(cwd: string | undefined, config: FooterConfig): void {
+  const normalized = normalizeFooterConfig(config);
+  writeGlobalFooterConfig(normalized);
+
+  // If this project has explicit footer overrides, update those keys too;
+  // otherwise the newly-written global value can be masked and appear stale.
+  if (!cwd) return;
+  const path = projectSettingsPath(cwd);
+  const data = readJson(path);
+  const projectFooter = data.oppi?.footer;
+  if (!projectFooter || typeof projectFooter !== "object") return;
+
+  let changed = false;
+  const nextProjectFooter: Partial<FooterConfig> = { ...projectFooter };
+  for (const key of FOOTER_CONFIG_KEYS) {
+    if (Object.prototype.hasOwnProperty.call(projectFooter, key) && nextProjectFooter[key] !== normalized[key]) {
+      (nextProjectFooter as Record<keyof FooterConfig, FooterConfig[keyof FooterConfig]>)[key] = normalized[key];
+      changed = true;
+    }
+  }
+  if (!changed) return;
+
+  data.oppi ??= {};
+  data.oppi.footer = nextProjectFooter;
+  writeJson(path, data);
+  requestRender?.(true);
+}
 
 function modelKeyFor(model: ModelLike | undefined): string {
   return `${model?.provider ?? "unknown"}/${model?.id ?? "unknown"}`;
@@ -169,10 +309,11 @@ function bar(percent: number | null, width: number, theme: Theme): string {
   return theme.fg(color, "█".repeat(filled)) + theme.fg("dim", "░".repeat(width - filled));
 }
 
-function footerLimitWindow(window: UsageWindow, theme: Theme, width = 7): string {
-  const label = displayWindowLabel(window.label);
+function footerLimitWindow(window: UsageWindow, theme: Theme, width = 7, labelOverride?: string): string {
+  const originalLabel = displayWindowLabel(window.label);
+  const label = labelOverride ?? originalLabel;
   const pct = window.usedPercent === null ? "?" : `${Math.round(window.usedPercent)}%`;
-  const left = formatTimeLeft(window.resetsAt, label === "5h");
+  const left = formatTimeLeft(window.resetsAt, originalLabel === "5h" || label === "session");
   const leftPart = left ? `${theme.fg("dim", `${left} left`)} ` : "";
   return `${theme.fg("muted", label)} ${leftPart}${bar(window.usedPercent, width, theme)} ${theme.fg("dim", pct)}`;
 }
@@ -398,7 +539,7 @@ function windowsFromOpenAISnapshot(snapshot: OpenAIRateLimitSnapshot): Pick<Usag
 
 async function fetchOpenAICodexUsage(ctx: ExtensionContext, model: ModelLike): Promise<UsageSnapshot> {
   const auth = await ctx.modelRegistry.getApiKeyAndHeaders(model as any);
-  if (!auth.ok) throw new Error(auth.error);
+  if (auth.ok === false) throw new Error(auth.error);
   if (!auth.apiKey) throw new Error("No OpenAI Codex OAuth token available");
 
   const accountId = openAIAccountId(ctx, model, auth.apiKey);
@@ -713,6 +854,10 @@ function permissionLabel(theme: Theme): string {
   return `${theme.fg("dim", "perm ")}${theme.fg(color as any, permissionMode)}`;
 }
 
+function footerHelpTogglePart(theme: Theme, config: FooterConfig): string {
+  return `${theme.fg("accent", FOOTER_HELP_SHORTCUT_LABEL)} ${theme.fg("dim", config.showHelpBar ? "hide help" : "help")}`;
+}
+
 function keybindingHintsLine(theme: Theme, width: number, footerData?: any): string {
   const hasSuggestion = Boolean(footerData?.getExtensionStatuses?.()?.get?.("oppi.suggestNext"));
   if (hasSuggestion) {
@@ -729,7 +874,7 @@ function keybindingHintsLine(theme: Theme, width: number, footerData?: any): str
     `${theme.fg("accent", "Ctrl+Enter")} ${theme.fg("dim", "steer")}`,
     `${theme.fg("accent", "Shift+Enter")} ${theme.fg("dim", "newline")}`,
     `${theme.fg("accent", "Alt+Up")} ${theme.fg("dim", "edit queued")}`,
-    `${theme.fg("accent", "Ctrl+Alt+B")} ${theme.fg("dim", "background")}`,
+    `${theme.fg("accent", BACKGROUND_TASKS_SHORTCUT_LABEL)} ${theme.fg("dim", "background")}`,
   ];
   const compactParts = [
     `${theme.fg("accent", "Enter")} ${theme.fg("dim", "follow-up")}`,
@@ -741,7 +886,15 @@ function keybindingHintsLine(theme: Theme, width: number, footerData?: any): str
   return truncateToWidth(visibleWidth(full) <= width ? full : compact, width, theme.fg("dim", "…"));
 }
 
-function footerStatsLine(pi: ExtensionAPI, ctx: ExtensionContext, theme: Theme, width: number, footerData?: any): string {
+function usageFooterParts(snapshot: UsageSnapshot | undefined, theme: Theme, width: number, display: FooterUsageDisplay): string[] {
+  if (!snapshot || display === "off") return [];
+  const parts: string[] = [];
+  if (display === "session-weekly" || display === "session") parts.push(footerLimitWindow(snapshot.fiveHour, theme, width, "session"));
+  if (display === "session-weekly" || display === "weekly") parts.push(footerLimitWindow(snapshot.weekly, theme, width, "weekly"));
+  return parts;
+}
+
+function footerStatsLine(pi: ExtensionAPI, ctx: ExtensionContext, theme: Theme, width: number, footerData: any | undefined, config: FooterConfig): string {
   const report = currentUsageReport(ctx);
   const selected = ctx.model as ModelLike | undefined;
   const selectedHasUsage = shouldShowInUsage(selected);
@@ -750,30 +903,23 @@ function footerStatsLine(pi: ExtensionAPI, ctx: ExtensionContext, theme: Theme, 
   const memoryPart = typeof memoryStatus === "string" && memoryStatus.trim()
     ? theme.fg("accent", memoryStatus.trim())
     : undefined;
-  const fullParts = active
-    ? [
-        footerLimitWindow(active.fiveHour, theme, 8),
-        footerLimitWindow(active.weekly, theme, 8),
-        modelLabel(pi, ctx, theme, true),
-        permissionLabel(theme),
-        memoryPart,
-        footerContextWindow(report.context, theme, 8),
-      ].filter((part): part is string => Boolean(part))
-    : [modelLabel(pi, ctx, theme, true), permissionLabel(theme), memoryPart, footerContextWindow(report.context, theme, 8)].filter((part): part is string => Boolean(part));
-  let line = joinFooterParts(fullParts, theme);
+
+  const buildParts = (compact: boolean): string[] => {
+    const barWidth = compact ? 5 : 8;
+    return [
+      footerHelpTogglePart(theme, config),
+      ...usageFooterParts(active, theme, barWidth, config.usageDisplay),
+      config.showModel ? modelLabel(pi, ctx, theme, !compact) : undefined,
+      config.showPermission ? permissionLabel(theme) : undefined,
+      config.showMemory ? memoryPart : undefined,
+      config.showContext ? footerContextWindow(report.context, theme, barWidth) : undefined,
+    ].filter((part): part is string => Boolean(part));
+  };
+
+  let line = joinFooterParts(buildParts(false), theme);
   if (visibleWidth(line) <= width) return alignRight(line, width);
 
-  const compactParts = active
-    ? [
-        footerLimitWindow(active.fiveHour, theme, 5),
-        footerLimitWindow(active.weekly, theme, 5),
-        modelLabel(pi, ctx, theme, false),
-        permissionLabel(theme),
-        memoryPart,
-        footerContextWindow(report.context, theme, 5),
-      ].filter((part): part is string => Boolean(part))
-    : [modelLabel(pi, ctx, theme, false), permissionLabel(theme), memoryPart, footerContextWindow(report.context, theme, 5)].filter((part): part is string => Boolean(part));
-  line = joinFooterParts(compactParts, theme);
+  line = joinFooterParts(buildParts(true), theme);
   return alignRight(line, width);
 }
 
@@ -793,24 +939,60 @@ class OppiFooter {
     // passthrough lines here: token/cost meter extensions commonly publish
     // verbose status strings ("sess ... ($...) | week ..."), which recreates
     // the clutter this footer is meant to replace.
-    return [
-      pwdLine(this.ctx, this.footerData, this.theme, width),
-      footerStatsLine(this.pi, this.ctx, this.theme, width, this.footerData),
-      keybindingHintsLine(this.theme, width, this.footerData),
-    ];
+    const config = readFooterConfig(this.ctx.cwd);
+    const lines = [footerStatsLine(this.pi, this.ctx, this.theme, width, this.footerData, config)];
+    if (config.showPath) lines.unshift(pwdLine(this.ctx, this.footerData, this.theme, width));
+    if (config.showHelpBar) lines.push(keybindingHintsLine(this.theme, width, this.footerData));
+    return lines;
   }
 }
 
 function installFooter(pi: ExtensionAPI, ctx: ExtensionContext): void {
   if (!ctx.hasUI) return;
   ctx.ui.setFooter((tui, theme, footerData) => {
-    requestRender = () => tui.requestRender();
+    requestRender = (force = false) => tui.requestRender(force);
     return new OppiFooter(pi, ctx, theme, footerData);
   });
 }
 
-function installFooterAfterSessionHandlers(pi: ExtensionAPI, ctx: ExtensionContext): void {
+function reinstallKnownFooters(pi: ExtensionAPI): void {
+  for (const ctx of footerContexts) installFooter(pi, ctx);
+  requestRender?.(true);
+}
+
+function isFooterHelpShortcut(data: string): boolean {
+  return FOOTER_HELP_SHORTCUTS.some((shortcut) => matchesKey(data, shortcut));
+}
+
+function refreshFooterNow(pi: ExtensionAPI, ctx: ExtensionContext): void {
   installFooter(pi, ctx);
+  reinstallKnownFooters(pi);
+  requestRender?.(true);
+}
+
+function toggleFooterHelp(pi: ExtensionAPI, ctx: ExtensionContext): void {
+  const config = readFooterConfig(ctx.cwd);
+  const next = { ...config, showHelpBar: !config.showHelpBar };
+  writeFooterConfig(ctx.cwd, next);
+  pi.events.emit(FOOTER_CONFIG_CHANGED_EVENT, { cwd: ctx.cwd, config: next });
+  refreshFooterNow(pi, ctx);
+  ctx.ui.notify(`OPPi hotkey help bar ${next.showHelpBar ? "shown" : "hidden"}.`, "info");
+}
+
+function installFooterHelpInputListener(pi: ExtensionAPI, ctx: ExtensionContext): void {
+  if (!ctx.hasUI || footerInputUnsubscribers.has(ctx)) return;
+  const unsubscribe = ctx.ui.onTerminalInput((data) => {
+    if (!isFooterHelpShortcut(data)) return undefined;
+    toggleFooterHelp(pi, ctx);
+    return { consume: true };
+  });
+  footerInputUnsubscribers.set(ctx, unsubscribe);
+}
+
+function installFooterAfterSessionHandlers(pi: ExtensionAPI, ctx: ExtensionContext): void {
+  footerContexts.add(ctx);
+  installFooter(pi, ctx);
+  installFooterHelpInputListener(pi, ctx);
   // Re-assert once after the current session_start dispatch finishes. This
   // makes the OPPi footer win over any other package that also calls setFooter
   // during startup without requiring a Pi fork.
@@ -912,6 +1094,17 @@ async function showUsage(ctx: ExtensionCommandContext, report: UsageReport): Pro
 }
 
 export default function usageExtension(pi: ExtensionAPI) {
+  for (const shortcut of FOOTER_HELP_SHORTCUTS) {
+    pi.registerShortcut(shortcut, {
+      description: "Toggle OPPi hotkey help footer",
+      handler: async (ctx) => toggleFooterHelp(pi, ctx),
+    });
+  }
+
+  pi.events.on(FOOTER_CONFIG_CHANGED_EVENT, () => {
+    reinstallKnownFooters(pi);
+  });
+
   pi.events.on("oppi.permissions.mode", (data) => {
     const mode = (data as { mode?: string } | undefined)?.mode;
     if (mode) {
@@ -926,6 +1119,7 @@ export default function usageExtension(pi: ExtensionAPI) {
   });
 
   pi.on("model_select", async (_event, ctx) => {
+    footerContexts.add(ctx);
     installFooter(pi, ctx);
     backgroundRefresh(ctx, true);
   });
@@ -946,7 +1140,10 @@ export default function usageExtension(pi: ExtensionAPI) {
     requestRender?.();
   });
 
-  pi.on("session_shutdown", async () => {
+  pi.on("session_shutdown", async (_event, ctx) => {
+    footerContexts.delete(ctx);
+    footerInputUnsubscribers.get(ctx)?.();
+    footerInputUnsubscribers.delete(ctx);
     requestRender = undefined;
   });
 

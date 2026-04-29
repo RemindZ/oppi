@@ -12,10 +12,10 @@ const SMART_COMPACT_SOURCE = "oppi-smart-compact";
 function continueAfterCompact(thresholdPercent: SmartCompactThreshold): string {
   return [
     `OPPi compacted the conversation around the remaining todo list at ${thresholdPercent}% context usage.`,
-    "Continue the current task from the compacted summary.",
-    "Focus only on pending, in-progress, or blocked todos, and use the archived completed todo outcomes when writing the final response to the user.",
+    "Continue the current task from the compacted summary; the compacted summary is the source of truth for pre-compaction work.",
+    "Focus only on pending, in-progress, or blocked todos, and do not redo completed todos unless the remaining work requires it.",
     "On your next todo_write update, you may omit completed/cancelled todos that are already archived in the compacted summary; keep only active, blocked, and pending work visible.",
-    "Do not redo completed todos unless the remaining work requires it.",
+    "When the remaining todos are done, your final user-facing response must combine the archived completed todo outcomes with any post-compaction work/validation so it does not sound like only the last todo happened.",
   ].join(" ");
 }
 
@@ -287,11 +287,12 @@ ${files.modifiedFiles.length ? files.modifiedFiles.map((file) => `- ${file}`).jo
 
 ## Next Steps
 1. Continue only pending, in-progress, or blocked todos unless the user asks otherwise.
-2. Use completed todo outcomes above when preparing the final response.
+2. Treat the Completed Todo Outcomes ledger above as mandatory final-response context, not as visible active work.
 3. If more detailed historical context is needed, rely on the recent kept messages after the compaction boundary.
 
 ## Final Response Notes
-- Mention completed outcomes from the ledger when relevant.
+- At task completion, summarize both the completed-outcomes ledger and any post-compaction work/validation.
+- If the ledger is long, group it concisely, but do not answer with only the final remaining todo.
 - Do not redo completed/cancelled todos unless remaining work depends on them.`;
 
   return {
@@ -330,6 +331,7 @@ Rules:
 - Completed todo outcomes may have survived prior compactions; merge them and preserve them so the final answer can mention all completed work.
 - Once completed/cancelled todo outcomes are archived here, future todo_write calls may omit those completed/cancelled items to keep the visible todo list focused on remaining work.
 - If no todos remain, preserve a concise final-response ledger and any verification/blocker information.
+- Under the ## Final Response Notes section, explicitly tell the next model to combine the archived completed outcomes with any post-compaction work/validation when the task is complete.
 - Be compact, factual, and operational. Do not invent results.
 
 Return markdown with these exact sections:
@@ -432,7 +434,7 @@ class TodoAwareAutoCompactor {
     this.lastTriggerAt = now;
     ctx.ui.notify(`OPPi scoped compacting around remaining todos (${Math.round(percent)}% ≥ ${thresholdPercent}%).`, "info");
     ctx.compact({
-      customInstructions: `OPPi todo-aware scoped compaction at ${thresholdPercent}%. Keep only context relevant to remaining todos; preserve completed todo outcomes for the final response.`,
+      customInstructions: `OPPi todo-aware scoped compaction at ${thresholdPercent}%. Keep context relevant to remaining todos, preserve completed todo outcomes for the final response, and ensure the final reply summarizes archived outcomes plus post-compaction work.`,
       onComplete: () => {
         this.running = false;
         try {

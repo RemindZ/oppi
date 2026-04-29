@@ -18,7 +18,7 @@ importers:
         specifier: '*'
         version: 0.70.2(@modelcontextprotocol/sdk@1.29.0(zod@4.3.6))(ws@8.20.0)(zod@4.3.6)
       '@oppiai/pi-package':
-        specifier: workspace:^0.2.1
+        specifier: workspace:^0.2.4
         version: link:../pi-package
     devDependencies:
       typescript:

@@ -9,12 +9,15 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 const require = createRequire(import.meta.url);
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
+const HOPPI_PACKAGE_NAME = "@oppiai/hoppi-memory";
+const HOPPI_LEGACY_PACKAGE_NAME = "hoppi-memory";
+const HOPPI_PACKAGE_SPEC = `${HOPPI_PACKAGE_NAME}@^0.1.0`;
 
 export type OppiCommand =
   | { type: "help" }
   | { type: "version" }
   | { type: "doctor"; json: boolean; agentDir?: string }
-  | { type: "mem"; subcommand: "status" | "setup" | "dashboard" | "open"; json: boolean }
+  | { type: "mem"; subcommand: "status" | "setup" | "install" | "dashboard" | "open"; json: boolean }
   | { type: "launch"; piArgs: string[]; agentDir?: string; withPiExtensions: boolean };
 
 export type DiagnosticStatus = "pass" | "warn" | "fail";
@@ -48,6 +51,24 @@ export function resolveAgentDir(input?: string, env: Env = process.env): string 
   const raw = input?.trim() || env.OPPI_AGENT_DIR?.trim() || env.PI_CODING_AGENT_DIR?.trim() || join(homedir(), ".oppi", "agent");
   const expanded = expandHome(raw);
   return isAbsolute(expanded) ? resolve(expanded) : resolve(process.cwd(), expanded);
+}
+
+function resolveOppiHome(env: Env = process.env, cwd = process.cwd()): string {
+  const raw = env.OPPI_HOME?.trim() || join(homedir(), ".oppi");
+  const expanded = expandHome(raw);
+  return isAbsolute(expanded) ? resolve(expanded) : resolve(cwd, expanded);
+}
+
+function managedPackagesDir(env: Env = process.env, cwd = process.cwd()): string {
+  return join(resolveOppiHome(env, cwd), "packages");
+}
+
+function packageRootFromNodeModules(nodeModulesDir: string, packageName: string): string {
+  return join(nodeModulesDir, ...packageName.split("/"));
+}
+
+function managedHoppiModulePath(env: Env = process.env, cwd = process.cwd(), packageName = HOPPI_PACKAGE_NAME): string {
+  return join(packageRootFromNodeModules(join(managedPackagesDir(env, cwd), "node_modules"), packageName), "dist", "index.js");
 }
 
 function packageDirFromNodeModules(packageName: string): string | undefined {
@@ -113,11 +134,18 @@ function resolveHoppiModulePath(env: Env = process.env, cwd = process.cwd()): st
   const candidates: string[] = [];
   if (env.OPPI_HOPPI_MODULE?.trim()) candidates.push(env.OPPI_HOPPI_MODULE.trim());
 
-  try {
-    const main = require.resolve("hoppi-memory");
-    candidates.push(main);
-  } catch {
-    // optional in Stage 2
+  candidates.push(
+    managedHoppiModulePath(env, cwd, HOPPI_PACKAGE_NAME),
+    managedHoppiModulePath(env, cwd, HOPPI_LEGACY_PACKAGE_NAME),
+  );
+
+  for (const packageName of [HOPPI_PACKAGE_NAME, HOPPI_LEGACY_PACKAGE_NAME]) {
+    try {
+      const main = require.resolve(packageName);
+      candidates.push(main);
+    } catch {
+      // optional
+    }
   }
 
   candidates.push(
@@ -168,7 +196,7 @@ export function parseOppiArgs(argv: string[]): OppiCommand {
   if (first === "mem") {
     const json = rest.includes("--json");
     const sub = rest.find((item) => !item.startsWith("-")) ?? "status";
-    if (sub === "status" || sub === "setup" || sub === "dashboard" || sub === "open") {
+    if (sub === "status" || sub === "setup" || sub === "install" || sub === "dashboard" || sub === "open") {
       return { type: "mem", subcommand: sub, json };
     }
     throw new Error(`Unknown oppi mem command: ${sub}`);
@@ -277,7 +305,7 @@ export function collectDoctorDiagnostics(options: { agentDir?: string } = {}): D
 
   diagnostics.push(hoppiModule
     ? { status: "pass", name: "Hoppi", message: hoppiModule }
-    : { status: "warn", name: "Hoppi", message: "Hoppi module not found; set OPPI_HOPPI_MODULE or build hoppi-memory for memory features" });
+    : { status: "warn", name: "Hoppi", message: `Hoppi module not found; memory is optional. Run \`oppi mem install\`, accept the first-start prompt, install from /settings:oppi → Memory, or set OPPI_HOPPI_MODULE.` });
 
   diagnostics.push(existsSync(feedbackConfig)
     ? { status: "pass", name: "Feedback", message: `${feedbackConfig} exists (secrets not printed)` }
@@ -309,14 +337,93 @@ function printDiagnostics(diagnostics: Diagnostic[], json: boolean): number {
   return hardFailures.length === 0 ? 0 : 1;
 }
 
+function hoppiSetupInstructions(): string[] {
+  return [
+    `Hoppi memory uses the optional ${HOPPI_PACKAGE_NAME} npm package.`,
+    "OPPi never installs it silently; accept the first-start prompt, install it from `/settings:oppi` → Memory, or run:",
+    "",
+    "  oppi mem install",
+    "",
+    "For local development without npm publishing:",
+    "  cd ..\\hoppi-memory",
+    "  npm run build:all",
+    "  setx OPPI_HOPPI_MODULE \"%CD%\\dist\\index.js\"",
+    "",
+    "After installation, run `oppi mem setup` again to initialize the store.",
+  ];
+}
+
+function ensureManagedPackageRoot(env: Env = process.env, cwd = process.cwd()): string {
+  const root = managedPackagesDir(env, cwd);
+  mkdirSync(root, { recursive: true });
+  const packageJson = join(root, "package.json");
+  if (!existsSync(packageJson)) {
+    writeFileSync(packageJson, `${JSON.stringify({ private: true, name: "oppi-managed-packages", description: "OPPi managed optional packages." }, null, 2)}\n`, "utf8");
+  }
+  return root;
+}
+
+function npmSpawnCommand(args: string[]): { command: string; args: string[] } {
+  // Directly spawning npm.cmd can throw EINVAL under some Windows terminals.
+  // Route through cmd.exe explicitly instead of relying on shell lookup.
+  if (process.platform === "win32") return { command: "cmd.exe", args: ["/d", "/s", "/c", "npm", ...args] };
+  return { command: "npm", args };
+}
+
+type HoppiInstallResult =
+  | { ok: true; modulePath: string; output: string }
+  | { ok: false; error: string; output: string };
+
+function installHoppiPackage(env: Env = process.env, cwd = process.cwd()): Promise<HoppiInstallResult> {
+  return new Promise<HoppiInstallResult>((resolveInstall) => {
+    const root = ensureManagedPackageRoot(env, cwd);
+    const args = ["install", HOPPI_PACKAGE_SPEC, "--save-exact", "--no-audit", "--no-fund"];
+    let output = "";
+    const append = (chunk: unknown) => {
+      output += String(chunk);
+      if (output.length > 12_000) output = output.slice(-12_000);
+    };
+    const npm = npmSpawnCommand(args);
+    const child = spawn(npm.command, npm.args, {
+      cwd: root,
+      stdio: ["ignore", "pipe", "pipe"],
+      env: { ...process.env, ...env, npm_config_loglevel: env.npm_config_loglevel ?? "warn" },
+    });
+    child.stdout?.on("data", append);
+    child.stderr?.on("data", append);
+    child.on("error", (error: Error) => resolveInstall({ ok: false, error: error.message, output }));
+    child.on("close", (code: number | null) => {
+      const modulePath = managedHoppiModulePath(env, cwd, HOPPI_PACKAGE_NAME);
+      if (code === 0 && existsSync(modulePath)) resolveInstall({ ok: true, modulePath, output });
+      else resolveInstall({ ok: false, error: `npm install exited with code ${code ?? "unknown"}`, output });
+    });
+  });
+}
+
+function isHoppiMissingMessage(message: string): boolean {
+  return message.includes("Hoppi module not found")
+    || message.includes(`Cannot find module '${HOPPI_PACKAGE_NAME}'`)
+    || message.includes(`Cannot find package "${HOPPI_PACKAGE_NAME}"`)
+    || message.includes("Cannot find module 'hoppi-memory'")
+    || message.includes('Cannot find package "hoppi-memory"');
+}
+
 async function importHoppiModule(): Promise<any> {
   const modulePath = resolveHoppiModulePath();
-  if (!modulePath) throw new Error("Hoppi module not found. Build hoppi-memory or set OPPI_HOPPI_MODULE.");
+  if (!modulePath) throw new Error(`Hoppi module not found. Run \`oppi mem install\`, install ${HOPPI_PACKAGE_NAME} from /settings:oppi → Memory, or set OPPI_HOPPI_MODULE.`);
   return import(pathToFileURL(modulePath).href);
 }
 
 async function runMemCommand(command: Extract<OppiCommand, { type: "mem" }>): Promise<number> {
   try {
+    if (command.subcommand === "install") {
+      const result = await installHoppiPackage();
+      if (command.json) console.log(JSON.stringify(result, null, 2));
+      else if (result.ok) console.log(`Installed Hoppi backend: ${result.modulePath}`);
+      else console.error(`Hoppi install failed: ${result.error}${result.output.trim() ? `\n${result.output.trim()}` : ""}`);
+      return result.ok ? 0 : 1;
+    }
+
     const hoppi = await importHoppiModule();
     const root = hoppi.getDefaultHoppiRoot?.() ?? join(homedir(), ".oppi", "hoppi");
     const backend = hoppi.createHoppiBackend?.({ root });
@@ -353,14 +460,20 @@ async function runMemCommand(command: Extract<OppiCommand, { type: "mem" }>): Pr
     return 0;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    if (command.subcommand === "setup" && isHoppiMissingMessage(message)) {
+      const instructions = hoppiSetupInstructions();
+      if (command.json) console.log(JSON.stringify({ ok: false, needsInstall: true, error: message, instructions }, null, 2));
+      else console.log(instructions.join("\n"));
+      return 1;
+    }
     if (command.json) console.log(JSON.stringify({ ok: false, error: message }, null, 2));
-    else console.error(`OPPi mem ${command.subcommand} failed: ${message}`);
+    else console.error(`OPPi mem ${command.subcommand} failed: ${message}\nRun \`oppi mem install\` to install Hoppi, or \`oppi mem setup\` for setup instructions.`);
     return 1;
   }
 }
 
 function helpText(): string {
-  return `OPPi — opinionated Pi-powered coding agent\n\nUsage:\n  oppi [pi options] [@files...] [messages...]\n  oppi doctor [--json]\n  oppi mem status|setup|dashboard [--json]\n\nOPPi options:\n  --agent-dir <dir>       Use a specific OPPi/Pi agent dir for this run\n  --with-pi-extensions    Allow normal Pi extension discovery in addition to OPPi\n  --version, -v           Print OPPi CLI version\n  --help, -h              Show this help\n\nDefaults:\n  - loads the bundled/local @oppiai/pi-package\n  - disables unrelated Pi extension discovery unless --with-pi-extensions is set\n  - stores sessions/settings under OPPI_AGENT_DIR or ~/.oppi/agent\n\nExamples:\n  oppi\n  oppi "summarize this repository"\n  oppi -p "Reply ok"\n  OPPI_AGENT_DIR=/tmp/oppi-agent oppi doctor\n\nAll ordinary Pi flags not listed above are passed through unchanged.`;
+  return `OPPi — opinionated Pi-powered coding agent\n\nUsage:\n  oppi [pi options] [@files...] [messages...]\n  oppi doctor [--json]\n  oppi mem status|setup|install|dashboard [--json]\n\nOPPi options:\n  --agent-dir <dir>       Use a specific OPPi/Pi agent dir for this run\n  --with-pi-extensions    Allow normal Pi extension discovery in addition to OPPi\n  --version, -v           Print OPPi CLI version\n  --help, -h              Show this help\n\nDefaults:\n  - loads the bundled/local @oppiai/pi-package\n  - disables unrelated Pi extension discovery unless --with-pi-extensions is set\n  - stores sessions/settings under OPPI_AGENT_DIR or ~/.oppi/agent\n\nExamples:\n  oppi\n  oppi "summarize this repository"\n  oppi -p "Reply ok"\n  OPPI_AGENT_DIR=/tmp/oppi-agent oppi doctor\n\nAll ordinary Pi flags not listed above are passed through unchanged.`;
 }
 
 export async function run(argv: string[]): Promise<number> {

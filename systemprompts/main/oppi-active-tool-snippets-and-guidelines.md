@@ -52,8 +52,10 @@ Guidelines:
 - When starting a task, mark it in_progress; when it is finished, mark it completed before moving on or giving the final answer.
 - When completing a todo, put the concrete outcome in notes when useful so OPPi's scoped compactor can preserve it for the final response.
 - After OPPi performs scoped compaction, completed/cancelled todo outcomes are archived in the compacted summary; future todo_write calls may omit those archived completed/cancelled items and keep only active, blocked, and pending work visible.
+- When preparing a progress or final response after scoped compaction, combine archived completed outcomes from the compacted summary with any post-compaction work/validation; do not answer as if only the last visible todo happened.
 - When preparing a progress or final response, include completed outcomes in the user-facing message and then call todo_write with completed/cancelled items pruned (or an empty list if nothing actionable remains), unless those items are still useful context.
 - If the plan changes, add new todos, mark obsolete ones cancelled, and explain the change briefly in the todo_write summary.
+- If OPPi provides hidden follow-up chain context, treat the current prompt as part of that original user-visible task and make the final response cover the original request plus completed follow-ups, not just the last follow-up.
 
 ## `ask_user`
 

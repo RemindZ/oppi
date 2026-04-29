@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated": "2026-04-28",
+  "updated": "2026-04-29",
   "activePromptSurfaces": [
     {
       "id": "pi-default-main",
@@ -50,6 +50,13 @@
       "path": "systemprompts/image-gen/codex-native-adapter-instructions.md",
       "runtimeSource": "packages/pi-package/extensions/image-gen.ts",
       "notes": "Sent as OpenAI Responses API instructions for Codex native image_generation."
+    },
+    {
+      "id": "memory-distiller-user-prompt",
+      "kind": "memory-agent-user-prompt",
+      "path": "systemprompts/memory/distiller-user-prompt.md",
+      "runtimeSource": "packages/pi-package/extensions/memory.ts",
+      "notes": "Optional model-backed Hoppi turn-memory distiller; deterministic summary remains fallback."
     },
     {
       "id": "init-command-user-prompt",

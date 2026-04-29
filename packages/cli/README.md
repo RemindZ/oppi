@@ -49,6 +49,7 @@ pnpm --filter @oppiai/cli start doctor
 - honors `OPPI_AGENT_DIR` and `--agent-dir <dir>`
 - passes ordinary Pi flags and messages through unchanged
 - provides `oppi doctor [--json]`
-- provides safe Hoppi bridge commands: `oppi mem status|setup|dashboard [--json]`
+- provides safe Hoppi bridge commands: `oppi mem status|install|setup|dashboard [--json]`
+- installs optional Hoppi backend explicitly with `oppi mem install`; OPPi never installs `@oppiai/hoppi-memory` silently
 
 Use `--with-pi-extensions` to allow normal Pi extension discovery in addition to OPPi.

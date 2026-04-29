@@ -33,10 +33,11 @@ const WIDGET_KEY = "oppi.background.status";
 const COMPLETION_NOTICE_MS = 10_000;
 const MAX_COMPLETED_IN_PANEL = 20;
 // Alt+Shift+letter is not reliably encoded by legacy terminals/VS Code's
-// integrated terminal unless enhanced keyboard protocols are active. Ctrl+Alt+B
-// has a legacy ESC+Ctrl-B form that Pi's key parser recognizes.
-const BACKGROUND_TASKS_SHORTCUT = "ctrl+alt+b";
-const BACKGROUND_TASKS_SHORTCUT_LABEL = "Ctrl+Alt+B";
+// integrated terminal unless enhanced keyboard protocols are active. Ctrl+Alt+T
+// has a legacy ESC+Ctrl-T form that Pi's key parser recognizes and avoids
+// VS Code's built-in Ctrl+Alt+B binding.
+export const BACKGROUND_TASKS_SHORTCUT = "ctrl+alt+t";
+export const BACKGROUND_TASKS_SHORTCUT_LABEL = "Ctrl+Alt+T";
 const contexts = new Set<ExtensionContext>();
 const tasks = new Map<string, BackgroundTaskRecord>();
 const notices: Notice[] = [];

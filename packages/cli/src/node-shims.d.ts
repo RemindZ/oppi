@@ -2,6 +2,7 @@ declare const process: {
   argv: string[];
   env: Record<string, string | undefined>;
   execPath: string;
+  platform: string;
   versions: { node: string };
   exitCode?: number;
   cwd(): string;

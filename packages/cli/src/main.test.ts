@@ -15,6 +15,7 @@ test("parseOppiArgs handles OPPi-owned commands", () => {
   assert.deepEqual(parseOppiArgs(["doctor", "--json"]), { type: "doctor", json: true, agentDir: undefined });
   assert.deepEqual(parseOppiArgs(["--agent-dir", "./agent", "doctor"]), { type: "doctor", json: false, agentDir: "./agent" });
   assert.deepEqual(parseOppiArgs(["mem", "status", "--json"]), { type: "mem", subcommand: "status", json: true });
+  assert.deepEqual(parseOppiArgs(["mem", "install", "--json"]), { type: "mem", subcommand: "install", json: true });
 });
 
 test("parseOppiArgs strips OPPi flags and passes Pi args through", () => {

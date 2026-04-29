@@ -79,6 +79,7 @@ Useful commands:
 oppi --version
 oppi doctor [--json]
 oppi mem status [--json]
+oppi mem install [--json]
 oppi mem setup
 oppi mem dashboard
 ```
@@ -107,12 +108,12 @@ The current Pi package adds:
 - cyan themes selectable with `/theme` or the docked live-preview `/themes` picker: `oppi-cyan` dark mode and `oppi-cyan-light` light mode
 - collapsible, digest-first tool rendering with one-line recaps, grouped completed read/search/list/shell batches, and quieter hidden-thinking placeholders before tool-only turns
 - `/usage` for unified model/subscription/context usage across connected non-Claude providers, including live ChatGPT/Codex buckets, plus `/stats` as an OPPi alias
-- a custom footer below the chat input with 5-hour, weekly, selected-model, permission, Hoppi `mem:*`, and context usage status without token/cost clutter
+- a configurable custom footer below the chat input with session/weekly usage display levels, selected-model, permission, Hoppi `mem:*`, context usage, and a toggleable second hotkey-help bar (`Alt+K`; `Ctrl+Alt+K` remains an alias)
 - OPPi defaults for Pi settings: steering mode `all`, follow-up mode `all`, and collapsed changelog
-- todo-aware scoped compaction: during long todo-driven runs, OPPi evaluates context after `todo_write` checkpoints; by default at 65% context it compacts around remaining todos, stores completed todo outcomes in compaction metadata, and carries them into the final response. After that archive point, future todo updates can prune completed items from the visible list. This is separate from idle compaction.
+- todo-aware scoped compaction: during long todo-driven runs, OPPi evaluates context after `todo_write` checkpoints; by default at 65% context it compacts around remaining todos, stores completed todo outcomes in compaction metadata, and carries them into the final response alongside post-compaction work/validation. After that archive point, future todo updates can prune completed items from the visible list. This is separate from idle compaction.
 - optional Meridian integration for using a Claude subscription through the official Claude Code SDK bridge (`/meridian start|stop|status`, provider `meridian`)
 - docked command panels: selection/input/custom command UIs render directly above the text input and push chat content upward instead of floating over it
-- `/settings:oppi` opens the unified OPPi settings panel for General, Memory, Compaction, Permissions, and Theme; Stage 1 uses this namespaced command until the OPPi wrapper can own `/settings`
+- `/settings:oppi` opens the unified OPPi settings panel for General, Footer, Memory, Compaction, Permissions, and Theme; Stage 1 uses this namespaced command until the OPPi wrapper can own `/settings`
 - `/exit` shuts down the current OPPi session gracefully, allowing Hoppi memory recaps and exit sync to run when enabled
 - `/oppi-terminal-setup` installs VS Code/Cursor terminal forwarding for Shift+Enter, Ctrl+Enter, and Alt+Up
 - normal terminal mouse selection/copy behavior is preserved; use Shift+Enter for newlines and Alt+Up to edit queued messages
@@ -155,6 +156,7 @@ Message routing defaults:
 - `Enter` sends normally while idle and queues a follow-up while the agent is busy.
 - `Ctrl+Enter` uses Pi's normal submit path, which steers while the agent is busy.
 - `Alt+Enter` also queues a follow-up.
+- Queued follow-ups are tracked as a chain tied to the original standalone request. Hidden chain context tells the model when a later follow-up should produce the combined final answer for the initial request plus all follow-up tasks, including follow-ups queued while another follow-up is already running.
 - `Alt+Up` restores queued follow-up/steering messages into the editor so you can edit them before they are sent. OPPi reserves Alt+Up for this queue restore in the main editor; if it behaves like history-up in a VS Code/Cursor terminal, run `/oppi-terminal-setup`.
 
 In Cursor/VS Code terminals, run this from OPPi to install the Shift+Enter/Ctrl+Enter/Alt+Up forwarding rules automatically:
@@ -180,14 +182,19 @@ When launched through `oppi`, OPPi-specific settings live under the `oppi` key i
 Open `/settings:oppi` for the consolidated OPPi settings surface. The tabs are:
 
 - `⚙️ General` — command/status notes for the Stage 1 settings surface
-- `🧠 Memory` — core Hoppi feature toggles and a shortcut to the dashboard for detailed memory/sync settings
+- `🧭 Footer` — main bottom-bar elements, usage display level (`session + weekly`, `session`, `weekly`, `off`), and the toggleable hotkey-help bar
+- `🧠 Memory` — core Hoppi feature toggles, explicit npm install/update for `@oppiai/hoppi-memory`, first-start install-offer control, and a shortcut to the dashboard for detailed memory/sync settings
 - `🗜️ Compaction` — idle compaction and todo-aware smart compact thresholds
 - `🔐 Permissions` — OPPi permission mode, auto-review timeout, review history, and session cache reset
 - `🎨 Theme` — OPPi theme switching and live preview
 
 Pi's built-in `/settings` remains untouched until the OPPi wrapper owns command routing.
 
+On first interactive startup, if Memory is enabled but the Hoppi backend package is missing, OPPi asks whether to install `@oppiai/hoppi-memory` into its managed npm package directory (`~/.oppi/packages`). Choosing No dismisses that first-start offer; the Memory tab can still install/update Hoppi later, and `oppi mem install` provides the same explicit install path from the shell.
+
 Use `/memory` to open the Hoppi dashboard. Detailed Hoppi controls live there: memory CRUD, project scope, stale filtering, private-GitHub sync setup, optional passphrase encryption, manual pull/push/sync, tombstone status, and conflict resolution.
+
+Temporary bridge: `/memory-maintenance [dry-run|apply] [--yes] [--limit N]` runs an explicit cleanup/consolidation pass for the current project store. It defaults to GPT-5.4 mini, does not try Claude/Meridian, shows the model ultimately used, and asks before applying unless `--yes` is supplied.
 
 Open `/permissions` to choose tool-call policy from a list or use `/settings:oppi permissions`:
 

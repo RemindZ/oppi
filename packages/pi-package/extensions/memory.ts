@@ -3,6 +3,8 @@ import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { execFileSync, spawn } from "node:child_process";
+import { createHash } from "node:crypto";
+import { complete } from "@mariozechner/pi-ai";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext, Theme } from "@mariozechner/pi-coding-agent";
 import { getAgentDir } from "@mariozechner/pi-coding-agent";
 import type { Component } from "@mariozechner/pi-tui";
@@ -31,6 +33,7 @@ import {
 } from "./permissions";
 import { askUserTimeoutLabel, ASK_USER_TIMEOUT_MINUTES, coerceAskUserTimeout, readAskUserConfig, writeGlobalAskUserConfig, type AskUserConfig } from "./ask-user";
 import { currentThemeName, normalizeThemeName, openThemePreview, OPPI_THEMES, setOppiTheme, themeLabel } from "./themes";
+import { FOOTER_CONFIG_CHANGED_EVENT, FOOTER_HELP_SHORTCUT_LABEL, FOOTER_USAGE_DISPLAY_VALUES, footerUsageDisplayLabel, readFooterConfig, writeFooterConfig, type FooterConfig } from "./usage";
 
 type SyncConflictMode = "keep-both" | "keep-local" | "overwrite-local";
 type SyncDirection = "pull" | "push" | "both";
@@ -39,6 +42,7 @@ type EncryptionMode = "none" | "passphrase";
 type PassphraseSource = "env" | "file";
 type MemoryAgentModel = "auto" | "claude" | "gpt";
 type DeepMemoryModel = "auto" | "sonnet" | "gpt-5.5";
+type HoppiInstallOffer = "ask" | "dismissed";
 
 type MemorySyncConfig = {
   enabled: boolean;
@@ -64,6 +68,7 @@ type MemoryConfig = {
   turnSummaries: boolean;
   idleConsolidation: boolean;
   dashboardPort: "auto" | number;
+  hoppiInstallOffer: HoppiInstallOffer;
   sync: MemorySyncConfig;
 };
 
@@ -83,10 +88,12 @@ type HoppiBackend = {
     project: HoppiProjectRef;
     content: string;
     tags?: string[];
+    layer?: "buffer" | "episodic" | "semantic" | "trace";
     pinned?: boolean;
     confidence?: "verified" | "observed" | "inferred" | "stale";
     source?: string;
     sourceSessionId?: string | null;
+    parents?: string[];
   }): Promise<{ id: string }>;
   recall?(input: {
     project: HoppiProjectRef;
@@ -95,6 +102,13 @@ type HoppiBackend = {
     limit?: number;
     includeSuperseded?: boolean;
   }): Promise<{ memories: unknown[]; contextMarkdown: string; omittedReason?: string }>;
+  list?(input: {
+    project: HoppiProjectRef;
+    includeSuperseded?: boolean;
+    pinnedOnly?: boolean;
+    limit?: number;
+  }): Promise<MemoryMaintenanceEntry[]>;
+  forget?(id: string): Promise<void>;
   buildStartupContext?(input: {
     project: HoppiProjectRef;
     maxMemories?: number;
@@ -124,22 +138,32 @@ type HoppiModule = {
   rebuildEmbeddings?: (root: string, options?: Record<string, unknown>) => Promise<{ available: boolean; rebuilt: number; error?: string }>;
 };
 
-type SettingsAction = "close" | "setup-sync" | "sync-now" | "pull-now" | "push-now" | "open-dashboard" | "permission-history" | "permission-clear" | "permission-reviewer-model" | "permission-status" | "theme-preview";
+type SettingsAction = "close" | "install-hoppi" | "setup-sync" | "sync-now" | "pull-now" | "push-now" | "open-dashboard" | "permission-history" | "permission-clear" | "permission-reviewer-model" | "permission-status" | "theme-preview";
 
+const HOPPI_PACKAGE_NAME = "@oppiai/hoppi-memory";
+const HOPPI_LEGACY_PACKAGE_NAME = "hoppi-memory";
+const HOPPI_PACKAGE_SPEC = `${HOPPI_PACKAGE_NAME}@^0.1.0`;
 const DEFAULT_PASSPHRASE_ENV = "OPPI_HOPPI_SYNC_PASSPHRASE";
 const DEFAULT_SYNC_REPO_NAME = "hoppi-memories";
-const SETTINGS_TABS = ["⚙️ General", "🧠 Memory", "🗜️ Compaction", "🔐 Permissions", "🎨 Theme"] as const;
+const SETTINGS_TABS = ["⚙️ General", "🧭 Footer", "🧠 Memory", "🗜️ Compaction", "🔐 Permissions", "🎨 Theme"] as const;
 const BACKGROUND_VALUES: BackgroundSync[] = ["off", "15m", "30m", "60m"];
 const CONFLICT_VALUES: SyncConflictMode[] = ["keep-both", "keep-local", "overwrite-local"];
 const AGENT_MODEL_VALUES: MemoryAgentModel[] = ["auto", "claude", "gpt"];
 const DEEP_MODEL_VALUES: DeepMemoryModel[] = ["auto", "sonnet", "gpt-5.5"];
+const HOPPI_INSTALL_OFFER_VALUES: HoppiInstallOffer[] = ["ask", "dismissed"];
 const PERMISSION_TIMEOUT_SECONDS = [5, 15, 30, 45, 60, 90, 120, 180] as const;
 const MEMORY_CONTEXT_TYPE = "oppi-memory-context";
+const MEMORY_DISTILLER_MAX_PROMPT_CHARS = 4_000;
 const MEMORY_IDLE_CHECK_MS = 60_000;
 const MEMORY_IDLE_CONSOLIDATE_AFTER_MS = 90_000;
 
 let dashboardHandle: { url: string; stop(): Promise<void> } | undefined;
 let startupSyncStarted = false;
+let hoppiInstallPromise: Promise<HoppiInstallResult> | undefined;
+
+type HoppiInstallResult =
+  | { ok: true; modulePath: string; output: string }
+  | { ok: false; error: string; output: string };
 
 function globalSettingsPath(): string {
   const explicit = process.env.OPPI_SETTINGS_PATH?.trim();
@@ -190,6 +214,10 @@ function normalizeDeepModel(value: unknown): DeepMemoryModel {
   return DEEP_MODEL_VALUES.includes(value as DeepMemoryModel) ? value as DeepMemoryModel : "auto";
 }
 
+function normalizeHoppiInstallOffer(value: unknown): HoppiInstallOffer {
+  return value === "dismissed" ? "dismissed" : "ask";
+}
+
 function normalizeSyncConfig(value: Partial<MemorySyncConfig> | undefined): MemorySyncConfig {
   return {
     enabled: value?.enabled === true,
@@ -217,6 +245,7 @@ function normalizeMemoryConfig(value: Partial<MemoryConfig> | undefined): Memory
     turnSummaries: value?.turnSummaries !== false,
     idleConsolidation: value?.idleConsolidation !== false,
     dashboardPort: normalizeDashboardPort(value?.dashboardPort),
+    hoppiInstallOffer: normalizeHoppiInstallOffer(value?.hoppiInstallOffer),
     sync: normalizeSyncConfig(value?.sync),
   };
 }
@@ -249,6 +278,40 @@ function resolveUserPath(value: string): string {
   return isAbsolute(expanded) ? expanded : resolve(process.cwd(), expanded);
 }
 
+function oppiHome(): string {
+  const explicit = process.env.OPPI_HOME?.trim();
+  return explicit ? resolveUserPath(explicit) : join(homedir(), ".oppi");
+}
+
+function managedPackagesDir(): string {
+  return join(oppiHome(), "packages");
+}
+
+function packageRootFromNodeModules(nodeModulesDir: string, packageName: string): string {
+  return join(nodeModulesDir, ...packageName.split("/"));
+}
+
+function managedHoppiModulePath(packageName = HOPPI_PACKAGE_NAME): string {
+  return join(packageRootFromNodeModules(join(managedPackagesDir(), "node_modules"), packageName), "dist", "index.js");
+}
+
+function ensureManagedPackageRoot(): string {
+  const root = managedPackagesDir();
+  mkdirSync(root, { recursive: true });
+  const packageJson = join(root, "package.json");
+  if (!existsSync(packageJson)) {
+    writeFileSync(packageJson, `${JSON.stringify({ private: true, name: "oppi-managed-packages", description: "OPPi managed optional packages." }, null, 2)}\n`, "utf8");
+  }
+  return root;
+}
+
+function npmSpawnCommand(args: string[]): { command: string; args: string[] } {
+  // Directly spawning npm.cmd can throw EINVAL under some Windows terminals.
+  // Route through cmd.exe explicitly instead of relying on shell lookup.
+  if (process.platform === "win32") return { command: "cmd.exe", args: ["/d", "/s", "/c", "npm", ...args] };
+  return { command: "npm", args };
+}
+
 function formatPath(value: string | undefined): string {
   if (!value) return "not configured";
   const home = homedir();
@@ -262,6 +325,8 @@ function extensionDir(): string {
 async function loadHoppi(): Promise<HoppiModule> {
   const candidates = [
     process.env.OPPI_HOPPI_MODULE,
+    managedHoppiModulePath(HOPPI_PACKAGE_NAME),
+    managedHoppiModulePath(HOPPI_LEGACY_PACKAGE_NAME),
     join(extensionDir(), "..", "..", "..", "..", "hoppi-memory", "dist", "index.js"),
   ].filter((candidate): candidate is string => Boolean(candidate));
 
@@ -274,11 +339,112 @@ async function loadHoppi(): Promise<HoppiModule> {
     }
   }
 
-  try {
-    return await import("hoppi-memory") as HoppiModule;
-  } catch (error) {
-    throw new Error(`Hoppi package is not available. Build/install hoppi-memory or set OPPI_HOPPI_MODULE. (${error instanceof Error ? error.message : String(error)})`);
+  const packageNames = [HOPPI_PACKAGE_NAME, HOPPI_LEGACY_PACKAGE_NAME];
+  let lastError: unknown;
+  for (const packageName of packageNames) {
+    try {
+      return await import(packageName) as HoppiModule;
+    } catch (error) {
+      lastError = error;
+    }
   }
+
+  throw new Error(`Hoppi package is not available. Install ${HOPPI_PACKAGE_NAME} from /settings:oppi → Memory, run \`oppi mem install\`, or set OPPI_HOPPI_MODULE. (${lastError instanceof Error ? lastError.message : String(lastError)})`);
+}
+
+function isHoppiMissingError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes("Hoppi package is not available")
+    || message.includes("Hoppi module not found")
+    || message.includes(`Cannot find module '${HOPPI_PACKAGE_NAME}'`)
+    || message.includes(`Cannot find package "${HOPPI_PACKAGE_NAME}"`)
+    || message.includes("Cannot find module 'hoppi-memory'")
+    || message.includes('Cannot find package "hoppi-memory"');
+}
+
+function hoppiSetupMessage(): string {
+  return `Hoppi memory needs setup. Install ${HOPPI_PACKAGE_NAME} from /settings:oppi → Memory, run \`oppi mem install\`, or set OPPI_HOPPI_MODULE to a built Hoppi dist/index.js.`;
+}
+
+async function isHoppiMissing(): Promise<boolean> {
+  try {
+    await loadHoppi();
+    return false;
+  } catch (error) {
+    return isHoppiMissingError(error);
+  }
+}
+
+async function installHoppiPackage(): Promise<HoppiInstallResult> {
+  if (hoppiInstallPromise) return hoppiInstallPromise;
+  hoppiInstallPromise = new Promise<HoppiInstallResult>((resolveInstall) => {
+    const root = ensureManagedPackageRoot();
+    const args = ["install", HOPPI_PACKAGE_SPEC, "--save-exact", "--no-audit", "--no-fund"];
+    let output = "";
+    const append = (chunk: unknown) => {
+      output += String(chunk);
+      if (output.length > 12_000) output = output.slice(-12_000);
+    };
+    const npm = npmSpawnCommand(args);
+    const child = spawn(npm.command, npm.args, {
+      cwd: root,
+      stdio: ["ignore", "pipe", "pipe"],
+      env: { ...process.env, npm_config_loglevel: process.env.npm_config_loglevel ?? "warn" },
+    });
+    child.stdout?.on("data", append);
+    child.stderr?.on("data", append);
+    child.on("error", (error) => resolveInstall({ ok: false, error: error.message, output }));
+    child.on("close", (code) => {
+      const modulePath = managedHoppiModulePath(HOPPI_PACKAGE_NAME);
+      if (code === 0 && existsSync(modulePath)) resolveInstall({ ok: true, modulePath, output });
+      else resolveInstall({ ok: false, error: `npm install exited with code ${code ?? "unknown"}`, output });
+    });
+  }).finally(() => {
+    hoppiInstallPromise = undefined;
+  });
+  return hoppiInstallPromise;
+}
+
+async function installHoppiFromUi(ctx: ExtensionContext): Promise<boolean> {
+  publishStatus(ctx, "mem:install…");
+  if (ctx.hasUI) ctx.ui.notify(`Installing ${HOPPI_PACKAGE_NAME} into ${formatPath(managedPackagesDir())}…`, "info");
+  const result = await installHoppiPackage();
+  if (result.ok === false) {
+    publishStatus(ctx, "mem:setup");
+    const tail = result.output.trim() ? `\n${truncateText(result.output, 1_200)}` : "";
+    if (ctx.hasUI) ctx.ui.notify(`Hoppi install failed: ${result.error}${tail}`, "warning");
+    return false;
+  }
+
+  const config = readMemoryConfig(ctx.cwd);
+  writeMemoryConfig({ ...config, enabled: true, hoppiInstallOffer: "ask" });
+  publishStatus(ctx, "mem:on");
+  if (ctx.hasUI) ctx.ui.notify(`Installed Hoppi backend: ${formatPath(result.modulePath)}.`, "info");
+  return true;
+}
+
+async function maybeOfferHoppiInstall(ctx: ExtensionContext): Promise<boolean> {
+  const config = readMemoryConfig(ctx.cwd);
+  if (!ctx.hasUI || !config.enabled || config.hoppiInstallOffer === "dismissed") return false;
+  try {
+    await loadHoppi();
+    return false;
+  } catch (error) {
+    if (!isHoppiMissingError(error)) return false;
+  }
+
+  publishStatus(ctx, "mem:setup");
+  const accepted = await ctx.ui.confirm(
+    "Install Hoppi memory?",
+    `OPPi memory is enabled, but ${HOPPI_PACKAGE_NAME} is not installed. Install it now with npm into ${formatPath(managedPackagesDir())}? Choose No to keep working; you can install later from /settings:oppi → Memory.`,
+  );
+  if (!accepted) {
+    writeMemoryConfig({ ...config, hoppiInstallOffer: "dismissed" });
+    publishStatus(ctx, "mem:setup");
+    ctx.ui.notify("Okay — you can install Hoppi later from /settings:oppi → Memory.", "info");
+    return false;
+  }
+  return installHoppiFromUi(ctx);
 }
 
 function hoppiRoot(hoppi: HoppiModule): string {
@@ -385,11 +551,53 @@ async function openMemoryDashboard(ctx: ExtensionCommandContext): Promise<void> 
       ctx.ui.notify(`Hoppi dashboard: ${url}\nFallback: ${url.replace("hoppi.localhost", "localhost")}`, "info");
     }
   } catch (error) {
-    ctx.ui.notify(`Could not open Hoppi dashboard: ${error instanceof Error ? error.message : String(error)}`, "warning");
+    ctx.ui.notify(isHoppiMissingError(error) ? hoppiSetupMessage() : `Could not open Hoppi dashboard: ${error instanceof Error ? error.message : String(error)}`, isHoppiMissingError(error) ? "info" : "warning");
   }
 }
 
 type AgentMessageLike = Record<string, any>;
+
+type DistilledTurnMemory = {
+  remember?: boolean;
+  request?: string;
+  completed?: string[];
+  learned?: string[];
+  decisions?: string[];
+  next?: string[];
+  files?: string[];
+  tags?: string[];
+};
+
+type ModelTurnSummary =
+  | { kind: "memory"; content: string; tags: string[] }
+  | { kind: "skip" };
+
+const MEMORY_DISTILLER_PROMPT = `You are OPPi's memory distiller. You observe one completed coding-agent turn and decide whether to save a compact memory for future sessions.
+
+Record durable technical signal only:
+- shipped changes, bug fixes, configuration/docs updates, tests or validation outcomes
+- decisions, trade-offs, gotchas, root causes, user preferences, and concrete next steps
+- specific file paths or components when they help future recall
+
+Skip routine chatter, empty status checks, raw terminal dumps, package installs with no finding, and repeated information already obvious from the turn.
+
+Return only JSON matching this shape:
+{
+  "remember": true | false,
+  "request": "short user request",
+  "completed": ["what changed or was delivered"],
+  "learned": ["durable finding, root cause, gotcha, or behavior"],
+  "decisions": ["decision or trade-off"],
+  "next": ["active next step"],
+  "files": ["path/or/component"],
+  "tags": ["short-topic"]
+}
+
+Rules:
+- Max 3 items in each array, max 18 words per item.
+- Use standalone statements; avoid pronouns without a referent.
+- Do not describe the act of summarizing or observing.
+- If remember is false, all arrays may be empty.`;
 
 function projectRef(ctx: ExtensionContext): HoppiProjectRef {
   return { cwd: ctx.cwd };
@@ -451,8 +659,26 @@ function messagesByRole(messages: readonly AgentMessageLike[], role: string): st
   return messages
     .filter((message) => message.role === role)
     .map(messageText)
-    .map((text) => truncateText(text, 1_200))
+    .map((text) => truncateText(text, 900))
     .filter((text) => text.length > 0 && !isLowSignalMemoryText(text));
+}
+
+function uniqueRecentTexts(texts: readonly string[], limit: number): string[] {
+  const seen = new Set<string>();
+  const selected: string[] = [];
+  for (const text of [...texts].reverse()) {
+    const key = compactWhitespace(text).toLowerCase().slice(0, 180);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    selected.push(text);
+    if (selected.length >= limit) break;
+  }
+  return selected.reverse();
+}
+
+function memorySnippet(text: string | undefined, max: number): string {
+  if (!text) return "";
+  return truncateText(text.replace(/\x1b\[[0-9;]*m/g, ""), max);
 }
 
 function buildTurnSummary(messages: readonly AgentMessageLike[]): string | undefined {
@@ -460,9 +686,9 @@ function buildTurnSummary(messages: readonly AgentMessageLike[]): string | undef
   const assistantTexts = messagesByRole(messages, "assistant");
   if (userTexts.length === 0 || assistantTexts.length === 0) return undefined;
 
-  const user = truncateText(userTexts.at(-1) ?? userTexts.join("\n"), 700);
-  const assistant = truncateText(assistantTexts.join("\n"), 1_000);
-  if (`${user}${assistant}`.length < 100) return undefined;
+  const user = memorySnippet(userTexts.at(-1), 360);
+  const assistant = memorySnippet(assistantTexts.at(-1), 520);
+  if (`${user}${assistant}`.length < 80) return undefined;
 
   const lines = [
     `Turn summary (${new Date().toISOString()})`,
@@ -479,22 +705,1066 @@ function buildSessionRecap(ctx: ExtensionContext): string | undefined {
     .filter((entry: any) => entry.type === "message" && entry.message)
     .map((entry: any) => entry.message as AgentMessageLike)
     .filter((message) => !isMemoryContextMessage(message));
-  const userTexts = messagesByRole(messages, "user").slice(-10);
-  const assistantTexts = messagesByRole(messages, "assistant").slice(-8);
+  const userTexts = uniqueRecentTexts(messagesByRole(messages, "user"), 4);
+  const assistantTexts = uniqueRecentTexts(messagesByRole(messages, "assistant"), 4);
   if (userTexts.length === 0 && assistantTexts.length === 0) return undefined;
 
-  const sessionId = sessionSourceId(ctx) ?? "unknown-session";
   const lines = [
     `Session recap (${new Date().toISOString()})`,
-    `Session: ${sessionId}`,
-    `Project: ${ctx.cwd}`,
     "Recent user goals:",
-    ...userTexts.map((text) => `- ${truncateText(text, 260)}`),
+    ...userTexts.map((text) => `- ${memorySnippet(text, 180)}`),
     "Recent assistant outcomes:",
-    ...assistantTexts.map((text) => `- ${truncateText(text, 320)}`),
+    ...assistantTexts.map((text) => `- ${memorySnippet(text, 220)}`),
   ];
   const recap = lines.join("\n");
-  return recap.length >= 120 ? recap : undefined;
+  return recap.length >= 90 ? recap : undefined;
+}
+
+function parseJsonObject(text: string): unknown {
+  const trimmed = text.trim().replace(/^```(?:json)?\s*/i, "").replace(/```$/i, "").trim();
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    const start = trimmed.indexOf("{");
+    const end = trimmed.lastIndexOf("}");
+    if (start >= 0 && end > start) return JSON.parse(trimmed.slice(start, end + 1));
+    throw new Error("No JSON object found");
+  }
+}
+
+function stringArray(value: unknown, limit: number, maxChars: number): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((item): item is string => typeof item === "string")
+    .map((item) => memorySnippet(item, maxChars))
+    .filter(Boolean)
+    .slice(0, limit);
+}
+
+function distillerTags(memory: DistilledTurnMemory): string[] {
+  return stringArray(memory.tags, 4, 40)
+    .map((tag) => tag.toLowerCase().replace(/[^a-z0-9:_-]+/g, "-").replace(/^-+|-+$/g, ""))
+    .filter((tag) => tag.length >= 2 && !tag.startsWith("project:"));
+}
+
+function distilledTurnContent(memory: DistilledTurnMemory): string | undefined {
+  if (memory.remember === false) return undefined;
+  const request = memorySnippet(memory.request, 220);
+  const completed = stringArray(memory.completed, 3, 180);
+  const learned = stringArray(memory.learned, 3, 180);
+  const decisions = stringArray(memory.decisions, 2, 180);
+  const next = stringArray(memory.next, 2, 160);
+  const files = stringArray(memory.files, 6, 120);
+  if (!request && completed.length === 0 && learned.length === 0 && decisions.length === 0 && next.length === 0) return undefined;
+
+  const lines = [
+    `Turn memory (${new Date().toISOString()})`,
+    request ? `Request: ${request}` : undefined,
+    completed.length ? "Completed:" : undefined,
+    ...completed.map((item) => `- ${item}`),
+    learned.length ? "Learned:" : undefined,
+    ...learned.map((item) => `- ${item}`),
+    decisions.length ? "Decisions:" : undefined,
+    ...decisions.map((item) => `- ${item}`),
+    next.length ? "Next:" : undefined,
+    ...next.map((item) => `- ${item}`),
+    files.length ? `Files: ${files.join(", ")}` : undefined,
+  ].filter(Boolean) as string[];
+
+  const content = lines.join("\n");
+  return content.length >= 80 ? content : undefined;
+}
+
+function shouldUseModelDistiller(config: MemoryConfig): boolean {
+  const explicit = process.env.OPPI_MEMORY_DISTILL_AI?.trim().toLowerCase();
+  if (explicit === "1" || explicit === "true" || explicit === "yes") return true;
+  if (explicit === "0" || explicit === "false" || explicit === "no") return false;
+  return config.agentModel !== "auto";
+}
+
+async function buildModelTurnSummary(messages: readonly AgentMessageLike[], ctx: ExtensionContext, config: MemoryConfig): Promise<ModelTurnSummary | undefined> {
+  if (!shouldUseModelDistiller(config)) return undefined;
+  const model = ctx.model;
+  if (!model) return undefined;
+  const auth = await ctx.modelRegistry.getApiKeyAndHeaders(model).catch(() => undefined);
+  if (!auth?.ok || !auth.apiKey) return undefined;
+
+  const userTexts = messagesByRole(messages, "user");
+  const assistantTexts = messagesByRole(messages, "assistant");
+  const user = memorySnippet(userTexts.at(-1), 1_200);
+  const assistant = memorySnippet(assistantTexts.at(-1), 2_000);
+  if (!user || !assistant) return undefined;
+
+  const prompt = [
+    MEMORY_DISTILLER_PROMPT,
+    "",
+    "Turn input:",
+    JSON.stringify({ user, assistant }, null, 2),
+  ].join("\n");
+
+  const response = await complete(
+    model,
+    {
+      messages: [
+        {
+          role: "user" as const,
+          content: [{ type: "text" as const, text: truncateText(prompt, MEMORY_DISTILLER_MAX_PROMPT_CHARS) }],
+          timestamp: Date.now(),
+        },
+      ],
+    },
+    {
+      apiKey: auth.apiKey,
+      headers: auth.headers,
+      maxTokens: 420,
+      reasoningEffort: "minimal",
+      signal: ctx.signal,
+    },
+  );
+
+  const raw = response.content
+    .filter((part): part is { type: "text"; text: string } => part.type === "text")
+    .map((part) => part.text)
+    .join("\n");
+  const parsed = parseJsonObject(raw);
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return undefined;
+  const distilled = parsed as DistilledTurnMemory;
+  if (distilled.remember === false) return { kind: "skip" };
+  const content = distilledTurnContent(distilled);
+  return content ? { kind: "memory", content, tags: distillerTags(distilled) } : undefined;
+}
+
+type MemoryMaintenanceEntry = {
+  id: string;
+  content: string;
+  tags?: string[];
+  pinned?: boolean;
+  starred?: boolean;
+  layer?: string;
+  confidence?: string;
+  source?: string;
+  created?: string;
+  created_at?: string;
+  updated_at?: string;
+  strength?: number;
+  superseded_by?: string | null;
+  parents?: string[];
+};
+
+type MemoryMaintenanceConsolidation = {
+  title?: string;
+  content: string;
+  sourceIds: string[];
+  tags: string[];
+};
+
+type MemoryMaintenancePlan = {
+  deleteIds: string[];
+  deleteReasons: Map<string, string>;
+  consolidate: MemoryMaintenanceConsolidation[];
+  notes: string[];
+};
+
+type MemoryMaintenanceArgs = {
+  dryRun: boolean;
+  yes: boolean;
+  help: boolean;
+  limit: number;
+};
+
+type MaintenanceModelCandidate = {
+  model: any;
+  label: string;
+  reason: string;
+  rank: number;
+};
+
+type MaintenancePlanResult = {
+  plan: MemoryMaintenancePlan;
+  modelLabel: string;
+  modelReason: string;
+  attempts: string[];
+};
+
+type MemoryMaintenanceApplyResult = {
+  created: string[];
+  deleted: string[];
+  skippedPinned: string[];
+  skippedVerified: string[];
+  consolidateResult?: unknown;
+};
+
+type DreamProjectState = {
+  dreamCount: number;
+  lastDreamAt?: string;
+  lastSummary?: string;
+};
+
+type DreamStateFile = {
+  projects?: Record<string, DreamProjectState>;
+};
+
+type DreamStageResult = {
+  created: string[];
+  deleted: string[];
+  skippedPinned: string[];
+  skippedVerified: string[];
+  notes: string[];
+};
+
+type DreamRunResult = {
+  beforeCount: number;
+  afterCount?: number;
+  dreamCount: number;
+  stage1: DreamStageResult;
+  stage2?: DreamStageResult & { modelLabel: string; modelReason: string };
+  stage3?: (DreamStageResult & { modelLabel: string; modelReason: string }) | { skipped: true; reason: string };
+};
+
+const MEMORY_MAINTENANCE_DEFAULT_LIMIT = 220;
+const MEMORY_MAINTENANCE_HARD_LIMIT = 400;
+const MEMORY_MAINTENANCE_CONTENT_CHARS = 520;
+const MEMORY_MAINTENANCE_MAX_PROMPT_CHARS = 90_000;
+const MEMORY_MAINTENANCE_MAX_OUTPUT_TOKENS = 4_000;
+const MEMORY_DEEP_MAINTENANCE_MAX_PROMPT_CHARS = 220_000;
+const MEMORY_DEEP_MAINTENANCE_MAX_OUTPUT_TOKENS = 8_000;
+const MEMORY_DREAM_TRIGGER_COUNT = 60;
+const MEMORY_DREAM_TARGET_COUNT = 50;
+const MEMORY_DREAM_DEEP_EVERY = 5;
+const MEMORY_DREAM_MIN_INTERVAL_MS = 12 * 60 * 60 * 1_000;
+const MEMORY_MAINTENANCE_MODEL_SPECS = [
+  "openai-codex/gpt-5.4-mini",
+  "openai/gpt-5.4-mini",
+  "azure-openai-responses/gpt-5.4-mini",
+  "opencode/gpt-5.4-mini",
+];
+const MEMORY_DEEP_GPT_MODEL_SPECS = [
+  "openai-codex/gpt-5.5",
+  "openai/gpt-5.5",
+  "azure-openai-responses/gpt-5.5",
+  "opencode/gpt-5.5",
+];
+const MEMORY_DEEP_SONNET_MODEL_SPECS = [
+  "meridian/claude-sonnet-4-6",
+  "anthropic/claude-sonnet-4-6",
+  "anthropic/claude-sonnet-4-5-20250929-v1:0",
+  "openrouter/anthropic/claude-sonnet-4-6",
+];
+
+const MEMORY_MAINTENANCE_PROMPT = `You are OPPi's Stage 2 Hoppi dream worker: age-aware memory curation after duplicate cleanup.
+
+Goal:
+- preserve durable decisions, user preferences, gotchas, architecture facts, release/package status, completed outcomes, and current next steps
+- slowly compress older nitty-gritty code details into durable "why/what changed" facts
+- keep recent implementation details when they are still likely useful for active work
+- delete only irrelevant/noisy memories or memories fully replaced by a better consolidation
+
+Age-aware policy:
+- Newer memories may keep changed files, exact commands, and implementation details when useful.
+- Middle-aged memories should keep decisions, changed areas, and gotchas; compress tool logs and step-by-step chatter.
+- Older memories should keep architecture intent, product decisions, user preferences, recurring gotchas, release state, and roadmap context; drop low-level code churn unless it still explains current architecture.
+- If two memories conflict about the same subsystem, prefer newer/current facts, but preserve the older fact only if it explains historical context.
+
+Hard safety rules:
+- Pinned/starred records are protected: never put them in delete, and only cite them as sourceIds when the source should remain.
+- Never delete verified memories unless they are sourceIds of a better verified consolidation you create in this response.
+- Auto-delete only obvious duplicates, noise, stale inferred summaries, or memories fully superseded by your consolidation.
+- Do not invent facts. If uncertain, keep.
+
+Return only one valid JSON object. The first character must be an opening brace and the last character must be a closing brace. No Markdown, no commentary, no code fences:
+{
+  "delete": [{"id": "mem_or_sem_id", "reason": "short reason"}],
+  "consolidate": [{"title": "short title", "content": "durable memory text", "sourceIds": ["id1", "id2"], "tags": ["short-topic"]}],
+  "notes": ["short operational note"]
+}
+
+Limits:
+- At most 80 delete items.
+- At most 12 consolidated memories.
+- Each consolidated memory should be 2-6 bullets or <=120 words.
+- Use only IDs from the input.`;
+
+const MEMORY_DEEP_MAINTENANCE_PROMPT = `You are OPPi's Stage 3 deep Hoppi dream worker. This is an occasional whole-store reconciliation pass using a larger model.
+
+Goal:
+- load the whole project memory set mentally and eliminate superseded old information
+- when two memories describe the same system and conflict, newer memories win unless the older memory captures important historical rationale
+- produce a small set of durable verified semantic consolidations that preserve architecture decisions, product direction, user preferences, release state, recurring gotchas, and current roadmap
+- remove older implementation details once they are no longer needed, especially repeated file lists, tool logs, and stale turn/session summaries
+
+Hard safety rules:
+- Pinned/starred records are protected: never put them in delete.
+- Never delete verified memories unless they are sourceIds of a better verified consolidation you create in this response.
+- Do not delete merely because a memory is old. Delete because it is superseded, duplicated, noisy, or replaced.
+- Newer facts win over older facts for the same subsystem.
+- Do not invent facts. If uncertain, keep.
+
+Return only one valid JSON object. The first character must be an opening brace and the last character must be a closing brace. No Markdown, no commentary, no code fences:
+{
+  "delete": [{"id": "mem_or_sem_id", "reason": "superseded by newer memory/consolidation"}],
+  "consolidate": [{"title": "short title", "content": "durable memory text", "sourceIds": ["id1", "id2"], "tags": ["short-topic"]}],
+  "notes": ["short operational note"]
+}
+
+Limits:
+- At most 120 delete items.
+- At most 16 consolidated memories.
+- Each consolidated memory should be 2-7 bullets or <=160 words.
+- Use only IDs from the input.`;
+
+function parseMemoryMaintenanceArgs(args: string | undefined): MemoryMaintenanceArgs {
+  const tokens = (args ?? "").trim().split(/\s+/).filter(Boolean);
+  const lower = tokens.map((token) => token.toLowerCase());
+  const help = lower.includes("help") || lower.includes("--help") || lower.includes("-h");
+  const dryRun = lower.includes("dry-run") || lower.includes("dryrun") || lower.includes("preview") || lower.includes("--dry-run");
+  const yes = lower.includes("--yes") || lower.includes("-y");
+  let limit = MEMORY_MAINTENANCE_DEFAULT_LIMIT;
+  for (let i = 0; i < tokens.length; i += 1) {
+    const token = tokens[i]!;
+    const value = token.startsWith("--limit=") ? token.slice("--limit=".length) : token === "--limit" ? tokens[i + 1] : undefined;
+    if (value !== undefined) {
+      const parsed = Number(value);
+      if (Number.isInteger(parsed) && parsed > 0) limit = Math.min(parsed, MEMORY_MAINTENANCE_HARD_LIMIT);
+      if (token === "--limit") i += 1;
+    }
+  }
+  return { dryRun, yes, help, limit };
+}
+
+function modelLabelFor(model: any): string {
+  return `${model?.provider ?? "unknown"}/${model?.id ?? model?.name ?? "unknown"}`;
+}
+
+function findModelSpec(ctx: ExtensionContext, spec: string): any | undefined {
+  const [provider, ...idParts] = spec.split("/");
+  const id = idParts.join("/");
+  if (!provider || !id) return undefined;
+  try {
+    return ctx.modelRegistry.find(provider, id) as any;
+  } catch {
+    return undefined;
+  }
+}
+
+function modelCandidatesFromSpecs(ctx: ExtensionContext, specs: readonly string[], reason: string): MaintenanceModelCandidate[] {
+  return specs.flatMap((spec, index) => {
+    const model = findModelSpec(ctx, spec);
+    return model ? [{ model, label: modelLabelFor(model), reason, rank: index }] : [];
+  });
+}
+
+function preferredMaintenanceModels(ctx: ExtensionContext): MaintenanceModelCandidate[] {
+  return modelCandidatesFromSpecs(ctx, MEMORY_MAINTENANCE_MODEL_SPECS, "default GPT-5.4 mini maintenance model");
+}
+
+function maintenanceModelCandidates(ctx: ExtensionContext, _config: MemoryConfig): MaintenanceModelCandidate[] {
+  const override = process.env.OPPI_MEMORY_MAINTENANCE_MODEL?.trim();
+  if (override) {
+    const model = findModelSpec(ctx, override);
+    return model ? [{ model, label: modelLabelFor(model), reason: `OPPI_MEMORY_MAINTENANCE_MODEL=${override}`, rank: 0 }] : [];
+  }
+
+  return preferredMaintenanceModels(ctx);
+}
+
+function deepMaintenanceModelCandidates(ctx: ExtensionContext, config: MemoryConfig): MaintenanceModelCandidate[] {
+  const override = process.env.OPPI_MEMORY_DEEP_MAINTENANCE_MODEL?.trim() || process.env.OPPI_MEMORY_MAINTENANCE_DEEP_MODEL?.trim();
+  if (override) {
+    const model = findModelSpec(ctx, override);
+    return model ? [{ model, label: modelLabelFor(model), reason: `OPPI_MEMORY_DEEP_MAINTENANCE_MODEL=${override}`, rank: 0 }] : [];
+  }
+  if (config.deepModel === "gpt-5.5") return modelCandidatesFromSpecs(ctx, MEMORY_DEEP_GPT_MODEL_SPECS, "deep dream GPT-5.5 model");
+  if (config.deepModel === "sonnet") return modelCandidatesFromSpecs(ctx, MEMORY_DEEP_SONNET_MODEL_SPECS, "deep dream Sonnet model");
+  return [];
+}
+
+function stripProjectTags(tags: readonly string[] | undefined): string[] {
+  return (tags ?? [])
+    .filter((tag) => !tag.startsWith("project:") && !tag.startsWith("project-alias:") && !tag.startsWith("project-name:"))
+    .slice(0, 14);
+}
+
+function compactMaintenanceContent(content: string): string {
+  return content
+    .replace(/\x1b\[[0-9;]*m/g, "")
+    .replace(/\[tool:[^\]]+\]/g, " ")
+    .replace(/^\s*Tools used:.*$/gim, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .replace(/[ \t]+/g, " ")
+    .trim();
+}
+
+function memoryCreated(entry: MemoryMaintenanceEntry): string | undefined {
+  return entry.created ?? entry.created_at;
+}
+
+function memoryCreatedMs(entry: MemoryMaintenanceEntry): number {
+  const raw = memoryCreated(entry);
+  const parsed = raw ? Date.parse(raw) : NaN;
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function isProtectedMemory(entry: MemoryMaintenanceEntry): boolean {
+  return Boolean(entry.pinned || entry.starred);
+}
+
+function isVerifiedMemory(entry: MemoryMaintenanceEntry): boolean {
+  return entry.confidence === "verified" || entry.source === "oppi:memory-maintenance";
+}
+
+function maintenanceRecord(entry: MemoryMaintenanceEntry, contentChars = MEMORY_MAINTENANCE_CONTENT_CHARS): Record<string, unknown> {
+  return {
+    id: entry.id,
+    protected: isProtectedMemory(entry),
+    layer: entry.layer,
+    confidence: entry.confidence,
+    source: entry.source,
+    strength: typeof entry.strength === "number" ? Number(entry.strength.toFixed(3)) : undefined,
+    created: memoryCreated(entry)?.slice(0, 10),
+    superseded: Boolean(entry.superseded_by),
+    tags: stripProjectTags(entry.tags),
+    content: memorySnippet(compactMaintenanceContent(entry.content), contentChars),
+  };
+}
+
+function buildMemoryMaintenancePrompt(ctx: ExtensionContext, memories: readonly MemoryMaintenanceEntry[], maxChars = MEMORY_MAINTENANCE_MAX_PROMPT_CHARS, contentChars = MEMORY_MAINTENANCE_CONTENT_CHARS): string {
+  const records = memories.map((entry) => maintenanceRecord(entry, contentChars));
+  const prompt = [
+    "Project:",
+    JSON.stringify({ cwd: ctx.cwd, recordCount: records.length, now: new Date().toISOString() }, null, 2),
+    "",
+    "Memory records:",
+    JSON.stringify(records, null, 2),
+  ].join("\n");
+  return prompt.length > maxChars
+    ? `${prompt.slice(0, maxChars)}\n\n[Input truncated by OPPi; operate only on complete IDs visible above.]`
+    : prompt;
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function sanitizedMaintenanceTags(value: unknown): string[] {
+  return stringArray(value, 6, 40)
+    .map((tag) => tag.toLowerCase().replace(/[^a-z0-9:_-]+/g, "-").replace(/^-+|-+$/g, ""))
+    .filter((tag) => tag.length >= 2 && !tag.startsWith("project:"));
+}
+
+function trimMaintenanceText(value: string, max: number): string {
+  const cleaned = value
+    .replace(/\x1b\[[0-9;]*m/g, "")
+    .replace(/\r\n/g, "\n")
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+  return cleaned.length > max ? `${cleaned.slice(0, Math.max(0, max - 1)).trimEnd()}…` : cleaned;
+}
+
+function maintenanceResponseText(response: any): string {
+  return (response?.content ?? [])
+    .flatMap((part: any) => {
+      if (!part || typeof part !== "object") return [];
+      if (part.type === "text" && typeof part.text === "string") return [part.text];
+      return [];
+    })
+    .join("\n")
+    .trim();
+}
+
+function maintenanceResponseDiagnostic(response: any, raw: string): string {
+  const parts = [
+    response?.stopReason ? `stop=${response.stopReason}` : undefined,
+    response?.errorMessage ? `error=${memorySnippet(String(response.errorMessage), 180)}` : undefined,
+    Array.isArray(response?.content) ? `content=${response.content.map((part: any) => part?.type ?? "unknown").join(",") || "empty"}` : undefined,
+    raw ? `raw=${memorySnippet(raw, 220)}` : "raw=empty",
+  ].filter(Boolean);
+  return parts.length ? ` (${parts.join("; ")})` : "";
+}
+
+function maintenanceJsonPayload(payload: unknown): unknown | undefined {
+  if (!isObject(payload)) return undefined;
+  const next: Record<string, unknown> = { ...payload };
+  const text = isObject(next.text) ? { ...next.text } : {};
+  text.verbosity = "low";
+  text.format = { type: "json_object" };
+  next.text = text;
+  delete next.reasoning;
+  return next;
+}
+
+function normalizeMaintenancePlan(parsed: unknown, memories: readonly MemoryMaintenanceEntry[]): MemoryMaintenancePlan {
+  if (!isObject(parsed)) throw new Error("Maintenance model returned non-object JSON.");
+  const known = new Map(memories.map((entry) => [entry.id, entry]));
+  const deleteReasons = new Map<string, string>();
+  const deleteIds: string[] = [];
+  const addDelete = (id: unknown, reason: unknown) => {
+    if (typeof id !== "string" || !known.has(id) || deleteReasons.has(id)) return;
+    const entry = known.get(id)!;
+    if (entry.pinned || entry.starred) return;
+    deleteReasons.set(id, typeof reason === "string" ? memorySnippet(reason, 120) : "low-value or replaced by consolidation");
+    deleteIds.push(id);
+  };
+
+  const rawDelete = Array.isArray(parsed.delete) ? parsed.delete : Array.isArray(parsed.deleteIds) ? parsed.deleteIds : [];
+  for (const item of rawDelete.slice(0, 100)) {
+    if (typeof item === "string") addDelete(item, "model selected for deletion");
+    else if (isObject(item)) addDelete(item.id, item.reason);
+  }
+
+  const rawConsolidate = Array.isArray(parsed.consolidate) ? parsed.consolidate : Array.isArray(parsed.consolidated) ? parsed.consolidated : [];
+  const consolidate: MemoryMaintenanceConsolidation[] = [];
+  for (const item of rawConsolidate.slice(0, 12)) {
+    if (!isObject(item)) continue;
+    const sourceIds = stringArray(item.sourceIds ?? item.sources, 24, 80).filter((id) => known.has(id));
+    const content = typeof item.content === "string" ? trimMaintenanceText(item.content, 1_200) : "";
+    if (sourceIds.length < 2 || content.length < 40) continue;
+    consolidate.push({
+      title: typeof item.title === "string" ? memorySnippet(item.title, 80) : undefined,
+      content,
+      sourceIds,
+      tags: sanitizedMaintenanceTags(item.tags),
+    });
+  }
+
+  return {
+    deleteIds,
+    deleteReasons,
+    consolidate,
+    notes: stringArray(parsed.notes, 5, 160),
+  };
+}
+
+function memoryMaintenanceDeletionSet(plan: MemoryMaintenancePlan, memories: readonly MemoryMaintenanceEntry[]): { ids: string[]; skippedPinned: string[]; skippedVerified: string[] } {
+  const known = new Map(memories.map((entry) => [entry.id, entry]));
+  const consolidatedSources = new Set<string>();
+  const ids = new Set(plan.deleteIds);
+  for (const item of plan.consolidate) {
+    for (const id of item.sourceIds) {
+      ids.add(id);
+      consolidatedSources.add(id);
+    }
+  }
+  const allowed: string[] = [];
+  const skippedPinned: string[] = [];
+  const skippedVerified: string[] = [];
+  for (const id of ids) {
+    const entry = known.get(id);
+    if (!entry) continue;
+    if (isProtectedMemory(entry)) skippedPinned.push(id);
+    else if (isVerifiedMemory(entry) && !consolidatedSources.has(id)) skippedVerified.push(id);
+    else allowed.push(id);
+  }
+  return { ids: allowed, skippedPinned, skippedVerified };
+}
+
+async function buildMaintenancePlanWithCandidates(input: {
+  ctx: ExtensionContext;
+  memories: readonly MemoryMaintenanceEntry[];
+  candidates: MaintenanceModelCandidate[];
+  systemPrompt: string;
+  maxPromptChars: number;
+  maxOutputTokens: number;
+  contentChars?: number;
+}): Promise<MaintenancePlanResult> {
+  const { ctx, memories, candidates, systemPrompt, maxPromptChars, maxOutputTokens, contentChars } = input;
+  if (candidates.length === 0) throw new Error("No memory maintenance model candidates are configured.");
+
+  const prompt = buildMemoryMaintenancePrompt(ctx, memories, maxPromptChars, contentChars);
+  const attempts: string[] = [];
+  for (const candidate of candidates) {
+    const auth = await ctx.modelRegistry.getApiKeyAndHeaders(candidate.model).catch((error: unknown) => {
+      attempts.push(`${candidate.label}: auth failed (${error instanceof Error ? error.message : String(error)})`);
+      return undefined;
+    });
+    if (!auth?.ok || !auth.apiKey) {
+      attempts.push(`${candidate.label}: no configured auth`);
+      continue;
+    }
+
+    const modes: Array<{ label: string; jsonMode: boolean }> = [
+      { label: "json-mode", jsonMode: true },
+      { label: "plain", jsonMode: false },
+    ];
+
+    for (const mode of modes) {
+      try {
+        const response = await complete(
+          candidate.model,
+          {
+            systemPrompt,
+            messages: [
+              {
+                role: "user" as const,
+                content: [{ type: "text" as const, text: prompt }],
+                timestamp: Date.now(),
+              },
+            ],
+          },
+          {
+            apiKey: auth.apiKey,
+            headers: auth.headers,
+            maxTokens: maxOutputTokens,
+            textVerbosity: "low",
+            ...(mode.jsonMode ? { onPayload: maintenanceJsonPayload } : {}),
+            signal: ctx.signal,
+          },
+        );
+        const raw = maintenanceResponseText(response);
+        try {
+          const parsed = parseJsonObject(raw);
+          return {
+            plan: normalizeMaintenancePlan(parsed, memories),
+            modelLabel: candidate.label,
+            modelReason: `${candidate.reason}${mode.jsonMode ? " · JSON mode" : ""}`,
+            attempts,
+          };
+        } catch (error) {
+          throw new Error(`${error instanceof Error ? error.message : String(error)}${maintenanceResponseDiagnostic(response, raw)}`);
+        }
+      } catch (error) {
+        attempts.push(`${candidate.label} ${mode.label}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+  }
+
+  throw new Error(`No memory maintenance model succeeded. Tried: ${attempts.join("; ")}`);
+}
+
+async function buildMaintenancePlanWithModel(ctx: ExtensionContext, config: MemoryConfig, memories: readonly MemoryMaintenanceEntry[]): Promise<MaintenancePlanResult> {
+  const candidates = maintenanceModelCandidates(ctx, config);
+  if (candidates.length === 0) {
+    const override = process.env.OPPI_MEMORY_MAINTENANCE_MODEL?.trim();
+    throw new Error(override
+      ? `Configured memory maintenance model was not found: ${override}`
+      : "No GPT-5.4 mini maintenance model is configured. Configure openai-codex/openai gpt-5.4-mini, or set OPPI_MEMORY_MAINTENANCE_MODEL=provider/model.");
+  }
+  return buildMaintenancePlanWithCandidates({
+    ctx,
+    memories,
+    candidates,
+    systemPrompt: MEMORY_MAINTENANCE_PROMPT,
+    maxPromptChars: MEMORY_MAINTENANCE_MAX_PROMPT_CHARS,
+    maxOutputTokens: MEMORY_MAINTENANCE_MAX_OUTPUT_TOKENS,
+  });
+}
+
+async function buildDeepMaintenancePlanWithModel(ctx: ExtensionContext, config: MemoryConfig, memories: readonly MemoryMaintenanceEntry[]): Promise<MaintenancePlanResult | undefined> {
+  const candidates = deepMaintenanceModelCandidates(ctx, config);
+  if (candidates.length === 0) return undefined;
+  return buildMaintenancePlanWithCandidates({
+    ctx,
+    memories,
+    candidates,
+    systemPrompt: MEMORY_DEEP_MAINTENANCE_PROMPT,
+    maxPromptChars: MEMORY_DEEP_MAINTENANCE_MAX_PROMPT_CHARS,
+    maxOutputTokens: MEMORY_DEEP_MAINTENANCE_MAX_OUTPUT_TOKENS,
+    contentChars: 1_800,
+  });
+}
+
+function consolidationContent(item: MemoryMaintenanceConsolidation): string {
+  const title = item.title ? `Memory maintenance consolidation: ${item.title}` : `Memory maintenance consolidation (${new Date().toISOString()})`;
+  const sources = item.sourceIds.length ? `\n\nSource memories: ${item.sourceIds.join(", ")}` : "";
+  return `${title}\n\n${item.content}${sources}`;
+}
+
+async function applyMemoryMaintenancePlan(backend: HoppiBackend, project: HoppiProjectRef, plan: MemoryMaintenancePlan, memories: readonly MemoryMaintenanceEntry[]): Promise<MemoryMaintenanceApplyResult> {
+  if (!backend.remember || !backend.forget) throw new Error("Installed Hoppi package does not expose remember()/forget().");
+  const created: string[] = [];
+  for (const item of plan.consolidate) {
+    const memory = await backend.remember({
+      project,
+      content: consolidationContent(item),
+      tags: Array.from(new Set(["memory-maintenance", "consolidated", ...item.tags])),
+      layer: "semantic",
+      confidence: "verified",
+      source: "oppi:memory-maintenance",
+      sourceSessionId: null,
+      parents: item.sourceIds,
+    });
+    created.push(memory.id);
+  }
+
+  const deletion = memoryMaintenanceDeletionSet(plan, memories);
+  const deleted: string[] = [];
+  for (const id of deletion.ids) {
+    await backend.forget(id);
+    deleted.push(id);
+  }
+
+  let consolidateResult: unknown;
+  if (backend.consolidate) consolidateResult = await backend.consolidate({ project, dryRun: false, budget: 1_500 });
+  return { created, deleted, skippedPinned: deletion.skippedPinned, skippedVerified: deletion.skippedVerified, consolidateResult };
+}
+
+function numericResult(value: unknown, key: string): number | undefined {
+  return isObject(value) && typeof value[key] === "number" ? value[key] as number : undefined;
+}
+
+function formatMaintenanceSummary(input: {
+  dryRun: boolean;
+  scanned: number;
+  total: number;
+  limit: number;
+  modelLabel: string;
+  modelReason: string;
+  plan: MemoryMaintenancePlan;
+  memories: readonly MemoryMaintenanceEntry[];
+  apply?: MemoryMaintenanceApplyResult;
+}): string {
+  const deletion = memoryMaintenanceDeletionSet(input.plan, input.memories);
+  const plannedDeleteIds = input.apply?.deleted ?? deletion.ids;
+  const lines = [
+    input.dryRun ? "🧠 Memory maintenance dry run" : "🧠 Memory maintenance complete",
+    `Model used: ${input.modelLabel} (${input.modelReason})`,
+    `Scanned: ${input.scanned}${input.total > input.scanned ? ` of ${input.total} (limit ${input.limit})` : ""}`,
+    input.dryRun
+      ? `Planned: create ${input.plan.consolidate.length}, delete ${plannedDeleteIds.length}${deletion.skippedVerified.length ? `, verified skipped ${deletion.skippedVerified.length}` : ""}`
+      : `Applied: created ${input.apply?.created.length ?? 0}, deleted ${input.apply?.deleted.length ?? 0}, protected skipped ${input.apply?.skippedPinned.length ?? 0}${input.apply?.skippedVerified.length ? `, verified skipped ${input.apply.skippedVerified.length}` : ""}`,
+  ];
+
+  const semanticCreated = numericResult(input.apply?.consolidateResult, "semanticCreated");
+  const dagCreated = numericResult(input.apply?.consolidateResult, "dagSummariesCreated");
+  const removed = numericResult(input.apply?.consolidateResult, "removed");
+  if (!input.dryRun && (semanticCreated !== undefined || dagCreated !== undefined || removed !== undefined)) {
+    lines.push(`Hoppi consolidate: semantic ${semanticCreated ?? 0}, DAG ${dagCreated ?? 0}, removed ${removed ?? 0}`);
+  }
+
+  if (input.plan.consolidate.length) {
+    lines.push("", "Consolidations:");
+    for (const item of input.plan.consolidate.slice(0, 6)) {
+      lines.push(`- ${item.title ?? "untitled"} (${item.sourceIds.length} sources)`);
+    }
+    if (input.plan.consolidate.length > 6) lines.push(`- …${input.plan.consolidate.length - 6} more`);
+  }
+
+  if (plannedDeleteIds.length) {
+    lines.push("", input.dryRun ? "Delete preview:" : "Deleted/replaced:");
+    for (const id of plannedDeleteIds.slice(0, 10)) {
+      const reason = input.plan.deleteReasons.get(id);
+      lines.push(`- ${id}${reason ? ` — ${reason}` : ""}`);
+    }
+    if (plannedDeleteIds.length > 10) lines.push(`- …${plannedDeleteIds.length - 10} more`);
+  }
+
+  if (input.plan.notes.length) {
+    lines.push("", "Notes:", ...input.plan.notes.map((note) => `- ${note}`));
+  }
+  if (input.dryRun) lines.push("", "Run `/memory-maintenance apply --yes` to apply this periodically without prompts.");
+
+  return lines.join("\n").slice(0, 3_600);
+}
+
+function memoryMaintenanceHelp(): string {
+  return `Usage: /memory-maintenance [dry-run|apply] [--yes] [--limit N]\n\nTemporary Hoppi cleanup pass. It defaults to GPT-5.4 mini and does not try Claude/Meridian. The final summary always shows the model ultimately used. Override only with OPPI_MEMORY_MAINTENANCE_MODEL=provider/model.\n\nExamples:\n- /memory-maintenance dry-run\n- /memory-maintenance apply\n- /memory-maintenance apply --yes`;
+}
+
+async function runMemoryMaintenance(ctx: ExtensionCommandContext, args: string | undefined): Promise<void> {
+  const parsed = parseMemoryMaintenanceArgs(args);
+  if (parsed.help) {
+    ctx.ui.notify(memoryMaintenanceHelp(), "info");
+    return;
+  }
+
+  const config = readMemoryConfig(ctx.cwd);
+  if (!config.enabled) {
+    publishStatus(ctx, "mem:off");
+    ctx.ui.notify("Memory is off. Enable it in /settings:oppi → Memory before running maintenance.", "info");
+    return;
+  }
+
+  publishStatus(ctx, "mem:maint…");
+  try {
+    const hoppi = await loadHoppi();
+    if (!hoppi.createHoppiBackend) throw new Error("Installed Hoppi package does not expose createHoppiBackend().");
+    const backend = hoppi.createHoppiBackend({ root: hoppiRoot(hoppi) });
+    await backend.init();
+    if (!backend.list || !backend.remember || !backend.forget) throw new Error("Installed Hoppi package does not expose maintenance APIs (list/remember/forget). Update Hoppi.");
+
+    const project = projectRef(ctx);
+    const totalMemories = await backend.list({ project, includeSuperseded: true });
+    const memories = totalMemories.slice(0, parsed.limit);
+    if (memories.length === 0) {
+      publishStatus(ctx, "mem:on");
+      ctx.ui.notify("No Hoppi memories found for this project.", "info");
+      return;
+    }
+
+    ctx.ui.notify(`Planning memory maintenance for ${memories.length} memories with GPT-5.4 mini…`, "info");
+    const planResult = await buildMaintenancePlanWithModel(ctx, config, memories);
+    const plannedDelete = memoryMaintenanceDeletionSet(planResult.plan, memories);
+    const preview = formatMaintenanceSummary({
+      dryRun: true,
+      scanned: memories.length,
+      total: totalMemories.length,
+      limit: parsed.limit,
+      modelLabel: planResult.modelLabel,
+      modelReason: planResult.modelReason,
+      plan: planResult.plan,
+      memories,
+    });
+
+    if (parsed.dryRun) {
+      publishStatus(ctx, "mem:maint dry");
+      ctx.ui.notify(preview, "info");
+      return;
+    }
+
+    if (!parsed.yes) {
+      const accepted = await ctx.ui.confirm(
+        "Apply memory maintenance?",
+        `Model: ${planResult.modelLabel}\nCreate ${planResult.plan.consolidate.length} consolidated memories and delete/replace ${plannedDelete.ids.length} memories. Protected skipped: ${plannedDelete.skippedPinned.length}. Verified skipped: ${plannedDelete.skippedVerified.length}.`,
+      );
+      if (!accepted) {
+        publishStatus(ctx, "mem:on");
+        ctx.ui.notify(`Memory maintenance cancelled.\n\n${preview}`, "info");
+        return;
+      }
+    }
+
+    const applied = await applyMemoryMaintenancePlan(backend, project, planResult.plan, memories);
+    const status = await backend.status(project).catch(() => undefined);
+    publishStatus(ctx, status ? `mem:${status.memoryCount}` : "mem:maint done");
+    ctx.ui.notify(formatMaintenanceSummary({
+      dryRun: false,
+      scanned: memories.length,
+      total: totalMemories.length,
+      limit: parsed.limit,
+      modelLabel: planResult.modelLabel,
+      modelReason: planResult.modelReason,
+      plan: planResult.plan,
+      memories,
+      apply: applied,
+    }), "info");
+  } catch (error) {
+    publishStatus(ctx, isHoppiMissingError(error) ? "mem:setup" : "mem:error");
+    ctx.ui.notify(isHoppiMissingError(error) ? hoppiSetupMessage() : `Memory maintenance failed: ${error instanceof Error ? error.message : String(error)}`, isHoppiMissingError(error) ? "info" : "warning");
+  }
+}
+
+function emptyDreamStageResult(): DreamStageResult {
+  return { created: [], deleted: [], skippedPinned: [], skippedVerified: [], notes: [] };
+}
+
+function dreamStatePath(): string {
+  return join(getAgentDir(), "oppi", "memory-dream-state.json");
+}
+
+function readDreamState(): DreamStateFile {
+  try {
+    const path = dreamStatePath();
+    if (!existsSync(path)) return { projects: {} };
+    const parsed = JSON.parse(readFileSync(path, "utf8"));
+    return isObject(parsed) ? parsed as DreamStateFile : { projects: {} };
+  } catch {
+    return { projects: {} };
+  }
+}
+
+function writeDreamState(state: DreamStateFile): void {
+  const path = dreamStatePath();
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, `${JSON.stringify({ projects: state.projects ?? {} }, null, 2)}\n`, "utf8");
+}
+
+function dreamProjectKey(project: HoppiProjectRef): string {
+  return createHash("sha256").update(resolve(project.cwd).toLowerCase()).digest("hex").slice(0, 16);
+}
+
+function readDreamProjectState(project: HoppiProjectRef): DreamProjectState {
+  const state = readDreamState();
+  return state.projects?.[dreamProjectKey(project)] ?? { dreamCount: 0 };
+}
+
+function writeDreamProjectState(project: HoppiProjectRef, projectState: DreamProjectState): void {
+  const state = readDreamState();
+  state.projects = state.projects ?? {};
+  state.projects[dreamProjectKey(project)] = projectState;
+  writeDreamState(state);
+}
+
+function dreamLastRunMs(project: HoppiProjectRef): number {
+  const last = readDreamProjectState(project).lastDreamAt;
+  const parsed = last ? Date.parse(last) : NaN;
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function duplicateFingerprint(entry: MemoryMaintenanceEntry): string | undefined {
+  const text = compactMaintenanceContent(entry.content)
+    .toLowerCase()
+    .replace(/\b(?:mem|sem)_[a-f0-9]+\b/g, "<id>")
+    .replace(/\b\d{4}-\d{2}-\d{2}t\d{2}:\d{2}:\d{2}(?:\.\d+)?z\b/g, "<ts>")
+    .replace(/session:\s*[a-f0-9-]{12,}/g, "session:<id>")
+    .replace(/project:\s*[a-z]:[\\/][^\n]+/gi, "project:<path>")
+    .replace(/source memories:\s*(?:<id>[,\s]*)+/g, "source memories:<ids>")
+    .replace(/[^a-z0-9_./:+@#-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (text.length < 120) return undefined;
+  return createHash("sha256").update(text).digest("hex");
+}
+
+function isObviousNoiseMemory(entry: MemoryMaintenanceEntry): boolean {
+  if (isProtectedMemory(entry) || isVerifiedMemory(entry)) return false;
+  const text = compactMaintenanceContent(entry.content).toLowerCase();
+  if (text.length <= 320 && /\b(cd|cwd|current working directory|working directory)\b/.test(text) && !/changed|implemented|decision|published|fixed|added|removed/.test(text)) return true;
+  if (text.length <= 260 && /^\[?tool[:\]]/.test(text)) return true;
+  return false;
+}
+
+function dreamMemoryScore(entry: MemoryMaintenanceEntry): number {
+  let score = 0;
+  if (entry.pinned) score += 10_000;
+  if (entry.starred) score += 9_000;
+  if (isVerifiedMemory(entry)) score += 1_000;
+  if (entry.layer === "semantic") score += 200;
+  if (entry.source === "oppi:memory-maintenance") score += 200;
+  if (entry.confidence === "observed") score += 40;
+  if (entry.confidence === "inferred") score -= 40;
+  score += Math.min(200, compactMaintenanceContent(entry.content).length / 20);
+  score += Math.min(200, memoryCreatedMs(entry) / 10_000_000_000);
+  return score;
+}
+
+function chooseDuplicateKeeper(group: readonly MemoryMaintenanceEntry[]): MemoryMaintenanceEntry {
+  return group.slice().sort((a, b) => dreamMemoryScore(b) - dreamMemoryScore(a))[0]!;
+}
+
+async function runDreamStage1Duplicates(backend: HoppiBackend, memories: readonly MemoryMaintenanceEntry[]): Promise<DreamStageResult> {
+  if (!backend.forget) throw new Error("Installed Hoppi package does not expose forget().");
+  const result = emptyDreamStageResult();
+  const deleted = new Set<string>();
+  const deleteOne = async (entry: MemoryMaintenanceEntry, reason: string, verifiedKeeper = false) => {
+    if (deleted.has(entry.id)) return;
+    if (isProtectedMemory(entry)) {
+      result.skippedPinned.push(entry.id);
+      return;
+    }
+    if (isVerifiedMemory(entry) && !verifiedKeeper) {
+      result.skippedVerified.push(entry.id);
+      return;
+    }
+    await backend.forget!(entry.id);
+    deleted.add(entry.id);
+    result.deleted.push(entry.id);
+    if (result.notes.length < 8) result.notes.push(`${entry.id}: ${reason}`);
+  };
+
+  for (const entry of memories) {
+    if (isObviousNoiseMemory(entry)) await deleteOne(entry, "obvious cwd/tool noise");
+  }
+
+  const groups = new Map<string, MemoryMaintenanceEntry[]>();
+  for (const entry of memories) {
+    const key = duplicateFingerprint(entry);
+    if (!key) continue;
+    const group = groups.get(key) ?? [];
+    group.push(entry);
+    groups.set(key, group);
+  }
+
+  let duplicateGroups = 0;
+  for (const group of groups.values()) {
+    if (group.length < 2) continue;
+    duplicateGroups += 1;
+    const keeper = chooseDuplicateKeeper(group);
+    const keeperVerified = isVerifiedMemory(keeper);
+    for (const entry of group) {
+      if (entry.id === keeper.id) continue;
+      await deleteOne(entry, `duplicate of ${keeper.id}`, keeperVerified);
+    }
+  }
+  if (duplicateGroups > 0) result.notes.unshift(`duplicate groups: ${duplicateGroups}`);
+  return result;
+}
+
+function stageFromMaintenance(planResult: MaintenancePlanResult, applied: MemoryMaintenanceApplyResult): DreamStageResult & { modelLabel: string; modelReason: string } {
+  return {
+    created: applied.created,
+    deleted: applied.deleted,
+    skippedPinned: applied.skippedPinned,
+    skippedVerified: applied.skippedVerified,
+    notes: planResult.plan.notes,
+    modelLabel: planResult.modelLabel,
+    modelReason: planResult.modelReason,
+  };
+}
+
+function formatDreamStageLine(label: string, stage: DreamStageResult & { modelLabel?: string; modelReason?: string }): string {
+  const model = stage.modelLabel ? ` · ${stage.modelLabel}` : "";
+  const skipped = stage.skippedPinned.length || stage.skippedVerified.length
+    ? ` · skipped protected ${stage.skippedPinned.length}, verified ${stage.skippedVerified.length}`
+    : "";
+  return `${label}: created ${stage.created.length}, deleted ${stage.deleted.length}${skipped}${model}`;
+}
+
+function formatDreamSummary(result: DreamRunResult): string {
+  const lines = [
+    `🧠 Hoppi dream #${result.dreamCount} complete`,
+    `Memories: ${result.beforeCount}${result.afterCount !== undefined ? ` → ${result.afterCount}` : ""}`,
+    formatDreamStageLine("Stage 1 duplicate cleanup", result.stage1),
+  ];
+  if (result.stage2) lines.push(formatDreamStageLine("Stage 2 age-aware curation", result.stage2));
+  if (result.stage3) {
+    if ("skipped" in result.stage3) lines.push(`Stage 3 deep reconciliation: skipped (${result.stage3.reason})`);
+    else lines.push(formatDreamStageLine("Stage 3 deep reconciliation", result.stage3));
+  }
+  const notes = [
+    ...result.stage1.notes,
+    ...(result.stage2?.notes ?? []),
+    ...(result.stage3 && !("skipped" in result.stage3) ? result.stage3.notes : []),
+  ].slice(0, 8);
+  if (notes.length) lines.push("", "Notes:", ...notes.map((note) => `- ${note}`));
+  return lines.join("\n").slice(0, 3_600);
+}
+
+async function runDreamMaintenance(ctx: ExtensionContext, backend: HoppiBackend, config: MemoryConfig): Promise<DreamRunResult | undefined> {
+  if (!backend.list || !backend.forget || !backend.remember) throw new Error("Installed Hoppi package does not expose dream maintenance APIs (list/remember/forget).");
+  const project = projectRef(ctx);
+  const before = await backend.list({ project, includeSuperseded: false, limit: MEMORY_MAINTENANCE_HARD_LIMIT });
+  if (before.length <= MEMORY_DREAM_TRIGGER_COUNT) return undefined;
+
+  const state = readDreamProjectState(project);
+  const dreamCount = state.dreamCount + 1;
+  const result: DreamRunResult = {
+    beforeCount: before.length,
+    dreamCount,
+    stage1: emptyDreamStageResult(),
+  };
+
+  result.stage1 = await runDreamStage1Duplicates(backend, before);
+  const afterStage1 = await backend.list({ project, includeSuperseded: false, limit: MEMORY_MAINTENANCE_HARD_LIMIT });
+
+  if (afterStage1.length > MEMORY_DREAM_TARGET_COUNT || result.stage1.deleted.length > 0) {
+    try {
+      const stage2Plan = await buildMaintenancePlanWithModel(ctx, config, afterStage1);
+      const stage2Applied = await applyMemoryMaintenancePlan(backend, project, stage2Plan.plan, afterStage1);
+      result.stage2 = stageFromMaintenance(stage2Plan, stage2Applied);
+    } catch (error) {
+      result.stage2 = { ...emptyDreamStageResult(), modelLabel: "unavailable", modelReason: "Stage 2 skipped", notes: [`stage2: ${error instanceof Error ? error.message : String(error)}`] };
+    }
+  }
+
+  if (dreamCount % MEMORY_DREAM_DEEP_EVERY === 0) {
+    const beforeStage3 = await backend.list({ project, includeSuperseded: false, limit: MEMORY_MAINTENANCE_HARD_LIMIT });
+    const stage3Plan = await buildDeepMaintenancePlanWithModel(ctx, config, beforeStage3).catch((error: unknown) => {
+      result.stage3 = { skipped: true, reason: error instanceof Error ? error.message : String(error) };
+      return undefined;
+    });
+    if (!stage3Plan && !result.stage3) {
+      result.stage3 = { skipped: true, reason: "set Memory deep model to sonnet/gpt-5.5 or OPPI_MEMORY_DEEP_MAINTENANCE_MODEL" };
+    } else if (stage3Plan) {
+      const stage3Applied = await applyMemoryMaintenancePlan(backend, project, stage3Plan.plan, beforeStage3);
+      result.stage3 = stageFromMaintenance(stage3Plan, stage3Applied);
+    }
+  }
+
+  const status = await backend.status(project).catch(() => undefined);
+  result.afterCount = status?.memoryCount;
+  const summary = formatDreamSummary(result);
+  writeDreamProjectState(project, { dreamCount, lastDreamAt: new Date().toISOString(), lastSummary: summary });
+  return result;
 }
 
 class HoppiMemoryWorker {
@@ -558,15 +1828,21 @@ class HoppiMemoryWorker {
   enqueueTurnSummary(messages: readonly AgentMessageLike[], ctx: ExtensionContext): void {
     const config = readMemoryConfig(ctx.cwd);
     if (!config.enabled || !config.turnSummaries) return;
-    const summary = buildTurnSummary(messages);
-    if (!summary || summary === this.lastTurnSummary) return;
-    this.lastTurnSummary = summary;
+    const fallbackSummary = buildTurnSummary(messages);
+    if (!fallbackSummary || fallbackSummary === this.lastTurnSummary) return;
+    this.lastTurnSummary = fallbackSummary;
     this.enqueue(ctx, async (backend) => {
       if (!backend.remember) return;
+      const distilled = await buildModelTurnSummary(messages, ctx, config).catch(() => undefined);
+      if (distilled?.kind === "skip") return;
+      const summary = distilled?.kind === "memory" ? distilled.content : fallbackSummary;
+      if (!summary) return;
+      this.lastTurnSummary = summary;
       await backend.remember({
         project: projectRef(ctx),
         content: summary,
-        tags: ["oppi-turn-summary", "agent_end"],
+        tags: ["oppi-turn-summary", "agent_end", ...(distilled?.kind === "memory" ? distilled.tags : [])],
+        layer: "buffer",
         confidence: "observed",
         source: "oppi:agent_end",
         sourceSessionId: sessionSourceId(ctx),
@@ -586,7 +1862,6 @@ class HoppiMemoryWorker {
         project: projectRef(ctx),
         content: recap,
         tags: ["oppi-exit-recap", "session-recap"],
-        pinned: true,
         confidence: "observed",
         source: "oppi:exit",
         sourceSessionId: sessionSourceId(ctx),
@@ -654,15 +1929,29 @@ class HoppiMemoryWorker {
   private async tickIdle(ctx: ExtensionContext): Promise<void> {
     const config = readMemoryConfig(ctx.cwd);
     if (!config.enabled || !config.idleConsolidation || !ctx.isIdle()) return;
-    if (this.consolidating || this.dirtyVersion <= this.consolidatedVersion) return;
-    if (Date.now() - this.dirtyAt < MEMORY_IDLE_CONSOLIDATE_AFTER_MS) return;
+    if (this.consolidating) return;
+
+    const project = projectRef(ctx);
+    const hasDirtyMemory = this.dirtyVersion > this.consolidatedVersion && Date.now() - this.dirtyAt >= MEMORY_IDLE_CONSOLIDATE_AFTER_MS;
+    const dreamIntervalElapsed = Date.now() - dreamLastRunMs(project) >= MEMORY_DREAM_MIN_INTERVAL_MS;
+    if (!hasDirtyMemory && !dreamIntervalElapsed) return;
 
     this.consolidating = true;
-    publishStatus(ctx, "mem:consolidate…");
     const run = this.enqueue(ctx, async (backend) => {
-      if (backend.consolidate) await backend.consolidate({ project: projectRef(ctx), dryRun: false, budget: 1_500 });
-      this.consolidatedVersion = this.dirtyVersion;
-      publishStatus(ctx, "mem:consolidated");
+      const status = await backend.status(project).catch(() => undefined);
+      const shouldDream = dreamIntervalElapsed && (status?.memoryCount ?? 0) > MEMORY_DREAM_TRIGGER_COUNT;
+      if (shouldDream) {
+        publishStatus(ctx, "mem:dream…");
+        const dream = await runDreamMaintenance(ctx, backend, config);
+        if (dream && ctx.hasUI) ctx.ui.notify(formatDreamSummary(dream), "info");
+        const nextStatus = await backend.status(project).catch(() => undefined);
+        publishStatus(ctx, nextStatus ? `mem:${nextStatus.memoryCount}` : "mem:dream done");
+      } else if (hasDirtyMemory && backend.consolidate) {
+        publishStatus(ctx, "mem:consolidate…");
+        await backend.consolidate({ project, dryRun: false, budget: 1_500 });
+        publishStatus(ctx, "mem:consolidated");
+      }
+      if (hasDirtyMemory) this.consolidatedVersion = this.dirtyVersion;
     });
     void run.finally(() => {
       this.consolidating = false;
@@ -670,10 +1959,11 @@ class HoppiMemoryWorker {
   }
 
   private warnUnavailable(ctx: ExtensionContext, error: unknown): void {
-    publishStatus(ctx, "mem:error");
+    const missing = isHoppiMissingError(error);
+    publishStatus(ctx, missing ? "mem:setup" : "mem:error");
     if (!ctx.hasUI || this.warnedUnavailable) return;
     this.warnedUnavailable = true;
-    ctx.ui.notify(`Hoppi memory unavailable: ${error instanceof Error ? error.message : String(error)}`, "warning");
+    ctx.ui.notify(missing ? hoppiSetupMessage() : `Hoppi memory unavailable: ${error instanceof Error ? error.message : String(error)}`, missing ? "info" : "warning");
   }
 }
 
@@ -732,6 +2022,8 @@ class OppiSettingsComponent implements Component {
     private readonly saveMemoryConfig: (config: MemoryConfig) => void,
     private readonly getAskUserConfig: () => AskUserConfig,
     private readonly saveAskUserConfig: (config: AskUserConfig) => void,
+    private readonly getFooterConfig: () => FooterConfig,
+    private readonly saveFooterConfig: (config: FooterConfig) => void,
     private readonly getCompactConfig: () => OppiCompactConfig,
     private readonly saveCompactConfig: (config: OppiCompactConfig) => void,
     private readonly getPermissionConfig: () => PermissionConfig,
@@ -826,10 +2118,59 @@ class OppiSettingsComponent implements Component {
           cycle: () => this.updateAskUser({ timeoutMinutes: coerceAskUserTimeout(nextValue(ASK_USER_TIMEOUT_MINUTES, this.getAskUserConfig().timeoutMinutes)) }),
         },
         { label: "Usage", value: "/usage", description: "Usage and cost status stays separate from product settings." },
+        { label: "Footer settings", value: "Footer tab", description: "Customize the main bottom bar and the second hotkey-help bar." },
       ];
     }
 
     if (this.tab === 1) {
+      const config = this.getFooterConfig();
+      return [
+        {
+          label: "Hotkey help bar",
+          value: bool(config.showHelpBar),
+          description: `Show the second bottom bar with keyboard hints. ${FOOTER_HELP_SHORTCUT_LABEL} toggles it from anywhere.`,
+          cycle: () => this.updateFooter({ ...config, showHelpBar: !config.showHelpBar }),
+        },
+        {
+          label: "Usage display",
+          value: footerUsageDisplayLabel(config.usageDisplay),
+          description: "Choose which usage meters appear in the main bottom bar.",
+          cycle: () => this.updateFooter({ ...config, usageDisplay: nextValue(FOOTER_USAGE_DISPLAY_VALUES, config.usageDisplay) }),
+        },
+        {
+          label: "Workspace line",
+          value: bool(config.showPath),
+          description: "Show the cwd, git branch, and session name line above the main bottom bar.",
+          cycle: () => this.updateFooter({ ...config, showPath: !config.showPath }),
+        },
+        {
+          label: "Model + effort",
+          value: bool(config.showModel),
+          description: "Show the selected model and current reasoning effort.",
+          cycle: () => this.updateFooter({ ...config, showModel: !config.showModel }),
+        },
+        {
+          label: "Permission mode",
+          value: bool(config.showPermission),
+          description: "Show read-only/default/auto-review/full-access state.",
+          cycle: () => this.updateFooter({ ...config, showPermission: !config.showPermission }),
+        },
+        {
+          label: "Memory status",
+          value: bool(config.showMemory),
+          description: "Show compact Hoppi memory status when memory is active.",
+          cycle: () => this.updateFooter({ ...config, showMemory: !config.showMemory }),
+        },
+        {
+          label: "Context usage",
+          value: bool(config.showContext),
+          description: "Show active context-window usage.",
+          cycle: () => this.updateFooter({ ...config, showContext: !config.showContext }),
+        },
+      ];
+    }
+
+    if (this.tab === 2) {
       const config = this.getMemoryConfig();
       return [
         {
@@ -837,6 +2178,18 @@ class OppiSettingsComponent implements Component {
           value: bool(config.enabled),
           description: "Master switch for Hoppi-backed memory in OPPi.",
           cycle: () => this.updateMemory({ ...config, enabled: !config.enabled }),
+        },
+        {
+          label: "Backend package",
+          value: HOPPI_PACKAGE_NAME,
+          description: `Install/update Hoppi from npm into ${formatPath(managedPackagesDir())}. OPPi asks first; no hidden install runs.`,
+          action: "install-hoppi",
+        },
+        {
+          label: "First-start install offer",
+          value: config.hoppiInstallOffer === "dismissed" ? "dismissed" : "ask",
+          description: "Ask once on interactive startup when Memory is on but the Hoppi backend package is missing.",
+          cycle: () => this.updateMemory({ ...config, hoppiInstallOffer: nextValue(HOPPI_INSTALL_OFFER_VALUES, config.hoppiInstallOffer) }),
         },
         {
           label: "Startup recall",
@@ -857,9 +2210,21 @@ class OppiSettingsComponent implements Component {
           cycle: () => this.updateMemory({ ...config, turnSummaries: !config.turnSummaries }),
         },
         {
-          label: "Idle consolidation",
+          label: "Memory agent model",
+          value: config.agentModel,
+          description: "auto uses safe defaults; claude/gpt opt into model-backed turn-memory distillation when auth is available.",
+          cycle: () => this.updateMemory({ ...config, agentModel: nextValue(AGENT_MODEL_VALUES, config.agentModel) }),
+        },
+        {
+          label: "Deep dream model",
+          value: config.deepModel,
+          description: "auto skips costly Stage 3; sonnet/gpt-5.5 enables every-5th-dream whole-store reconciliation.",
+          cycle: () => this.updateMemory({ ...config, deepModel: nextValue(DEEP_MODEL_VALUES, config.deepModel) }),
+        },
+        {
+          label: "Idle dream mode",
           value: bool(config.idleConsolidation),
-          description: "Let OPPi consolidate dirty memory once during idle windows.",
+          description: "Consolidate dirty memory and auto-dream stores over 60 memories with protected/verified safety rules.",
           cycle: () => this.updateMemory({ ...config, idleConsolidation: !config.idleConsolidation }),
         },
         {
@@ -872,7 +2237,7 @@ class OppiSettingsComponent implements Component {
       ];
     }
 
-    if (this.tab === 2) {
+    if (this.tab === 3) {
       const config = this.getCompactConfig();
       return [
         {
@@ -902,7 +2267,7 @@ class OppiSettingsComponent implements Component {
       ];
     }
 
-    if (this.tab === 3) {
+    if (this.tab === 4) {
       const config = this.getPermissionConfig();
       const timeout = `${Math.round(config.reviewTimeoutMs / 1000)}s`;
       const timeoutValues = PERMISSION_TIMEOUT_SECONDS.map(String);
@@ -951,6 +2316,10 @@ class OppiSettingsComponent implements Component {
     this.saveAskUserConfig(config);
   }
 
+  private updateFooter(config: FooterConfig): void {
+    this.saveFooterConfig(config);
+  }
+
   private updateCompact(config: OppiCompactConfig): void {
     this.saveCompactConfig(config);
   }
@@ -971,9 +2340,10 @@ class OppiSettingsComponent implements Component {
 
   private footerText(): string {
     const memory = this.getMemoryConfig();
+    const footer = this.getFooterConfig();
     const compact = this.getCompactConfig();
     const permissions = this.getPermissionConfig();
-    return this.theme.fg("dim", `Memory ${bool(memory.enabled)} · idle compact ${bool(compact.idleCompact.enabled)} @ ${compact.idleCompact.thresholdPercent}% · perm ${permissions.mode} · theme ${normalizeThemeName(this.getThemeName())}`);
+    return this.theme.fg("dim", `Memory ${bool(memory.enabled)} · footer ${footerUsageDisplayLabel(footer.usageDisplay)} / help ${bool(footer.showHelpBar)} · idle compact ${bool(compact.idleCompact.enabled)} @ ${compact.idleCompact.thresholdPercent}% · perm ${permissions.mode} · theme ${normalizeThemeName(this.getThemeName())}`);
   }
 
   private boxed(content: string, inner: number): string {
@@ -995,10 +2365,11 @@ class OppiSettingsComponent implements Component {
 
 function initialSettingsTab(args: string | undefined): number {
   const normalized = (args ?? "").trim().toLowerCase();
-  if (normalized.startsWith("memory")) return 1;
-  if (normalized.startsWith("compact") || normalized.startsWith("idle")) return 2;
-  if (normalized.startsWith("permission") || normalized.startsWith("perm")) return 3;
-  if (normalized.startsWith("theme")) return 4;
+  if (normalized.startsWith("footer") || normalized.startsWith("bottom") || normalized.startsWith("status")) return 1;
+  if (normalized.startsWith("memory")) return 2;
+  if (normalized.startsWith("compact") || normalized.startsWith("idle")) return 3;
+  if (normalized.startsWith("permission") || normalized.startsWith("perm")) return 4;
+  if (normalized.startsWith("theme")) return 5;
   return 0;
 }
 
@@ -1018,6 +2389,12 @@ async function showSettings(pi: ExtensionAPI, ctx: ExtensionCommandContext, args
         (config) => {
           writeGlobalAskUserConfig(config);
           tui.requestRender();
+        },
+        () => readFooterConfig(ctx.cwd),
+        (config) => {
+          writeFooterConfig(ctx.cwd, config);
+          pi.events.emit(FOOTER_CONFIG_CHANGED_EVENT, { cwd: ctx.cwd, config });
+          tui.requestRender(true);
         },
         () => readOppiCompactConfig(ctx.cwd),
         (config) => {
@@ -1049,6 +2426,7 @@ async function showSettings(pi: ExtensionAPI, ctx: ExtensionCommandContext, args
     });
 
     if (!action || action === "close") return;
+    if (action === "install-hoppi") await installHoppiFromUi(ctx);
     if (action === "setup-sync") await runSyncSetupWizard(ctx);
     if (action === "sync-now") await runSync(ctx, "both", "settings", true);
     if (action === "pull-now") await runSync(ctx, "pull", "settings", true);
@@ -1208,8 +2586,11 @@ export default function memoryExtension(pi: ExtensionAPI) {
   const memoryWorker = new HoppiMemoryWorker();
 
   pi.on("session_start", async (_event, ctx) => {
+    await maybeOfferHoppiInstall(ctx);
     const config = readMemoryConfig(ctx.cwd);
-    publishStatus(ctx, config.enabled ? (config.sync.enabled ? "mem:sync on" : "mem:on") : "mem:off");
+    const missingHoppi = config.enabled ? await isHoppiMissing() : false;
+    publishStatus(ctx, config.enabled ? (missingHoppi ? "mem:setup" : config.sync.enabled ? "mem:sync on" : "mem:on") : "mem:off");
+    if (missingHoppi) return;
     memoryWorker.start(ctx);
     backgroundSync.start(ctx);
     if (!startupSyncStarted && config.enabled && config.sync.enabled && config.sync.pullOnStartup) {
@@ -1264,5 +2645,13 @@ export default function memoryExtension(pi: ExtensionAPI) {
   pi.registerCommand("memory", {
     description: "Open the Hoppi memory dashboard.",
     handler: async (_args, ctx) => openMemoryDashboard(ctx),
+  });
+
+  pi.registerCommand("memory-maintenance", {
+    description: "Temporary Hoppi cleanup pass using GPT-5.4 mini. Usage: /memory-maintenance [dry-run|apply] [--yes] [--limit N]",
+    getArgumentCompletions: (prefix: string) => ["dry-run", "apply", "apply --yes", "help"]
+      .filter((value) => value.startsWith(prefix.toLowerCase()))
+      .map((value) => ({ value, label: value })),
+    handler: async (args, ctx) => runMemoryMaintenance(ctx, args),
   });
 }

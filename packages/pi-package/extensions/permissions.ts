@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, statSync } from "node:fs";
 import { join, normalize, sep, resolve, relative } from "node:path";
-import type { ExtensionAPI, ExtensionContext, ExtensionCommandContext, ToolCallEvent, ToolDefinition, Theme } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext, ExtensionCommandContext, ToolCallEvent, Theme } from "@mariozechner/pi-coding-agent";
 import type { Model } from "@mariozechner/pi-ai";
 import { createAgentSession, DefaultResourceLoader, getAgentDir, SessionManager } from "@mariozechner/pi-coding-agent";
 import { Text } from "@mariozechner/pi-tui";
@@ -532,7 +532,7 @@ async function runAutoReview(ctx: ExtensionContext, event: ToolCallEvent, risk: 
     resourceLoader,
     sessionManager: SessionManager.inMemory(),
     tools: reviewTools.map((tool) => tool.name),
-    customTools: reviewTools,
+    customTools: reviewTools as any,
   });
 
   let reviewerText = "";
@@ -898,23 +898,24 @@ const ReviewGrepParams = Type.Object({
 
 type ReviewGrepInput = Static<typeof ReviewGrepParams>;
 
-function createReviewerTools(cwd: string): ToolDefinition[] {
-  return [
+function createReviewerTools(cwd: string): any[] {
+  const tools = [
     {
       name: "oppi_review_read",
       label: "oppi_review_read",
       description: "Read a bounded, non-protected project file for permission review only.",
       parameters: ReviewReadParams,
-      async execute(_id, params: ReviewReadInput) {
+      async execute(_id, rawParams: unknown) {
+        const params = rawParams as ReviewReadInput;
         const checked = checkedReviewPath(cwd, params.path, false);
-        if (!checked.ok) return toolTextError(checked.error);
+        if (checked.ok === false) return toolTextError(checked.error);
         const stat = statSync(checked.path);
         if (!stat.isFile()) return toolTextError("Path is not a file.");
         if (stat.size > REVIEW_TOOL_MAX_BYTES * 4) return toolTextError("File is too large for permission review.");
         const lines = readFileSync(checked.path, "utf8").split(/\r?\n/);
         const start = Math.max(1, Math.floor(params.offset ?? 1));
         const limit = Math.min(REVIEW_TOOL_MAX_LINES, Math.max(1, Math.floor(params.limit ?? 120)));
-        return { content: [{ type: "text", text: lines.slice(start - 1, start - 1 + limit).join("\n").slice(0, REVIEW_TOOL_MAX_BYTES) }] };
+        return { content: [{ type: "text" as const, text: lines.slice(start - 1, start - 1 + limit).join("\n").slice(0, REVIEW_TOOL_MAX_BYTES) }], details: undefined };
       },
     },
     {
@@ -922,16 +923,17 @@ function createReviewerTools(cwd: string): ToolDefinition[] {
       label: "oppi_review_ls",
       description: "List a bounded project directory for permission review only.",
       parameters: ReviewLsParams,
-      async execute(_id, params: ReviewLsInput) {
+      async execute(_id, rawParams: unknown) {
+        const params = rawParams as ReviewLsInput;
         const checked = checkedReviewPath(cwd, params.path ?? ".", true);
-        if (!checked.ok) return toolTextError(checked.error);
+        if (checked.ok === false) return toolTextError(checked.error);
         const stat = statSync(checked.path);
         if (!stat.isDirectory()) return toolTextError("Path is not a directory.");
         const items = readdirSync(checked.path, { withFileTypes: true })
           .filter((entry) => !REVIEW_TOOL_EXCLUDED_DIRS.has(entry.name))
           .slice(0, 200)
           .map((entry) => `${entry.isDirectory() ? "dir " : "file"} ${entry.name}`);
-        return { content: [{ type: "text", text: items.join("\n") || "(empty)" }] };
+        return { content: [{ type: "text" as const, text: items.join("\n") || "(empty)" }], details: undefined };
       },
     },
     {
@@ -939,9 +941,10 @@ function createReviewerTools(cwd: string): ToolDefinition[] {
       label: "oppi_review_grep",
       description: "Search bounded non-protected project files for permission review only.",
       parameters: ReviewGrepParams,
-      async execute(_id, params: ReviewGrepInput) {
+      async execute(_id, rawParams: unknown) {
+        const params = rawParams as ReviewGrepInput;
         const checked = checkedReviewPath(cwd, params.path ?? ".", true);
-        if (!checked.ok) return toolTextError(checked.error);
+        if (checked.ok === false) return toolTextError(checked.error);
         let regex: RegExp;
         try { regex = new RegExp(params.pattern, "i"); } catch { regex = new RegExp(escapeRegex(params.pattern), "i"); }
         const files = collectReviewFiles(cwd, checked.path).slice(0, 300);
@@ -957,10 +960,11 @@ function createReviewerTools(cwd: string): ToolDefinition[] {
             }
           }
         }
-        return { content: [{ type: "text", text: matches.join("\n") || "No matches." }] };
+        return { content: [{ type: "text" as const, text: matches.join("\n") || "No matches." }], details: undefined };
       },
     },
   ];
+  return tools;
 }
 
 function checkedReviewPath(cwd: string, inputPath: string, allowDirectory: boolean): { ok: true; path: string } | { ok: false; error: string } {
@@ -995,7 +999,7 @@ function collectReviewFiles(cwd: string, start: string): string[] {
 }
 
 function toolTextError(text: string) {
-  return { content: [{ type: "text" as const, text: `Error: ${text}` }], isError: true };
+  return { content: [{ type: "text" as const, text: `Error: ${text}` }], isError: true, details: undefined };
 }
 
 function escapeRegex(value: string): string {
