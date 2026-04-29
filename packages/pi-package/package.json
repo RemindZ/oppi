@@ -45,6 +45,7 @@
       "./extensions/defaults.ts",
       "./extensions/prompt-variant.ts",
       "./extensions/enter-routing.ts",
+      "./extensions/exit.ts",
       "./extensions/docked-ui.ts",
       "./extensions/effort.ts",
       "./extensions/themes.ts",

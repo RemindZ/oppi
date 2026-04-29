@@ -40,7 +40,7 @@ Stage 1 lives mostly in `packages/pi-package`; Stage 2 lives in `packages/cli`. 
 - OPPi defaults, docked UI, enter routing, terminal setup
 - `/prompt-variant` for system-prompt A/B overlays
 - `/effort`, `/theme`/`/themes`, usage/status footer, tool digest
-- `image_gen`, `/review`, `/init`
+- `image_gen`, `/review`, `/init`, `/exit`
 - `todo_write` + `/todos`, `ask_user`
 - `/permissions` with `read-only`, `default`, `auto-review`, and `full-access`
 - smart/idle compaction

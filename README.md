@@ -112,6 +112,7 @@ The current Pi package adds:
 - optional Meridian integration for using a Claude subscription through the official Claude Code SDK bridge (`/meridian start|stop|status`, provider `meridian`)
 - docked command panels: selection/input/custom command UIs render directly above the text input and push chat content upward instead of floating over it
 - `/settings:oppi` opens the unified OPPi settings panel for General, Memory, Compaction, Permissions, and Theme; Stage 1 uses this namespaced command until the OPPi wrapper can own `/settings`
+- `/exit` shuts down the current OPPi session gracefully, allowing Hoppi memory recaps and exit sync to run when enabled
 - `/oppi-terminal-setup` installs VS Code/Cursor terminal forwarding for Shift+Enter, Ctrl+Enter, and Alt+Up
 - normal terminal mouse selection/copy behavior is preserved; use Shift+Enter for newlines and Alt+Up to edit queued messages
 - feedback intake commands/tools: `/bug-report`, `/feature-request`, and `oppi_feedback_submit`
