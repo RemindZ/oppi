@@ -4,15 +4,16 @@ import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 
 const refs = [
-  ["pi", "https://github.com/badlogic/pi-mono.git"],
+  ["pi-mono", "https://github.com/badlogic/pi-mono.git"],
   ["oh-my-pi", "https://github.com/can1357/oh-my-pi.git"],
-  ["codex-cli", "https://github.com/openai/codex.git"],
-  ["claude-mem", "https://github.com/thedotmack/claude-mem.git"],
+  ["oh-my-pi-plugins", "https://github.com/RemindZ/oh-my-pi-plugins.git"],
+  ["codex", "https://github.com/openai/codex.git"],
+  ["caveman", "https://github.com/juliusbrussee/caveman.git"],
 ];
 
-mkdirSync("reference", { recursive: true });
+mkdirSync(".reference", { recursive: true });
 for (const [name, url] of refs) {
-  const dir = join("reference", name);
+  const dir = join(".reference", name);
   if (existsSync(dir)) {
     console.log(`${name}: already exists`);
     continue;

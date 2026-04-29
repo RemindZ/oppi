@@ -1,0 +1,1268 @@
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { dirname, isAbsolute, join, resolve } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { execFileSync, spawn } from "node:child_process";
+import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext, Theme } from "@mariozechner/pi-coding-agent";
+import { getAgentDir } from "@mariozechner/pi-coding-agent";
+import type { Component } from "@mariozechner/pi-tui";
+import { Key, matchesKey, truncateToWidth, visibleWidth } from "@mariozechner/pi-tui";
+import {
+  coerceIdleMinutes,
+  coerceIdleThreshold,
+  coerceSmartThreshold,
+  readOppiCompactConfig,
+  VALID_IDLE_MINUTES,
+  VALID_IDLE_THRESHOLDS,
+  VALID_SMART_THRESHOLDS,
+  writeGlobalOppiCompactConfig,
+  type OppiCompactConfig,
+} from "./idle-compact";
+import {
+  clearSessionPermissionState,
+  coerceTimeout,
+  MODES as PERMISSION_MODES,
+  permissionStatusText,
+  publishMode,
+  readPermissionConfig,
+  showPermissionHistory,
+  writeGlobalPermissionConfig,
+  type PermissionConfig,
+} from "./permissions";
+import { askUserTimeoutLabel, ASK_USER_TIMEOUT_MINUTES, coerceAskUserTimeout, readAskUserConfig, writeGlobalAskUserConfig, type AskUserConfig } from "./ask-user";
+import { currentThemeName, normalizeThemeName, openThemePreview, OPPI_THEMES, setOppiTheme, themeLabel } from "./themes";
+
+type SyncConflictMode = "keep-both" | "keep-local" | "overwrite-local";
+type SyncDirection = "pull" | "push" | "both";
+type BackgroundSync = "off" | "15m" | "30m" | "60m";
+type EncryptionMode = "none" | "passphrase";
+type PassphraseSource = "env" | "file";
+type MemoryAgentModel = "auto" | "claude" | "gpt";
+type DeepMemoryModel = "auto" | "sonnet" | "gpt-5.5";
+
+type MemorySyncConfig = {
+  enabled: boolean;
+  provider: "github";
+  repoPath?: string;
+  repoUrl?: string;
+  pullOnStartup: boolean;
+  pushOnExit: boolean;
+  backgroundSync: BackgroundSync;
+  encryption: EncryptionMode;
+  passphraseSource: PassphraseSource;
+  passphraseEnv: string;
+  passphraseFile?: string;
+  conflictMode: SyncConflictMode;
+};
+
+type MemoryConfig = {
+  enabled: boolean;
+  agentModel: MemoryAgentModel;
+  deepModel: DeepMemoryModel;
+  startupRecall: boolean;
+  taskStartRecall: boolean;
+  turnSummaries: boolean;
+  idleConsolidation: boolean;
+  dashboardPort: "auto" | number;
+  sync: MemorySyncConfig;
+};
+
+type OppiSettingsFile = Record<string, any> & {
+  oppi?: {
+    memory?: Partial<MemoryConfig> & { sync?: Partial<MemorySyncConfig> };
+  };
+};
+
+type HoppiProjectRef = { cwd: string; displayName?: string };
+
+type HoppiBackend = {
+  init(options?: unknown): Promise<void>;
+  status(project: HoppiProjectRef): Promise<{ memoryCount: number; pinnedCount: number; storePath: string }>;
+  startDashboard(input?: { project?: HoppiProjectRef; port?: number }): Promise<{ url: string; stop(): Promise<void> }>;
+  remember?(input: {
+    project: HoppiProjectRef;
+    content: string;
+    tags?: string[];
+    pinned?: boolean;
+    confidence?: "verified" | "observed" | "inferred" | "stale";
+    source?: string;
+    sourceSessionId?: string | null;
+  }): Promise<{ id: string }>;
+  recall?(input: {
+    project: HoppiProjectRef;
+    query: string;
+    budget?: number;
+    limit?: number;
+    includeSuperseded?: boolean;
+  }): Promise<{ memories: unknown[]; contextMarkdown: string; omittedReason?: string }>;
+  buildStartupContext?(input: {
+    project: HoppiProjectRef;
+    maxMemories?: number;
+    includePinned?: boolean;
+  }): Promise<{ memoryCount: number; contextMarkdown: string; humanSummary: string }>;
+  consolidate?(input?: { project?: HoppiProjectRef; dryRun?: boolean; budget?: number }): Promise<unknown>;
+};
+
+type HoppiModule = {
+  getDefaultHoppiRoot?: () => string;
+  createHoppiBackend?: (options?: { root?: string }) => HoppiBackend;
+  syncGitRepository?: (root: string, repoPath: string, options?: Record<string, unknown>) => {
+    imported: number;
+    skipped: number;
+    overwritten: number;
+    keptBoth: number;
+    conflicts: unknown[];
+    exported: number;
+    encrypted: boolean;
+    pulled: boolean;
+    committed: boolean;
+    pushed: boolean;
+    repoPath: string;
+    direction: SyncDirection;
+    embeddingsRebuildRecommended?: boolean;
+  };
+  rebuildEmbeddings?: (root: string, options?: Record<string, unknown>) => Promise<{ available: boolean; rebuilt: number; error?: string }>;
+};
+
+type SettingsAction = "close" | "setup-sync" | "sync-now" | "pull-now" | "push-now" | "open-dashboard" | "permission-history" | "permission-clear" | "permission-reviewer-model" | "permission-status" | "theme-preview";
+
+const DEFAULT_PASSPHRASE_ENV = "OPPI_HOPPI_SYNC_PASSPHRASE";
+const DEFAULT_SYNC_REPO_NAME = "hoppi-memories";
+const SETTINGS_TABS = ["⚙️ General", "🧠 Memory", "🗜️ Compaction", "🔐 Permissions", "🎨 Theme"] as const;
+const BACKGROUND_VALUES: BackgroundSync[] = ["off", "15m", "30m", "60m"];
+const CONFLICT_VALUES: SyncConflictMode[] = ["keep-both", "keep-local", "overwrite-local"];
+const AGENT_MODEL_VALUES: MemoryAgentModel[] = ["auto", "claude", "gpt"];
+const DEEP_MODEL_VALUES: DeepMemoryModel[] = ["auto", "sonnet", "gpt-5.5"];
+const PERMISSION_TIMEOUT_SECONDS = [5, 15, 30, 45, 60, 90, 120, 180] as const;
+const MEMORY_CONTEXT_TYPE = "oppi-memory-context";
+const MEMORY_IDLE_CHECK_MS = 60_000;
+const MEMORY_IDLE_CONSOLIDATE_AFTER_MS = 90_000;
+
+let dashboardHandle: { url: string; stop(): Promise<void> } | undefined;
+let startupSyncStarted = false;
+
+function globalSettingsPath(): string {
+  const explicit = process.env.OPPI_SETTINGS_PATH?.trim();
+  return explicit ? resolveUserPath(explicit) : join(getAgentDir(), "settings.json");
+}
+
+function readJson(path: string): OppiSettingsFile {
+  try {
+    if (!existsSync(path)) return {};
+    return JSON.parse(readFileSync(path, "utf8"));
+  } catch {
+    return {};
+  }
+}
+
+function writeJson(path: string, data: OppiSettingsFile): void {
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, `${JSON.stringify(data, null, 2)}\n`, "utf8");
+}
+
+function defaultRepoPath(): string {
+  return join(getAgentDir(), "oppi", "hoppi-sync", DEFAULT_SYNC_REPO_NAME);
+}
+
+function defaultPassphraseFile(): string {
+  return join(getAgentDir(), "oppi", "hoppi-sync", "passphrase");
+}
+
+function normalizeDashboardPort(value: unknown): "auto" | number {
+  if (value === "auto" || value === undefined || value === null) return "auto";
+  const numeric = Number(value);
+  return Number.isInteger(numeric) && numeric > 0 && numeric < 65536 ? numeric : "auto";
+}
+
+function normalizeBackground(value: unknown): BackgroundSync {
+  return BACKGROUND_VALUES.includes(value as BackgroundSync) ? value as BackgroundSync : "off";
+}
+
+function normalizeConflictMode(value: unknown): SyncConflictMode {
+  return CONFLICT_VALUES.includes(value as SyncConflictMode) ? value as SyncConflictMode : "keep-both";
+}
+
+function normalizeAgentModel(value: unknown): MemoryAgentModel {
+  return AGENT_MODEL_VALUES.includes(value as MemoryAgentModel) ? value as MemoryAgentModel : "auto";
+}
+
+function normalizeDeepModel(value: unknown): DeepMemoryModel {
+  return DEEP_MODEL_VALUES.includes(value as DeepMemoryModel) ? value as DeepMemoryModel : "auto";
+}
+
+function normalizeSyncConfig(value: Partial<MemorySyncConfig> | undefined): MemorySyncConfig {
+  return {
+    enabled: value?.enabled === true,
+    provider: "github",
+    repoPath: typeof value?.repoPath === "string" && value.repoPath.trim() ? value.repoPath : undefined,
+    repoUrl: typeof value?.repoUrl === "string" && value.repoUrl.trim() ? value.repoUrl : undefined,
+    pullOnStartup: value?.pullOnStartup !== false,
+    pushOnExit: value?.pushOnExit !== false,
+    backgroundSync: normalizeBackground(value?.backgroundSync),
+    encryption: value?.encryption === "passphrase" ? "passphrase" : "none",
+    passphraseSource: value?.passphraseSource === "file" ? "file" : "env",
+    passphraseEnv: typeof value?.passphraseEnv === "string" && value.passphraseEnv.trim() ? value.passphraseEnv : DEFAULT_PASSPHRASE_ENV,
+    passphraseFile: typeof value?.passphraseFile === "string" && value.passphraseFile.trim() ? value.passphraseFile : undefined,
+    conflictMode: normalizeConflictMode(value?.conflictMode),
+  };
+}
+
+function normalizeMemoryConfig(value: Partial<MemoryConfig> | undefined): MemoryConfig {
+  return {
+    enabled: value?.enabled !== false,
+    agentModel: normalizeAgentModel(value?.agentModel),
+    deepModel: normalizeDeepModel(value?.deepModel),
+    startupRecall: value?.startupRecall !== false,
+    taskStartRecall: value?.taskStartRecall !== false,
+    turnSummaries: value?.turnSummaries !== false,
+    idleConsolidation: value?.idleConsolidation !== false,
+    dashboardPort: normalizeDashboardPort(value?.dashboardPort),
+    sync: normalizeSyncConfig(value?.sync),
+  };
+}
+
+function readMemoryConfig(_cwd: string): MemoryConfig {
+  return normalizeMemoryConfig(readJson(globalSettingsPath()).oppi?.memory);
+}
+
+function writeMemoryConfig(config: MemoryConfig): void {
+  const path = globalSettingsPath();
+  const data = readJson(path);
+  data.oppi = data.oppi ?? {};
+  const existing = data.oppi.memory ?? {};
+  data.oppi.memory = normalizeMemoryConfig({
+    ...existing,
+    ...config,
+    sync: { ...existing.sync, ...config.sync },
+  });
+  writeJson(path, data);
+}
+
+function expandHome(value: string): string {
+  if (value === "~") return homedir();
+  if (value.startsWith("~/") || value.startsWith("~\\")) return join(homedir(), value.slice(2));
+  return value;
+}
+
+function resolveUserPath(value: string): string {
+  const expanded = expandHome(value.trim());
+  return isAbsolute(expanded) ? expanded : resolve(process.cwd(), expanded);
+}
+
+function formatPath(value: string | undefined): string {
+  if (!value) return "not configured";
+  const home = homedir();
+  return value.startsWith(home) ? `~${value.slice(home.length)}` : value;
+}
+
+function extensionDir(): string {
+  return dirname(fileURLToPath(import.meta.url));
+}
+
+async function loadHoppi(): Promise<HoppiModule> {
+  const candidates = [
+    process.env.OPPI_HOPPI_MODULE,
+    join(extensionDir(), "..", "..", "..", "..", "hoppi-memory", "dist", "index.js"),
+  ].filter((candidate): candidate is string => Boolean(candidate));
+
+  for (const candidate of candidates) {
+    try {
+      const resolved = isAbsolute(candidate) ? candidate : resolve(candidate);
+      if (existsSync(resolved)) return await import(pathToFileURL(resolved).href) as HoppiModule;
+    } catch {
+      // Try the next candidate.
+    }
+  }
+
+  try {
+    return await import("hoppi-memory") as HoppiModule;
+  } catch (error) {
+    throw new Error(`Hoppi package is not available. Build/install hoppi-memory or set OPPI_HOPPI_MODULE. (${error instanceof Error ? error.message : String(error)})`);
+  }
+}
+
+function hoppiRoot(hoppi: HoppiModule): string {
+  if (hoppi.getDefaultHoppiRoot) return hoppi.getDefaultHoppiRoot();
+  return process.env.HOPPI_HOME ? resolve(process.env.HOPPI_HOME) : join(homedir(), ".oppi", "hoppi");
+}
+
+function syncPassphrase(config: MemorySyncConfig): string | undefined {
+  if (config.encryption !== "passphrase") return undefined;
+  if (config.passphraseSource === "file") {
+    const file = config.passphraseFile ? resolveUserPath(config.passphraseFile) : defaultPassphraseFile();
+    if (!existsSync(file)) throw new Error(`Encrypted sync passphrase file is missing: ${file}`);
+    const passphrase = readFileSync(file, "utf8").trim();
+    if (!passphrase) throw new Error(`Encrypted sync passphrase file is empty: ${file}`);
+    return passphrase;
+  }
+  const passphrase = process.env[config.passphraseEnv]?.trim();
+  if (!passphrase) throw new Error(`Encrypted sync needs ${config.passphraseEnv} to be set.`);
+  return passphrase;
+}
+
+function publishStatus(ctx: ExtensionContext, status: string | undefined): void {
+  if (!ctx.hasUI) return;
+  ctx.ui.setStatus("oppi.memory", status);
+}
+
+function syncSummary(direction: SyncDirection, result: ReturnType<NonNullable<HoppiModule["syncGitRepository"]>>): string {
+  const parts = [
+    direction,
+    `pulled ${result.imported}`,
+    result.exported ? `exported ${result.exported}` : undefined,
+    result.committed ? "committed" : undefined,
+    result.pushed ? "pushed" : undefined,
+    result.conflicts.length ? `${result.conflicts.length} conflicts` : undefined,
+  ].filter(Boolean);
+  return parts.join(" · ");
+}
+
+async function runSync(ctx: ExtensionContext, direction: SyncDirection, reason: string, notify = false): Promise<void> {
+  const config = readMemoryConfig(ctx.cwd);
+  if (!config.enabled || !config.sync.enabled) {
+    publishStatus(ctx, config.enabled ? "mem:sync off" : "mem:off");
+    return;
+  }
+  const repoPath = resolveUserPath(config.sync.repoPath ?? defaultRepoPath());
+  publishStatus(ctx, direction === "pull" ? "mem:pull…" : direction === "push" ? "mem:push…" : "mem:sync…");
+
+  try {
+    const hoppi = await loadHoppi();
+    if (!hoppi.syncGitRepository) throw new Error("Installed Hoppi package does not expose syncGitRepository().");
+    const result = hoppi.syncGitRepository(hoppiRoot(hoppi), repoPath, {
+      direction,
+      remote: config.sync.repoUrl,
+      passphrase: syncPassphrase(config.sync),
+      conflictMode: config.sync.conflictMode,
+      message: `Hoppi memory sync (${reason})`,
+    });
+    if ((direction === "pull" || direction === "both") && result.embeddingsRebuildRecommended && hoppi.rebuildEmbeddings) {
+      publishStatus(ctx, "mem:embed…");
+      const rebuilt = await hoppi.rebuildEmbeddings(hoppiRoot(hoppi));
+      if (rebuilt.error && ctx.hasUI) ctx.ui.notify(`Hoppi embedding rebuild skipped: ${rebuilt.error}`, "warning");
+    }
+    const summary = syncSummary(direction, result);
+    publishStatus(ctx, result.conflicts.length ? `mem:conflicts ${result.conflicts.length}` : "mem:synced");
+    if (notify && ctx.hasUI) ctx.ui.notify(`Hoppi sync ${summary}`, result.conflicts.length ? "warning" : "info");
+  } catch (error) {
+    publishStatus(ctx, "mem:sync error");
+    if (ctx.hasUI) ctx.ui.notify(`Hoppi sync skipped: ${error instanceof Error ? error.message : String(error)}`, "warning");
+  }
+}
+
+function openUrl(url: string): void {
+  if (process.platform === "win32") {
+    execFileSync("cmd", ["/c", "start", "", url], { stdio: "ignore" });
+  } else if (process.platform === "darwin") {
+    spawn("open", [url], { detached: true, stdio: "ignore" }).unref();
+  } else {
+    spawn("xdg-open", [url], { detached: true, stdio: "ignore" }).unref();
+  }
+}
+
+async function openDashboard(ctx: ExtensionContext): Promise<string> {
+  const config = readMemoryConfig(ctx.cwd);
+  const hoppi = await loadHoppi();
+  if (!hoppi.createHoppiBackend) throw new Error("Installed Hoppi package does not expose createHoppiBackend().");
+  if (!dashboardHandle) {
+    const backend = hoppi.createHoppiBackend({ root: hoppiRoot(hoppi) });
+    await backend.init();
+    dashboardHandle = await backend.startDashboard({
+      project: { cwd: ctx.cwd },
+      port: config.dashboardPort === "auto" ? 0 : config.dashboardPort,
+    });
+  }
+  return dashboardHandle.url;
+}
+
+async function openMemoryDashboard(ctx: ExtensionCommandContext): Promise<void> {
+  try {
+    const url = await openDashboard(ctx);
+    try {
+      openUrl(url);
+      ctx.ui.notify(`Hoppi dashboard: ${url}`, "info");
+    } catch {
+      ctx.ui.notify(`Hoppi dashboard: ${url}\nFallback: ${url.replace("hoppi.localhost", "localhost")}`, "info");
+    }
+  } catch (error) {
+    ctx.ui.notify(`Could not open Hoppi dashboard: ${error instanceof Error ? error.message : String(error)}`, "warning");
+  }
+}
+
+type AgentMessageLike = Record<string, any>;
+
+function projectRef(ctx: ExtensionContext): HoppiProjectRef {
+  return { cwd: ctx.cwd };
+}
+
+function sessionSourceId(ctx: ExtensionContext): string | null {
+  try {
+    return ctx.sessionManager.getSessionId() || ctx.sessionManager.getSessionFile() || null;
+  } catch {
+    return null;
+  }
+}
+
+function compactWhitespace(value: string): string {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+function truncateText(value: string, max: number): string {
+  const compact = compactWhitespace(value);
+  return compact.length > max ? `${compact.slice(0, Math.max(0, max - 1)).trimEnd()}…` : compact;
+}
+
+function textFromContent(content: unknown, options: { includeToolCalls?: boolean } = {}): string {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content.map((part: any) => {
+    if (!part || typeof part !== "object") return "";
+    if (part.type === "text" && typeof part.text === "string") return part.text;
+    if (part.type === "toolCall") return options.includeToolCalls ? `[tool:${part.toolName ?? part.name ?? "unknown"}]` : "";
+    if (part.type === "image") return "[image]";
+    if (typeof part.text === "string") return part.text;
+    return "";
+  }).filter(Boolean).join("\n");
+}
+
+function isMemoryContextMessage(message: AgentMessageLike): boolean {
+  const text = textFromContent(message.content);
+  return message.customType === MEMORY_CONTEXT_TYPE
+    || text.includes("OPPi memory context")
+    || text.includes("relevant Hoppi memory")
+    || text.includes("Memory is advisory");
+}
+
+function messageText(message: AgentMessageLike): string {
+  if (isMemoryContextMessage(message)) return "";
+  return textFromContent(message.content);
+}
+
+function isLowSignalMemoryText(text: string): boolean {
+  const normalized = compactWhitespace(text).toLowerCase();
+  return normalized.length === 0
+    || normalized === "cd"
+    || normalized.startsWith("current working directory:")
+    || /^([a-z]:\\|\\\\|\/)[^\s]+$/i.test(normalized)
+    || /^\[tool:[^\]]+\](\s+\[tool:[^\]]+\])*$/.test(normalized);
+}
+
+function messagesByRole(messages: readonly AgentMessageLike[], role: string): string[] {
+  return messages
+    .filter((message) => message.role === role)
+    .map(messageText)
+    .map((text) => truncateText(text, 1_200))
+    .filter((text) => text.length > 0 && !isLowSignalMemoryText(text));
+}
+
+function buildTurnSummary(messages: readonly AgentMessageLike[]): string | undefined {
+  const userTexts = messagesByRole(messages, "user");
+  const assistantTexts = messagesByRole(messages, "assistant");
+  if (userTexts.length === 0 || assistantTexts.length === 0) return undefined;
+
+  const user = truncateText(userTexts.at(-1) ?? userTexts.join("\n"), 700);
+  const assistant = truncateText(assistantTexts.join("\n"), 1_000);
+  if (`${user}${assistant}`.length < 100) return undefined;
+
+  const lines = [
+    `Turn summary (${new Date().toISOString()})`,
+    user ? `User asked: ${user}` : undefined,
+    assistant ? `Assistant outcome: ${assistant}` : undefined,
+  ].filter(Boolean) as string[];
+
+  return lines.join("\n");
+}
+
+function buildSessionRecap(ctx: ExtensionContext): string | undefined {
+  const branch = ctx.sessionManager.getBranch();
+  const messages = branch
+    .filter((entry: any) => entry.type === "message" && entry.message)
+    .map((entry: any) => entry.message as AgentMessageLike)
+    .filter((message) => !isMemoryContextMessage(message));
+  const userTexts = messagesByRole(messages, "user").slice(-10);
+  const assistantTexts = messagesByRole(messages, "assistant").slice(-8);
+  if (userTexts.length === 0 && assistantTexts.length === 0) return undefined;
+
+  const sessionId = sessionSourceId(ctx) ?? "unknown-session";
+  const lines = [
+    `Session recap (${new Date().toISOString()})`,
+    `Session: ${sessionId}`,
+    `Project: ${ctx.cwd}`,
+    "Recent user goals:",
+    ...userTexts.map((text) => `- ${truncateText(text, 260)}`),
+    "Recent assistant outcomes:",
+    ...assistantTexts.map((text) => `- ${truncateText(text, 320)}`),
+  ];
+  const recap = lines.join("\n");
+  return recap.length >= 120 ? recap : undefined;
+}
+
+class HoppiMemoryWorker {
+  private backendPromise: Promise<HoppiBackend> | undefined;
+  private queue: Promise<void> = Promise.resolve();
+  private startupInjected = new Set<string>();
+  private lastTurnSummary: string | undefined;
+  private dirtyVersion = 0;
+  private consolidatedVersion = 0;
+  private dirtyAt = 0;
+  private idleTimer: NodeJS.Timeout | undefined;
+  private consolidating = false;
+  private warnedUnavailable = false;
+
+  start(ctx: ExtensionContext): void {
+    this.stop();
+    this.idleTimer = setInterval(() => void this.tickIdle(ctx), MEMORY_IDLE_CHECK_MS);
+    this.idleTimer.unref?.();
+    void this.refreshStatus(ctx);
+  }
+
+  stop(): void {
+    if (this.idleTimer) clearInterval(this.idleTimer);
+    this.idleTimer = undefined;
+  }
+
+  async buildPromptContext(prompt: string, ctx: ExtensionContext): Promise<string | undefined> {
+    const config = readMemoryConfig(ctx.cwd);
+    if (!config.enabled) {
+      publishStatus(ctx, "mem:off");
+      return undefined;
+    }
+
+    try {
+      const backend = await this.backend(ctx);
+      const project = projectRef(ctx);
+      const parts: string[] = [];
+      const sessionKey = sessionSourceId(ctx) ?? ctx.cwd;
+
+      if (config.startupRecall && !this.startupInjected.has(sessionKey) && backend.buildStartupContext) {
+        this.startupInjected.add(sessionKey);
+        const startup = await backend.buildStartupContext({ project, maxMemories: 8, includePinned: true });
+        if (startup.contextMarkdown.trim()) parts.push(startup.contextMarkdown.trim());
+        publishStatus(ctx, startup.memoryCount > 0 ? `mem:${startup.memoryCount}` : "mem:on");
+      }
+
+      if (config.taskStartRecall && prompt.trim() && backend.recall) {
+        const recall = await backend.recall({ project, query: prompt, budget: 900, limit: 5 });
+        if (recall.contextMarkdown.trim()) parts.push(recall.contextMarkdown.trim());
+      }
+
+      const unique = [...new Set(parts)];
+      if (unique.length === 0) return undefined;
+      return `${unique.join("\n\n---\n\n")}\n\nMemory is advisory: prefer current user instructions and current files when they conflict.`;
+    } catch (error) {
+      this.warnUnavailable(ctx, error);
+      return undefined;
+    }
+  }
+
+  enqueueTurnSummary(messages: readonly AgentMessageLike[], ctx: ExtensionContext): void {
+    const config = readMemoryConfig(ctx.cwd);
+    if (!config.enabled || !config.turnSummaries) return;
+    const summary = buildTurnSummary(messages);
+    if (!summary || summary === this.lastTurnSummary) return;
+    this.lastTurnSummary = summary;
+    this.enqueue(ctx, async (backend) => {
+      if (!backend.remember) return;
+      await backend.remember({
+        project: projectRef(ctx),
+        content: summary,
+        tags: ["oppi-turn-summary", "agent_end"],
+        confidence: "observed",
+        source: "oppi:agent_end",
+        sourceSessionId: sessionSourceId(ctx),
+      });
+      this.markDirty(ctx);
+    });
+  }
+
+  async rememberExitRecap(ctx: ExtensionContext): Promise<void> {
+    const config = readMemoryConfig(ctx.cwd);
+    if (!config.enabled) return;
+    const recap = buildSessionRecap(ctx);
+    if (!recap) return;
+    await this.enqueueAndWait(ctx, async (backend) => {
+      if (!backend.remember) return;
+      await backend.remember({
+        project: projectRef(ctx),
+        content: recap,
+        tags: ["oppi-exit-recap", "session-recap"],
+        pinned: true,
+        confidence: "observed",
+        source: "oppi:exit",
+        sourceSessionId: sessionSourceId(ctx),
+      });
+      this.markDirty(ctx);
+    });
+  }
+
+  async drain(): Promise<void> {
+    await this.queue.catch(() => undefined);
+  }
+
+  private async refreshStatus(ctx: ExtensionContext): Promise<void> {
+    const config = readMemoryConfig(ctx.cwd);
+    if (!config.enabled) return publishStatus(ctx, "mem:off");
+    try {
+      const backend = await this.backend(ctx);
+      const status = await backend.status(projectRef(ctx));
+      publishStatus(ctx, status.memoryCount > 0 ? `mem:${status.memoryCount}` : "mem:on");
+    } catch (error) {
+      this.warnUnavailable(ctx, error);
+    }
+  }
+
+  private enqueue(ctx: ExtensionContext, job: (backend: HoppiBackend) => Promise<void>): Promise<void> {
+    const run = this.queue
+      .catch(() => undefined)
+      .then(() => this.runJob(ctx, job));
+    this.queue = run;
+    return run;
+  }
+
+  private async enqueueAndWait(ctx: ExtensionContext, job: (backend: HoppiBackend) => Promise<void>): Promise<void> {
+    await this.enqueue(ctx, job);
+  }
+
+  private async runJob(ctx: ExtensionContext, job: (backend: HoppiBackend) => Promise<void>): Promise<void> {
+    try {
+      const backend = await this.backend(ctx);
+      await job(backend);
+    } catch (error) {
+      this.warnUnavailable(ctx, error);
+    }
+  }
+
+  private async backend(ctx: ExtensionContext): Promise<HoppiBackend> {
+    if (!this.backendPromise) {
+      this.backendPromise = (async () => {
+        const hoppi = await loadHoppi();
+        if (!hoppi.createHoppiBackend) throw new Error("Installed Hoppi package does not expose createHoppiBackend().");
+        const backend = hoppi.createHoppiBackend({ root: hoppiRoot(hoppi) });
+        await backend.init();
+        return backend;
+      })();
+    }
+    return this.backendPromise;
+  }
+
+  private markDirty(ctx: ExtensionContext): void {
+    this.dirtyVersion += 1;
+    this.dirtyAt = Date.now();
+    publishStatus(ctx, "mem:saved");
+  }
+
+  private async tickIdle(ctx: ExtensionContext): Promise<void> {
+    const config = readMemoryConfig(ctx.cwd);
+    if (!config.enabled || !config.idleConsolidation || !ctx.isIdle()) return;
+    if (this.consolidating || this.dirtyVersion <= this.consolidatedVersion) return;
+    if (Date.now() - this.dirtyAt < MEMORY_IDLE_CONSOLIDATE_AFTER_MS) return;
+
+    this.consolidating = true;
+    publishStatus(ctx, "mem:consolidate…");
+    const run = this.enqueue(ctx, async (backend) => {
+      if (backend.consolidate) await backend.consolidate({ project: projectRef(ctx), dryRun: false, budget: 1_500 });
+      this.consolidatedVersion = this.dirtyVersion;
+      publishStatus(ctx, "mem:consolidated");
+    });
+    void run.finally(() => {
+      this.consolidating = false;
+    });
+  }
+
+  private warnUnavailable(ctx: ExtensionContext, error: unknown): void {
+    publishStatus(ctx, "mem:error");
+    if (!ctx.hasUI || this.warnedUnavailable) return;
+    this.warnedUnavailable = true;
+    ctx.ui.notify(`Hoppi memory unavailable: ${error instanceof Error ? error.message : String(error)}`, "warning");
+  }
+}
+
+function bool(value: boolean): "on" | "off" {
+  return value ? "on" : "off";
+}
+
+function nextValue<T extends string | number>(values: readonly T[], current: T): T {
+  const index = values.indexOf(current);
+  return values[(index + 1) % values.length] ?? values[0]!;
+}
+
+const ANSI_PATTERN = /\x1B\[[0-?]*[ -/]*[@-~]/g;
+
+function isZeroWidthCodePoint(code: number): boolean {
+  return (code >= 0x0300 && code <= 0x036f) || (code >= 0xfe00 && code <= 0xfe0f) || code === 0x200d;
+}
+
+function isWideCodePoint(code: number): boolean {
+  return code >= 0x1f000
+    || (code >= 0x2600 && code <= 0x27bf)
+    || (code >= 0x2e80 && code <= 0xa4cf)
+    || (code >= 0xac00 && code <= 0xd7a3)
+    || (code >= 0xf900 && code <= 0xfaff)
+    || (code >= 0xff01 && code <= 0xff60);
+}
+
+function settingsVisibleWidth(value: string): number {
+  let width = 0;
+  for (const char of value.replace(ANSI_PATTERN, "")) {
+    const code = char.codePointAt(0) ?? 0;
+    if (isZeroWidthCodePoint(code)) continue;
+    width += isWideCodePoint(code) ? 2 : 1;
+  }
+  return width;
+}
+
+type SettingRow = {
+  label: string;
+  value?: string;
+  description: string;
+  action?: SettingsAction;
+  cycle?: () => void;
+};
+
+class OppiSettingsComponent implements Component {
+  private tab = 1;
+  private selected = 0;
+  private cachedWidth?: number;
+  private cachedLines?: string[];
+
+  constructor(
+    private readonly theme: Theme,
+    initialTab: number,
+    private readonly getMemoryConfig: () => MemoryConfig,
+    private readonly saveMemoryConfig: (config: MemoryConfig) => void,
+    private readonly getAskUserConfig: () => AskUserConfig,
+    private readonly saveAskUserConfig: (config: AskUserConfig) => void,
+    private readonly getCompactConfig: () => OppiCompactConfig,
+    private readonly saveCompactConfig: (config: OppiCompactConfig) => void,
+    private readonly getPermissionConfig: () => PermissionConfig,
+    private readonly savePermissionConfig: (config: PermissionConfig) => void,
+    private readonly getThemeName: () => string,
+    private readonly setThemeName: (name: string) => void,
+    private readonly done: (action: SettingsAction | undefined) => void,
+  ) {
+    this.tab = Math.max(0, Math.min(SETTINGS_TABS.length - 1, initialTab));
+  }
+
+  handleInput(data: string): void {
+    if (matchesKey(data, Key.escape) || matchesKey(data, Key.ctrl("c"))) return this.done(undefined);
+    if (matchesKey(data, Key.left) || data === "h") return this.moveTab(-1);
+    if (matchesKey(data, Key.right) || data === "l") return this.moveTab(1);
+    const rows = this.rows();
+    if (matchesKey(data, Key.up) || data === "k") return this.moveRow(-1, rows.length);
+    if (matchesKey(data, Key.down) || data === "j") return this.moveRow(1, rows.length);
+    if (matchesKey(data, Key.enter) || matchesKey(data, Key.space)) {
+      const row = rows[this.selected];
+      if (!row) return;
+      if (row.action) return this.done(row.action);
+      if (row.cycle) {
+        row.cycle();
+        this.invalidate();
+      }
+    }
+  }
+
+  render(width: number): string[] {
+    if (this.cachedWidth === width && this.cachedLines) return this.cachedLines;
+    const panelWidth = Math.max(48, Math.min(width, 96));
+    const inner = panelWidth - 2;
+    const t = this.theme;
+    const rows = this.rows();
+    const lines: string[] = [];
+
+    lines.push(this.topBorder("OPPi settings", panelWidth));
+    lines.push(this.boxed(this.renderTabs(inner), inner));
+    lines.push(this.boxed(t.fg("dim", "←/→ tabs · ↑/↓ settings · Space/Enter change or run · Esc close"), inner));
+    lines.push(this.boxed("", inner));
+
+    if (rows.length === 0) {
+      lines.push(this.boxed(` ${t.fg("muted", "No settings in this tab yet.")}`, inner));
+    } else {
+      rows.forEach((row, index) => {
+        const active = index === this.selected;
+        const cursor = active ? t.fg("accent", "›") : " ";
+        const label = active ? t.bold(t.fg("accent", row.label)) : t.fg("toolOutput", row.label);
+        const value = row.value ? (active ? t.fg("success", row.value) : t.fg("muted", row.value)) : t.fg("dim", row.action ? "open" : "");
+        const available = Math.max(12, inner - 5 - visibleWidth(row.label));
+        lines.push(this.boxed(` ${cursor} ${label} ${t.fg("dim", "—")} ${truncateToWidth(value, available, "…")}`, inner));
+        lines.push(this.boxed(`     ${t.fg("dim", row.description)}`, inner));
+      });
+    }
+
+    lines.push(this.boxed("", inner));
+    lines.push(this.boxed(this.footerText(), inner));
+    lines.push(this.bottomBorder(panelWidth));
+    this.cachedWidth = width;
+    this.cachedLines = lines.map((line) => truncateToWidth(line, width, ""));
+    return this.cachedLines;
+  }
+
+  invalidate(): void {
+    this.cachedWidth = undefined;
+    this.cachedLines = undefined;
+  }
+
+  private moveTab(delta: number): void {
+    this.tab = (this.tab + delta + SETTINGS_TABS.length) % SETTINGS_TABS.length;
+    this.selected = 0;
+    this.invalidate();
+  }
+
+  private moveRow(delta: number, count: number): void {
+    if (count === 0) return;
+    this.selected = (this.selected + delta + count) % count;
+    this.invalidate();
+  }
+
+  private rows(): SettingRow[] {
+    if (this.tab === 0) {
+      return [
+        { label: "Settings command", value: "/settings:oppi", description: "Stage 1 uses this namespaced command because Pi owns the built-in /settings command." },
+        { label: "Future wrapper", value: "/settings", description: "The OPPi wrapper should route /settings to this unified surface and embed/delegate Pi native settings." },
+        { label: "Memory shortcut", value: "/memory", description: "Opens Hoppi dashboard; CLI keeps only core toggles and Hoppi owns detailed settings." },
+        {
+          label: "Question timeout",
+          value: askUserTimeoutLabel(this.getAskUserConfig().timeoutMinutes),
+          description: "When ask_user waits too long, keep answered questions and fill unanswered ones with recommended/default choices.",
+          cycle: () => this.updateAskUser({ timeoutMinutes: coerceAskUserTimeout(nextValue(ASK_USER_TIMEOUT_MINUTES, this.getAskUserConfig().timeoutMinutes)) }),
+        },
+        { label: "Usage", value: "/usage", description: "Usage and cost status stays separate from product settings." },
+      ];
+    }
+
+    if (this.tab === 1) {
+      const config = this.getMemoryConfig();
+      return [
+        {
+          label: "Memory",
+          value: bool(config.enabled),
+          description: "Master switch for Hoppi-backed memory in OPPi.",
+          cycle: () => this.updateMemory({ ...config, enabled: !config.enabled }),
+        },
+        {
+          label: "Startup recall",
+          value: bool(config.startupRecall),
+          description: "Load a small relevant memory context when OPPi starts.",
+          cycle: () => this.updateMemory({ ...config, startupRecall: !config.startupRecall }),
+        },
+        {
+          label: "Task-start recall",
+          value: bool(config.taskStartRecall),
+          description: "Run high-precision recall at new task boundaries; it may return nothing.",
+          cycle: () => this.updateMemory({ ...config, taskStartRecall: !config.taskStartRecall }),
+        },
+        {
+          label: "Turn summaries",
+          value: bool(config.turnSummaries),
+          description: "Save compact durable notes at the end of useful agent turns.",
+          cycle: () => this.updateMemory({ ...config, turnSummaries: !config.turnSummaries }),
+        },
+        {
+          label: "Idle consolidation",
+          value: bool(config.idleConsolidation),
+          description: "Let OPPi consolidate dirty memory once during idle windows.",
+          cycle: () => this.updateMemory({ ...config, idleConsolidation: !config.idleConsolidation }),
+        },
+        {
+          label: "Sync",
+          value: bool(config.sync.enabled),
+          description: "Enable opt-in Hoppi sync; repo, encryption, conflicts, and cadence live in the dashboard.",
+          cycle: () => this.updateMemory({ ...config, sync: { ...config.sync, enabled: !config.sync.enabled } }),
+        },
+        { label: "Detailed settings", value: "dashboard", description: "Open Hoppi for models, port, sync repo, encryption, conflicts, and advanced tuning.", action: "open-dashboard" },
+      ];
+    }
+
+    if (this.tab === 2) {
+      const config = this.getCompactConfig();
+      return [
+        {
+          label: "Idle compaction",
+          value: bool(config.idleCompact.enabled),
+          description: "Compact only after OPPi is idle long enough and context is full enough.",
+          cycle: () => this.updateCompact({ ...config, idleCompact: { ...config.idleCompact, enabled: !config.idleCompact.enabled } }),
+        },
+        {
+          label: "Idle time",
+          value: `${config.idleCompact.idleMinutes}m`,
+          description: "How long OPPi waits after the agent becomes idle before compacting.",
+          cycle: () => this.updateCompact({ ...config, idleCompact: { ...config.idleCompact, idleMinutes: coerceIdleMinutes(nextValue(VALID_IDLE_MINUTES, config.idleCompact.idleMinutes)) } }),
+        },
+        {
+          label: "Idle context threshold",
+          value: `${config.idleCompact.thresholdPercent}%`,
+          description: "Only idle-compact when context usage is at or above this percentage.",
+          cycle: () => this.updateCompact({ ...config, idleCompact: { ...config.idleCompact, thresholdPercent: coerceIdleThreshold(nextValue(VALID_IDLE_THRESHOLDS, config.idleCompact.thresholdPercent)) } }),
+        },
+        {
+          label: "Smart compact threshold",
+          value: `${config.smartCompact.thresholdPercent}%`,
+          description: "During todo-driven work, compact after todo_write checkpoints at or above this usage.",
+          cycle: () => this.updateCompact({ ...config, smartCompact: { thresholdPercent: coerceSmartThreshold(nextValue(VALID_SMART_THRESHOLDS, config.smartCompact.thresholdPercent)) } }),
+        },
+      ];
+    }
+
+    if (this.tab === 3) {
+      const config = this.getPermissionConfig();
+      const timeout = `${Math.round(config.reviewTimeoutMs / 1000)}s`;
+      const timeoutValues = PERMISSION_TIMEOUT_SECONDS.map(String);
+      return [
+        {
+          label: "Permission mode",
+          value: config.mode,
+          description: "Controls read-only/default/auto-review/full-access behavior for risky tool calls.",
+          cycle: () => this.updatePermission({ ...config, mode: nextValue(PERMISSION_MODES, config.mode) }),
+        },
+        {
+          label: "Auto-review timeout",
+          value: timeout,
+          description: "Maximum time the isolated OPPi Guardian reviewer can spend on one risky call.",
+          cycle: () => this.updatePermission({ ...config, reviewTimeoutMs: coerceTimeout(Number(nextValue(timeoutValues, String(Math.round(config.reviewTimeoutMs / 1000)))) * 1000) }),
+        },
+        {
+          label: "Reviewer model",
+          value: config.reviewerModel || "auto",
+          description: "Model used by the isolated OPPi Guardian reviewer. Use /permissions reviewer-model provider/model for exact control.",
+          action: "permission-reviewer-model",
+        },
+        { label: "Review history", value: "open", description: "Show recent auto-review decisions and cached approvals.", action: "permission-history" },
+        { label: "Clear session allowances", value: "clear", description: "Reset manual allowances, auto-review cache, and denial circuit breakers.", action: "permission-clear" },
+        { label: "Status", value: "show", description: "Show current permission mode, timeout, cache, and review count.", action: "permission-status" },
+      ];
+    }
+
+    const themeName = normalizeThemeName(this.getThemeName());
+    return [
+      {
+        label: "OPPi theme",
+        value: themeName,
+        description: themeLabel(themeName),
+        cycle: () => this.updateTheme(nextValue(OPPI_THEMES.map((item) => item.name), themeName)),
+      },
+      { label: "Preview picker", value: "open", description: "Open the richer live-preview picker for OPPi themes.", action: "theme-preview" },
+    ];
+  }
+
+  private updateMemory(config: MemoryConfig): void {
+    this.saveMemoryConfig(config);
+  }
+
+  private updateAskUser(config: AskUserConfig): void {
+    this.saveAskUserConfig(config);
+  }
+
+  private updateCompact(config: OppiCompactConfig): void {
+    this.saveCompactConfig(config);
+  }
+
+  private updatePermission(config: PermissionConfig): void {
+    this.savePermissionConfig(config);
+  }
+
+  private updateTheme(name: string): void {
+    this.setThemeName(name);
+  }
+
+  private renderTabs(width: number): string {
+    const t = this.theme;
+    const rendered = SETTINGS_TABS.map((tab, index) => index === this.tab ? t.bg("selectedBg", t.fg("accent", ` ${tab} `)) : t.fg("muted", ` ${tab} `)).join(t.fg("dim", " "));
+    return truncateToWidth(rendered, width, "…");
+  }
+
+  private footerText(): string {
+    const memory = this.getMemoryConfig();
+    const compact = this.getCompactConfig();
+    const permissions = this.getPermissionConfig();
+    return this.theme.fg("dim", `Memory ${bool(memory.enabled)} · idle compact ${bool(compact.idleCompact.enabled)} @ ${compact.idleCompact.thresholdPercent}% · perm ${permissions.mode} · theme ${normalizeThemeName(this.getThemeName())}`);
+  }
+
+  private boxed(content: string, inner: number): string {
+    const fitted = truncateToWidth(content, inner, "…");
+    const pad = Math.max(0, inner - settingsVisibleWidth(fitted));
+    return `${this.theme.fg("border", "│")}${fitted}${" ".repeat(pad)}${this.theme.fg("border", "│")}`;
+  }
+
+  private topBorder(title: string, width: number): string {
+    const safe = ` ${title} `;
+    const remaining = Math.max(0, width - 2 - visibleWidth(safe));
+    return `${this.theme.fg("borderAccent", "╭")}${this.theme.fg("borderAccent", "─")}${this.theme.fg("accent", safe)}${this.theme.fg("borderAccent", "─".repeat(Math.max(0, remaining - 1)))}${this.theme.fg("borderAccent", "╮")}`;
+  }
+
+  private bottomBorder(width: number): string {
+    return this.theme.fg("borderAccent", `╰${"─".repeat(Math.max(0, width - 2))}╯`);
+  }
+}
+
+function initialSettingsTab(args: string | undefined): number {
+  const normalized = (args ?? "").trim().toLowerCase();
+  if (normalized.startsWith("memory")) return 1;
+  if (normalized.startsWith("compact") || normalized.startsWith("idle")) return 2;
+  if (normalized.startsWith("permission") || normalized.startsWith("perm")) return 3;
+  if (normalized.startsWith("theme")) return 4;
+  return 0;
+}
+
+async function showSettings(pi: ExtensionAPI, ctx: ExtensionCommandContext, args?: string): Promise<void> {
+  const initialTab = initialSettingsTab(args);
+  while (true) {
+    const action = await ctx.ui.custom<SettingsAction | undefined>((tui, theme, _kb, done) => {
+      const component = new OppiSettingsComponent(
+        theme,
+        initialTab,
+        () => readMemoryConfig(ctx.cwd),
+        (config) => {
+          writeMemoryConfig(config);
+          tui.requestRender();
+        },
+        () => readAskUserConfig(ctx.cwd),
+        (config) => {
+          writeGlobalAskUserConfig(config);
+          tui.requestRender();
+        },
+        () => readOppiCompactConfig(ctx.cwd),
+        (config) => {
+          writeGlobalOppiCompactConfig(config);
+          tui.requestRender();
+        },
+        () => readPermissionConfig(ctx.cwd),
+        (config) => {
+          writeGlobalPermissionConfig(config);
+          publishMode(pi, ctx, config.mode);
+          tui.requestRender();
+        },
+        () => currentThemeName(ctx),
+        (name) => {
+          const result = setOppiTheme(ctx, name);
+          ctx.ui.notify(result.success ? `Theme set to ${name}.` : result.error ?? `Could not set theme ${name}.`, result.success ? "info" : "error");
+          tui.requestRender();
+        },
+        done,
+      );
+      return {
+        render: (width: number) => component.render(width),
+        invalidate: () => component.invalidate(),
+        handleInput: (data: string) => {
+          component.handleInput(data);
+          tui.requestRender();
+        },
+      };
+    });
+
+    if (!action || action === "close") return;
+    if (action === "setup-sync") await runSyncSetupWizard(ctx);
+    if (action === "sync-now") await runSync(ctx, "both", "settings", true);
+    if (action === "pull-now") await runSync(ctx, "pull", "settings", true);
+    if (action === "push-now") await runSync(ctx, "push", "settings", true);
+    if (action === "open-dashboard") await openMemoryDashboard(ctx);
+    if (action === "permission-history") await showPermissionHistory(ctx);
+    if (action === "permission-clear") {
+      clearSessionPermissionState();
+      ctx.ui.notify("Cleared session permission allowances, auto-review cache, and circuit breakers.", "info");
+    }
+    if (action === "permission-reviewer-model") {
+      const config = readPermissionConfig(ctx.cwd);
+      const value = await ctx.ui.input("Auto-review model (auto or provider/model)", config.reviewerModel || "auto");
+      if (value !== undefined) {
+        writeGlobalPermissionConfig({ ...config, reviewerModel: value });
+        ctx.ui.notify(`Auto-review reviewer set to ${readPermissionConfig(ctx.cwd).reviewerModel || "auto"}.`, "info");
+      }
+    }
+    if (action === "permission-status") ctx.ui.notify(permissionStatusText(readPermissionConfig(ctx.cwd), ctx), "info");
+    if (action === "theme-preview") {
+      const selected = await openThemePreview(ctx);
+      if (selected) {
+        const result = setOppiTheme(ctx, selected);
+        ctx.ui.notify(result.success ? `Theme set to ${selected}.` : result.error ?? `Could not set theme ${selected}.`, result.success ? "info" : "error");
+      }
+    }
+  }
+}
+
+function ghAvailable(): boolean {
+  try {
+    execFileSync("gh", ["--version"], { stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function runGhRepoCreate(repo: string, repoPath: string): string | undefined {
+  const output = execFileSync("gh", ["repo", "create", repo, "--private"], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  execFileSync("gh", ["repo", "clone", repo, repoPath], { stdio: "ignore" });
+  return output.trim().split(/\r?\n/).find((line) => line.includes("github.com"));
+}
+
+async function runSyncSetupWizard(ctx: ExtensionCommandContext): Promise<void> {
+  const current = readMemoryConfig(ctx.cwd);
+  const useGh = await ctx.ui.confirm(
+    "Hoppi sync setup",
+    "Create/clone a private GitHub repository with the GitHub CLI? Choose No to configure an existing local repo path instead.",
+  );
+
+  let repoPath = current.sync.repoPath ?? defaultRepoPath();
+  let repoUrl = current.sync.repoUrl;
+
+  if (useGh) {
+    if (!ghAvailable()) {
+      ctx.ui.notify("GitHub CLI `gh` is not available. Install/login with gh or configure an existing repo path.", "warning");
+      return;
+    }
+    const repo = await ctx.ui.input("Private GitHub repo", DEFAULT_SYNC_REPO_NAME) || DEFAULT_SYNC_REPO_NAME;
+    const pathInput = await ctx.ui.input("Local clone path", repoPath) || repoPath;
+    repoPath = resolveUserPath(pathInput);
+    mkdirSync(dirname(repoPath), { recursive: true });
+    try {
+      const created = runGhRepoCreate(repo, repoPath);
+      repoUrl = created ?? repoUrl;
+      ctx.ui.notify(`Created private Hoppi sync repo at ${repoPath}.`, "info");
+    } catch (error) {
+      ctx.ui.notify(`GitHub repo setup failed: ${error instanceof Error ? error.message : String(error)}`, "warning");
+      return;
+    }
+  } else {
+    const pathInput = await ctx.ui.input("Local sync repo path", repoPath) || repoPath;
+    repoPath = resolveUserPath(pathInput);
+    const remoteInput = await ctx.ui.input("Git remote URL (optional)", repoUrl ?? "") || "";
+    repoUrl = remoteInput.trim() || undefined;
+  }
+
+  const encryption = await ctx.ui.select("Encryption", [
+    "none — rely on private repository permissions",
+    "env passphrase — encrypted payload, passphrase from environment",
+    "local passphrase file — encrypted payload, stored on this device",
+  ]) ?? "none — rely on private repository permissions";
+
+  let nextSync: MemorySyncConfig = {
+    ...current.sync,
+    enabled: true,
+    repoPath,
+    repoUrl,
+    pullOnStartup: true,
+    pushOnExit: true,
+  };
+
+  if (encryption.startsWith("env")) {
+    const envName = await ctx.ui.input("Passphrase environment variable", current.sync.passphraseEnv || DEFAULT_PASSPHRASE_ENV) || DEFAULT_PASSPHRASE_ENV;
+    nextSync = { ...nextSync, encryption: "passphrase", passphraseSource: "env", passphraseEnv: envName };
+    ctx.ui.notify(`Set ${envName} before startup/exit sync runs.`, "info");
+  } else if (encryption.startsWith("local")) {
+    const passphrase = await ctx.ui.input("Passphrase (stored locally on this device)", "") || "";
+    if (!passphrase.trim()) {
+      ctx.ui.notify("Passphrase was empty; leaving encryption disabled.", "warning");
+      nextSync = { ...nextSync, encryption: "none" };
+    } else {
+      const file = defaultPassphraseFile();
+      mkdirSync(dirname(file), { recursive: true });
+      writeFileSync(file, `${passphrase.trim()}\n`, { encoding: "utf8", mode: 0o600 });
+      nextSync = { ...nextSync, encryption: "passphrase", passphraseSource: "file", passphraseFile: file };
+    }
+  } else {
+    nextSync = { ...nextSync, encryption: "none" };
+  }
+
+  const next = { ...current, enabled: true, sync: nextSync };
+  writeMemoryConfig(next);
+  ctx.ui.notify("Hoppi sync is configured. Startup pull and /exit push are enabled.", "info");
+
+  const initial = await ctx.ui.confirm("Initial sync", "Run an initial pull + push now?");
+  if (initial) await runSync(ctx, "both", "setup", true);
+}
+
+class BackgroundSyncRunner {
+  private timer: NodeJS.Timeout | undefined;
+  private running = false;
+
+  start(ctx: ExtensionContext): void {
+    this.stop();
+    const config = readMemoryConfig(ctx.cwd);
+    const interval = this.intervalMs(config.sync.backgroundSync);
+    if (!config.enabled || !config.sync.enabled || interval === 0) return;
+    this.timer = setInterval(() => {
+      if (this.running || !ctx.isIdle()) return;
+      this.running = true;
+      void runSync(ctx, "both", "idle", false).finally(() => { this.running = false; });
+    }, interval);
+    this.timer.unref?.();
+  }
+
+  stop(): void {
+    if (this.timer) clearInterval(this.timer);
+    this.timer = undefined;
+    this.running = false;
+  }
+
+  private intervalMs(value: BackgroundSync): number {
+    if (value === "15m") return 15 * 60_000;
+    if (value === "30m") return 30 * 60_000;
+    if (value === "60m") return 60 * 60_000;
+    return 0;
+  }
+}
+
+export default function memoryExtension(pi: ExtensionAPI) {
+  const backgroundSync = new BackgroundSyncRunner();
+  const memoryWorker = new HoppiMemoryWorker();
+
+  pi.on("session_start", async (_event, ctx) => {
+    const config = readMemoryConfig(ctx.cwd);
+    publishStatus(ctx, config.enabled ? (config.sync.enabled ? "mem:sync on" : "mem:on") : "mem:off");
+    memoryWorker.start(ctx);
+    backgroundSync.start(ctx);
+    if (!startupSyncStarted && config.enabled && config.sync.enabled && config.sync.pullOnStartup) {
+      startupSyncStarted = true;
+      void runSync(ctx, "pull", "startup", true);
+    }
+  });
+
+  pi.on("before_agent_start", async (event, ctx) => {
+    const content = await memoryWorker.buildPromptContext(event.prompt, ctx);
+    if (!content) return;
+    return {
+      message: {
+        customType: MEMORY_CONTEXT_TYPE,
+        content,
+        // Keep routine recall out of the visible transcript; the footer carries
+        // memory status, and summaries explicitly ignore this custom message.
+        display: false,
+        details: { source: "hoppi", kind: "recall", createdAt: new Date().toISOString() },
+      },
+    };
+  });
+
+  pi.on("agent_end", async (event, ctx) => {
+    memoryWorker.enqueueTurnSummary(event.messages as AgentMessageLike[], ctx);
+  });
+
+  pi.on("session_shutdown", async (event, ctx) => {
+    backgroundSync.stop();
+    memoryWorker.stop();
+    if (event.reason === "quit") await memoryWorker.rememberExitRecap(ctx);
+    await memoryWorker.drain();
+
+    const config = readMemoryConfig(ctx.cwd);
+    if (event.reason === "quit" && config.enabled && config.sync.enabled && config.sync.pushOnExit) {
+      await runSync(ctx, "push", "exit", true);
+    }
+    if (dashboardHandle) {
+      try { await dashboardHandle.stop(); } catch { /* ignore */ }
+      dashboardHandle = undefined;
+    }
+  });
+
+  pi.registerCommand("settings:oppi", {
+    description: "Open unified OPPi settings (General, Memory, Compaction, Permissions, Theme).",
+    getArgumentCompletions: (prefix: string) => ["general", "memory", "compaction", "permissions", "theme"]
+      .filter((value) => value.startsWith(prefix.toLowerCase()))
+      .map((value) => ({ value, label: value })),
+    handler: async (args, ctx) => showSettings(pi, ctx, args),
+  });
+
+  pi.registerCommand("memory", {
+    description: "Open the Hoppi memory dashboard.",
+    handler: async (_args, ctx) => openMemoryDashboard(ctx),
+  });
+}

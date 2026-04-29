@@ -1,15 +1,39 @@
 {
   "name": "@oppi/pi-package",
-  "version": "0.0.0",
-  "private": true,
+  "version": "0.2.0",
   "type": "module",
   "description": "OPPi Pi package: extensions, skills, prompts, and themes.",
   "license": "MIT",
   "keywords": [
     "pi-package",
     "oppi",
-    "coding-agent"
+    "coding-agent",
+    "agent-cli",
+    "ai"
   ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/RemindZ/oppi.git",
+    "directory": "packages/pi-package"
+  },
+  "bugs": {
+    "url": "https://github.com/RemindZ/oppi/issues"
+  },
+  "homepage": "https://github.com/RemindZ/oppi#readme",
+  "files": [
+    "extensions",
+    "skills",
+    "prompts",
+    "themes",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "@rynfar/meridian": "^1.38.0",
+    "beautiful-mermaid": "^1.1.3"
+  },
   "peerDependencies": {
     "@mariozechner/pi-ai": "*",
     "@mariozechner/pi-coding-agent": "*",
@@ -18,7 +42,29 @@
   },
   "pi": {
     "extensions": [
-      "./extensions/feedback.ts"
+      "./extensions/defaults.ts",
+      "./extensions/prompt-variant.ts",
+      "./extensions/enter-routing.ts",
+      "./extensions/docked-ui.ts",
+      "./extensions/effort.ts",
+      "./extensions/themes.ts",
+      "./extensions/image-gen.ts",
+      "./extensions/render-mermaid.ts",
+      "./extensions/review.ts",
+      "./extensions/init.ts",
+      "./extensions/todo-write.ts",
+      "./extensions/smart-compact.ts",
+      "./extensions/ask-user.ts",
+      "./extensions/feedback.ts",
+      "./extensions/background-tasks.ts",
+      "./extensions/shell-tool.ts",
+      "./extensions/permissions.ts",
+      "./extensions/tool-digest.ts",
+      "./extensions/memory.ts",
+      "./extensions/usage.ts",
+      "./extensions/idle-compact.ts",
+      "./extensions/terminal-setup.ts",
+      "./extensions/meridian.ts"
     ],
     "skills": [
       "./skills"

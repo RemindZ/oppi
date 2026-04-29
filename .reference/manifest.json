@@ -1,0 +1,51 @@
+{
+  "version": 1,
+  "updated": "2026-04-29",
+  "repositories": [
+    {
+      "id": "pi-mono",
+      "name": "Pi / pi-mono",
+      "url": "https://github.com/badlogic/pi-mono.git",
+      "path": ".reference/pi-mono",
+      "license": "MIT",
+      "use": "Upstream Pi runtime, extension APIs, TUI patterns, package architecture",
+      "shallowCloneCommit": "2a7e82d3ef5ff887a0de1334bad26faf9ce73def"
+    },
+    {
+      "id": "oh-my-pi",
+      "name": "Oh My Pi",
+      "url": "https://github.com/can1357/oh-my-pi.git",
+      "path": ".reference/oh-my-pi",
+      "license": "MIT",
+      "use": "Runtime/tooling reference, including Mermaid terminal rendering behavior",
+      "shallowCloneCommit": "fe61806efe1d057ef4e8ccdbe641564a307ea492"
+    },
+    {
+      "id": "oh-my-pi-plugins",
+      "name": "Oh My Pi Plugins",
+      "url": "https://github.com/RemindZ/oh-my-pi-plugins.git",
+      "path": ".reference/oh-my-pi-plugins",
+      "license": "MIT",
+      "use": "Plugin UX patterns, theme previews, auto-review references",
+      "shallowCloneCommit": "e1df1558414d3990fb43d6bf8c65e419030488ae"
+    },
+    {
+      "id": "codex",
+      "name": "OpenAI Codex CLI",
+      "url": "https://github.com/openai/codex.git",
+      "path": ".reference/codex",
+      "license": "Apache-2.0",
+      "use": "Review prompt behavior, coding-agent UX, provider/rate-limit references",
+      "shallowCloneCommit": "4f1d5f00f0175e257ddc4a47746453edecb27017"
+    },
+    {
+      "id": "caveman",
+      "name": "Caveman",
+      "url": "https://github.com/juliusbrussee/caveman.git",
+      "path": ".reference/caveman",
+      "license": "MIT",
+      "use": "System prompt strategy experiments and prompt architecture reference",
+      "shallowCloneCommit": "84cc3c14fa1e10182adaced856e003406ccd250d"
+    }
+  ]
+}

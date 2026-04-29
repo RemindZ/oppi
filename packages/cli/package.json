@@ -1,15 +1,51 @@
 {
   "name": "@oppi/cli",
-  "version": "0.0.0",
-  "private": true,
+  "version": "0.2.0",
   "type": "module",
-  "description": "OPPi CLI wrapper and future harness.",
+  "description": "OPPi CLI wrapper around Pi with OPPi defaults, diagnostics, and memory helpers.",
   "license": "MIT",
+  "keywords": [
+    "oppi",
+    "pi",
+    "coding-agent",
+    "agent-cli",
+    "ai"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/RemindZ/oppi.git",
+    "directory": "packages/cli"
+  },
+  "bugs": {
+    "url": "https://github.com/RemindZ/oppi/issues"
+  },
+  "homepage": "https://github.com/RemindZ/oppi#readme",
+  "engines": {
+    "node": ">=20.6.0"
+  },
+  "files": [
+    "dist/main.js",
+    "dist/main.js.map",
+    "dist/main.d.ts",
+    "dist/main.d.ts.map",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "bin": {
     "oppi": "./dist/main.js"
   },
+  "scripts": {
+    "check": "tsc --noEmit",
+    "build": "tsc && node -e \"try{require('fs').chmodSync('dist/main.js',0o755)}catch{}\"",
+    "start": "node dist/main.js",
+    "test": "pnpm run build && node --test dist/*.test.js",
+    "prepack": "pnpm run build"
+  },
   "dependencies": {
-    "@mariozechner/pi-coding-agent": "*"
+    "@mariozechner/pi-coding-agent": "*",
+    "@oppi/pi-package": "workspace:^0.2.0"
   },
   "devDependencies": {
     "typescript": "^5.8.0"

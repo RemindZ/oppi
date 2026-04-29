@@ -1,0 +1,62 @@
+{
+  "version": 1,
+  "updated": "2026-04-27",
+  "activePromptSurfaces": [
+    {
+      "id": "pi-default-main",
+      "kind": "main-system-template",
+      "path": "systemprompts/main/pi-default-system-prompt.template.md",
+      "runtimeSource": "@mariozechner/pi-coding-agent/dist/core/system-prompt.js",
+      "notes": "Generated dynamically with tool list, guidelines, context files, skills, date, and cwd."
+    },
+    {
+      "id": "oppi-tool-additions",
+      "kind": "main-system-snippets",
+      "path": "systemprompts/main/oppi-active-tool-snippets-and-guidelines.md",
+      "runtimeSource": "packages/pi-package/extensions/{image-gen,todo-write,ask-user}.ts",
+      "notes": "Included only when tools are active."
+    },
+    {
+      "id": "review-system-append",
+      "kind": "turn-system-append",
+      "path": "systemprompts/review/codex-review-system-append.md",
+      "runtimeSource": "packages/pi-package/extensions/review.ts",
+      "notes": "Appended for the next agent turn triggered by /review."
+    },
+    {
+      "id": "permissions-auto-review-system",
+      "kind": "isolated-reviewer-system",
+      "path": "systemprompts/permissions/auto-review-system.md",
+      "runtimeSource": "packages/pi-package/extensions/permissions.ts",
+      "notes": "Used by no-tools in-memory reviewer session."
+    },
+    {
+      "id": "permissions-auto-review-user-template",
+      "kind": "isolated-reviewer-user-template",
+      "path": "systemprompts/permissions/auto-review-user-prompt.template.md",
+      "runtimeSource": "packages/pi-package/extensions/permissions.ts",
+      "notes": "User prompt sent to permission reviewer; included here because it strongly shapes reviewer behavior."
+    },
+    {
+      "id": "image-gen-codex-native-adapter",
+      "kind": "api-instructions",
+      "path": "systemprompts/image-gen/codex-native-adapter-instructions.md",
+      "runtimeSource": "packages/pi-package/extensions/image-gen.ts",
+      "notes": "Sent as OpenAI Responses API instructions for Codex native image_generation."
+    },
+    {
+      "id": "init-command-user-prompt",
+      "kind": "command-user-prompt",
+      "path": "systemprompts/commands/init-user-prompt.md",
+      "runtimeSource": "packages/pi-package/extensions/init.ts",
+      "notes": "Not a system prompt; cataloged because /init sends it to the main agent."
+    },
+    {
+      "id": "review-command-user-prompts",
+      "kind": "command-user-prompts",
+      "path": "systemprompts/commands/review-user-prompts.md",
+      "runtimeSource": "packages/pi-package/extensions/review.ts",
+      "notes": "Not system prompts; pair with review-system-append."
+    }
+  ]
+}
