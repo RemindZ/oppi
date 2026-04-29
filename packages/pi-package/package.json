@@ -1,6 +1,6 @@
 {
   "name": "@oppiai/pi-package",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "type": "module",
   "description": "OPPi Pi package: extensions, skills, prompts, and themes.",
   "license": "MIT",
@@ -45,6 +45,7 @@
       "./extensions/defaults.ts",
       "./extensions/prompt-variant.ts",
       "./extensions/enter-routing.ts",
+      "./extensions/suggest-next.ts",
       "./extensions/exit.ts",
       "./extensions/docked-ui.ts",
       "./extensions/effort.ts",

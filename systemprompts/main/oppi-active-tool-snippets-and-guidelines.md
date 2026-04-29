@@ -67,3 +67,15 @@ Guidelines:
 - Batch related questions into one ask_user call instead of asking one at a time.
 - Provide concrete options when possible and include allowCustom when free-form input is useful.
 - Keep questions short and directly actionable.
+
+## `suggest_next_message`
+
+Snippet:
+
+> Suggest a short next user message only when you are at least 70% confident.
+
+Guidelines:
+
+- Use suggest_next_message sparingly, only when the user's next reply is highly predictable (confidence >= 0.7).
+- Suggested messages should be short, concrete, and written in the user's likely wording.
+- Do not suggest generic replies like "ok" unless that exact response is clearly the likely next step.

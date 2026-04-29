@@ -41,7 +41,7 @@ Stage 1 lives mostly in `packages/pi-package`; Stage 2 lives in `packages/cli`. 
 - `/prompt-variant` for system-prompt A/B overlays
 - `/effort`, `/theme`/`/themes`, usage/status footer, tool digest
 - `image_gen`, `/review`, `/init`, `/exit`
-- `todo_write` + `/todos`, `ask_user`
+- `todo_write` + `/todos`, `ask_user`, `suggest_next_message`
 - `/permissions` with `read-only`, `default`, `auto-review`, and `full-access`
 - smart/idle compaction
 - Meridian provider bridge

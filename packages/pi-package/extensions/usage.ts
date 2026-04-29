@@ -713,7 +713,17 @@ function permissionLabel(theme: Theme): string {
   return `${theme.fg("dim", "perm ")}${theme.fg(color as any, permissionMode)}`;
 }
 
-function keybindingHintsLine(theme: Theme, width: number): string {
+function keybindingHintsLine(theme: Theme, width: number, footerData?: any): string {
+  const hasSuggestion = Boolean(footerData?.getExtensionStatuses?.()?.get?.("oppi.suggestNext"));
+  if (hasSuggestion) {
+    const suggestionParts = [
+      `${theme.fg("accent", "Enter")} ${theme.fg("dim", "send suggestion")}`,
+      `${theme.fg("accent", "→")} ${theme.fg("dim", "accept")}`,
+      `${theme.fg("accent", "type")} ${theme.fg("dim", "replace")}`,
+    ];
+    return truncateToWidth(joinFooterParts(suggestionParts, theme), width, theme.fg("dim", "…"));
+  }
+
   const fullParts = [
     `${theme.fg("accent", "Enter")} ${theme.fg("dim", "follow-up")}`,
     `${theme.fg("accent", "Ctrl+Enter")} ${theme.fg("dim", "steer")}`,
@@ -786,7 +796,7 @@ class OppiFooter {
     return [
       pwdLine(this.ctx, this.footerData, this.theme, width),
       footerStatsLine(this.pi, this.ctx, this.theme, width, this.footerData),
-      keybindingHintsLine(this.theme, width),
+      keybindingHintsLine(this.theme, width, this.footerData),
     ];
   }
 }

@@ -13,7 +13,7 @@
       "id": "oppi-tool-additions",
       "kind": "main-system-snippets",
       "path": "systemprompts/main/oppi-active-tool-snippets-and-guidelines.md",
-      "runtimeSource": "packages/pi-package/extensions/{image-gen,todo-write,ask-user}.ts",
+      "runtimeSource": "packages/pi-package/extensions/{image-gen,todo-write,ask-user,suggest-next}.ts",
       "notes": "Included only when tools are active."
     },
     {

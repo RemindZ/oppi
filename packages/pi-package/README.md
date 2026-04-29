@@ -16,4 +16,4 @@ For direct Pi debugging or package development:
 pi --no-extensions -e ./packages/pi-package
 ```
 
-The package registers OPPi defaults, docked UI, `/effort`, `/permissions`, `/review`, `/init`, `/exit`, `todo_write`, `ask_user`, feedback intake, `image_gen`, `render_mermaid`, themes, terminal setup, usage footer, Hoppi memory hooks, and compaction helpers.
+The package registers OPPi defaults, docked UI, `/effort`, `/permissions`, `/review`, `/init`, `/exit`, `todo_write`, `ask_user`, `suggest_next_message`, feedback intake, `image_gen`, `render_mermaid`, themes, terminal setup, usage footer, Hoppi memory hooks, and compaction helpers.
