@@ -2,7 +2,7 @@
 
 OPPi's Pi package: extensions, skills, prompts, and themes that make stock Pi feel like OPPi.
 
-Most users should install the CLI instead after the first public npm publish:
+Most users should install the CLI instead:
 
 ```bash
 npm install -g @oppiai/cli

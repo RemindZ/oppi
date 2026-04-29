@@ -13,9 +13,7 @@ Current version: **0.2.0**.
 
 ## Install
 
-The npm packages are publish-ready, but `npm install -g @oppiai/cli` only works after the first public npm publish of both `@oppiai/pi-package` and `@oppiai/cli`.
-
-After publish:
+OPPi is published on npm as `@oppiai/cli`; the installed binary is `oppi`.
 
 ```bash
 npm install -g @oppiai/cli
@@ -23,7 +21,7 @@ oppi doctor
 oppi
 ```
 
-Until then, install from source:
+Source install for local development:
 
 ```bash
 git clone https://github.com/RemindZ/oppi.git
@@ -34,7 +32,7 @@ node packages/cli/dist/main.js doctor
 node packages/cli/dist/main.js
 ```
 
-Publish checklist for maintainers:
+Release checklist for maintainers:
 
 ```bash
 pnpm -r --if-present check

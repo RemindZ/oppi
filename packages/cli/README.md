@@ -6,15 +6,13 @@ Current version: **0.2.0**.
 
 ## Install
 
-After the first public npm publish:
-
 ```bash
 npm install -g @oppiai/cli
 oppi doctor
 oppi
 ```
 
-Until then, use the repository build:
+Source install for local development:
 
 ```bash
 git clone https://github.com/RemindZ/oppi.git
