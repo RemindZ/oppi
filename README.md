@@ -13,12 +13,12 @@ Current version: **0.2.0**.
 
 ## Install
 
-The npm packages are publish-ready, but `npm install -g @oppi/cli` only works after the first public npm publish of both `@oppi/pi-package` and `@oppi/cli`.
+The npm packages are publish-ready, but `npm install -g @oppiai/cli` only works after the first public npm publish of both `@oppiai/pi-package` and `@oppiai/cli`.
 
 After publish:
 
 ```bash
-npm install -g @oppi/cli
+npm install -g @oppiai/cli
 oppi doctor
 oppi
 ```
@@ -29,7 +29,7 @@ Until then, install from source:
 git clone https://github.com/RemindZ/oppi.git
 cd oppi
 pnpm install
-pnpm --filter @oppi/cli build
+pnpm --filter @oppiai/cli build
 node packages/cli/dist/main.js doctor
 node packages/cli/dist/main.js
 ```
@@ -40,8 +40,8 @@ Publish checklist for maintainers:
 pnpm -r --if-present check
 pnpm -r --if-present build
 pnpm -r --if-present test
-pnpm --filter @oppi/pi-package publish --access public
-pnpm --filter @oppi/cli publish --access public
+pnpm --filter @oppiai/pi-package publish --access public
+pnpm --filter @oppiai/cli publish --access public
 ```
 
 ## Planned package layout
@@ -59,7 +59,7 @@ packages/
 
 ## Using the CLI
 
-The `@oppi/cli` package installs the `oppi` command. It is a thin wrapper around Pi that automatically loads the OPPi Pi package and isolates OPPi state by default.
+The `@oppiai/cli` package installs the `oppi` command. It is a thin wrapper around Pi that automatically loads the OPPi Pi package and isolates OPPi state by default.
 
 ```bash
 oppi --help
@@ -69,7 +69,7 @@ oppi -p "Reply ok"
 
 Default behavior:
 
-- launches Pi with `--no-extensions -e <@oppi/pi-package>` so unrelated global Pi extensions do not conflict
+- launches Pi with `--no-extensions -e <@oppiai/pi-package>` so unrelated global Pi extensions do not conflict
 - stores Pi/OPPi sessions and settings under `~/.oppi/agent`
 - honors `OPPI_AGENT_DIR` and `--agent-dir <dir>`
 - passes normal Pi flags/messages through unchanged, including `-p`, `--model`, `--provider`, `--continue`, and `--resume`
@@ -85,7 +85,7 @@ oppi mem setup
 oppi mem dashboard
 ```
 
-When developing before the bin is linked globally, use `node packages/cli/dist/main.js ...` or `pnpm --filter @oppi/cli start <args>`, for example `pnpm --filter @oppi/cli start --version`.
+When developing before the bin is linked globally, use `node packages/cli/dist/main.js ...` or `pnpm --filter @oppiai/cli start <args>`, for example `pnpm --filter @oppiai/cli start --version`.
 
 ## Development notes
 
@@ -241,7 +241,7 @@ Direct GitHub issues may be closed automatically once the intake workflow is ena
 
 ## Status
 
-Stage 2 thin CLI implementation is in place: `@oppi/cli` builds a usable `oppi` bin that launches Pi with the OPPi package, isolates agent config under `~/.oppi/agent`, and provides `doctor` plus safe memory bridge commands. Direct stock-Pi package launch remains useful for debugging:
+Stage 2 thin CLI implementation is in place: `@oppiai/cli` builds a usable `oppi` bin that launches Pi with the OPPi package, isolates agent config under `~/.oppi/agent`, and provides `doctor` plus safe memory bridge commands. Direct stock-Pi package launch remains useful for debugging:
 
 ```bash
 pi --no-extensions -e ./packages/pi-package

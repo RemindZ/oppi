@@ -1,4 +1,4 @@
-# @oppi/cli
+# @oppiai/cli
 
 Thin `oppi` CLI wrapper for the OPPi Pi package.
 
@@ -9,7 +9,7 @@ Current version: **0.2.0**.
 After the first public npm publish:
 
 ```bash
-npm install -g @oppi/cli
+npm install -g @oppiai/cli
 oppi doctor
 oppi
 ```
@@ -20,16 +20,16 @@ Until then, use the repository build:
 git clone https://github.com/RemindZ/oppi.git
 cd oppi
 pnpm install
-pnpm --filter @oppi/cli build
+pnpm --filter @oppiai/cli build
 node packages/cli/dist/main.js doctor
 ```
 
 ## Development
 
 ```bash
-pnpm --filter @oppi/cli check
-pnpm --filter @oppi/cli build
-pnpm --filter @oppi/cli test
+pnpm --filter @oppiai/cli check
+pnpm --filter @oppiai/cli build
+pnpm --filter @oppiai/cli test
 ```
 
 After build:
@@ -39,13 +39,13 @@ node packages/cli/dist/main.js --version
 node packages/cli/dist/main.js --help
 node packages/cli/dist/main.js doctor
 node packages/cli/dist/main.js -p "Reply ok"
-pnpm --filter @oppi/cli start doctor
+pnpm --filter @oppiai/cli start doctor
 ```
 
 ## Behavior
 
 - resolves the Pi CLI from `@mariozechner/pi-coding-agent` or `OPPI_PI_CLI`
-- resolves the OPPi Pi package from `@oppi/pi-package`, the monorepo layout, or `OPPI_PI_PACKAGE`
+- resolves the OPPi Pi package from `@oppiai/pi-package`, the monorepo layout, or `OPPI_PI_PACKAGE`
 - launches Pi as `pi --no-extensions -e <oppi-pi-package> ...` by default
 - uses `~/.oppi/agent` for Pi/OPPi settings and sessions by default
 - honors `OPPI_AGENT_DIR` and `--agent-dir <dir>`

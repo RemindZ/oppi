@@ -1,4 +1,4 @@
-# @oppi/tui
+# @oppiai/tui
 
 Future custom terminal harness.
 

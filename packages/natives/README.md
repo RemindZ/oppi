@@ -1,4 +1,4 @@
-# @oppi/natives
+# @oppiai/natives
 
 Planned optional Rust/N-API acceleration package.
 

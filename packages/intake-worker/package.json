@@ -1,5 +1,5 @@
 {
-  "name": "@oppi/intake-worker",
+  "name": "@oppiai/intake-worker",
   "version": "0.0.0",
   "private": true,
   "type": "module",

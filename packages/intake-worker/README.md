@@ -1,4 +1,4 @@
-# @oppi/intake-worker
+# @oppiai/intake-worker
 
 Cloudflare Worker for OPPi feedback intake.
 

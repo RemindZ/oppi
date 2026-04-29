@@ -17,7 +17,7 @@ importers:
       '@mariozechner/pi-coding-agent':
         specifier: '*'
         version: 0.70.2(@modelcontextprotocol/sdk@1.29.0(zod@4.3.6))(ws@8.20.0)(zod@4.3.6)
-      '@oppi/pi-package':
+      '@oppiai/pi-package':
         specifier: workspace:^0.2.0
         version: link:../pi-package
     devDependencies:

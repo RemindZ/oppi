@@ -62,7 +62,7 @@ Stage 1 lives mostly in `packages/pi-package`; Stage 2 lives in `packages/cli`. 
 
 ```bash
 pi --no-extensions -e ./packages/pi-package
-pnpm --filter @oppi/cli build
+pnpm --filter @oppiai/cli build
 node packages/cli/dist/main.js doctor
 ```
 

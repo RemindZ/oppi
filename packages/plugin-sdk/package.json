@@ -1,5 +1,5 @@
 {
-  "name": "@oppi/plugin-sdk",
+  "name": "@oppiai/plugin-sdk",
   "version": "0.0.0",
   "private": true,
   "type": "module",

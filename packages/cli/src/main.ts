@@ -90,7 +90,7 @@ export function resolvePiPackagePath(env: Env = process.env, cwd = process.cwd()
   if (env.OPPI_PI_PACKAGE?.trim()) candidates.push(env.OPPI_PI_PACKAGE.trim());
 
   try {
-    candidates.push(dirname(require.resolve("@oppi/pi-package/package.json")));
+    candidates.push(dirname(require.resolve("@oppiai/pi-package/package.json")));
   } catch {
     // Package may not be installed as a dependency in dev shells.
   }
@@ -192,7 +192,7 @@ function launchPi(command: Extract<OppiCommand, { type: "launch" }>): Promise<nu
     return Promise.resolve(1);
   }
   if (!piPackage) {
-    console.error("OPPi could not resolve @oppi/pi-package. Run from the monorepo or set OPPI_PI_PACKAGE.");
+    console.error("OPPi could not resolve @oppiai/pi-package. Run from the monorepo or set OPPI_PI_PACKAGE.");
     return Promise.resolve(1);
   }
 
@@ -261,7 +261,7 @@ export function collectDoctorDiagnostics(options: { agentDir?: string } = {}): D
 
   diagnostics.push(piPackage
     ? { status: "pass", name: "OPPi Pi package", message: piPackage }
-    : { status: "fail", name: "OPPi Pi package", message: "Could not find packages/pi-package or @oppi/pi-package" });
+    : { status: "fail", name: "OPPi Pi package", message: "Could not find packages/pi-package or @oppiai/pi-package" });
 
   diagnostics.push(writable.ok
     ? { status: "pass", name: "OPPi agent dir", message: `${agentDir} is writable` }
@@ -360,7 +360,7 @@ async function runMemCommand(command: Extract<OppiCommand, { type: "mem" }>): Pr
 }
 
 function helpText(): string {
-  return `OPPi — opinionated Pi-powered coding agent\n\nUsage:\n  oppi [pi options] [@files...] [messages...]\n  oppi doctor [--json]\n  oppi mem status|setup|dashboard [--json]\n\nOPPi options:\n  --agent-dir <dir>       Use a specific OPPi/Pi agent dir for this run\n  --with-pi-extensions    Allow normal Pi extension discovery in addition to OPPi\n  --version, -v           Print OPPi CLI version\n  --help, -h              Show this help\n\nDefaults:\n  - loads the bundled/local @oppi/pi-package\n  - disables unrelated Pi extension discovery unless --with-pi-extensions is set\n  - stores sessions/settings under OPPI_AGENT_DIR or ~/.oppi/agent\n\nExamples:\n  oppi\n  oppi "summarize this repository"\n  oppi -p "Reply ok"\n  OPPI_AGENT_DIR=/tmp/oppi-agent oppi doctor\n\nAll ordinary Pi flags not listed above are passed through unchanged.`;
+  return `OPPi — opinionated Pi-powered coding agent\n\nUsage:\n  oppi [pi options] [@files...] [messages...]\n  oppi doctor [--json]\n  oppi mem status|setup|dashboard [--json]\n\nOPPi options:\n  --agent-dir <dir>       Use a specific OPPi/Pi agent dir for this run\n  --with-pi-extensions    Allow normal Pi extension discovery in addition to OPPi\n  --version, -v           Print OPPi CLI version\n  --help, -h              Show this help\n\nDefaults:\n  - loads the bundled/local @oppiai/pi-package\n  - disables unrelated Pi extension discovery unless --with-pi-extensions is set\n  - stores sessions/settings under OPPI_AGENT_DIR or ~/.oppi/agent\n\nExamples:\n  oppi\n  oppi "summarize this repository"\n  oppi -p "Reply ok"\n  OPPI_AGENT_DIR=/tmp/oppi-agent oppi doctor\n\nAll ordinary Pi flags not listed above are passed through unchanged.`;
 }
 
 export async function run(argv: string[]): Promise<number> {

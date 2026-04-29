@@ -1,4 +1,4 @@
-# @oppi/vscode
+# @oppiai/vscode
 
 Future VS Code extension.
 

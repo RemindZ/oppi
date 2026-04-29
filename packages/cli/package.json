@@ -1,5 +1,5 @@
 {
-  "name": "@oppi/cli",
+  "name": "@oppiai/cli",
   "version": "0.2.0",
   "type": "module",
   "description": "OPPi CLI wrapper around Pi with OPPi defaults, diagnostics, and memory helpers.",
@@ -45,7 +45,7 @@
   },
   "dependencies": {
     "@mariozechner/pi-coding-agent": "*",
-    "@oppi/pi-package": "workspace:^0.2.0"
+    "@oppiai/pi-package": "workspace:^0.2.0"
   },
   "devDependencies": {
     "typescript": "^5.8.0"

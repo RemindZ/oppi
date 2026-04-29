@@ -1,11 +1,11 @@
-# @oppi/pi-package
+# @oppiai/pi-package
 
 OPPi's Pi package: extensions, skills, prompts, and themes that make stock Pi feel like OPPi.
 
 Most users should install the CLI instead after the first public npm publish:
 
 ```bash
-npm install -g @oppi/cli
+npm install -g @oppiai/cli
 oppi doctor
 oppi
 ```

@@ -54,7 +54,7 @@ test("CLI smoke: doctor --json uses configured paths without printing secrets", 
   const fakePackage = join(root, "pi-package");
   mkdirSync(fakePackage, { recursive: true });
   writeFileSync(fakePi, "process.exit(0);\n", "utf8");
-  writeFileSync(join(fakePackage, "package.json"), "{\"name\":\"@oppi/pi-package\"}\n", "utf8");
+  writeFileSync(join(fakePackage, "package.json"), "{\"name\":\"@oppiai/pi-package\"}\n", "utf8");
 
   const result = spawnSync(process.execPath, [resolve("dist", "main.js"), "doctor", "--json"], {
     encoding: "utf8",
@@ -80,7 +80,7 @@ test("CLI smoke: print-mode launch forwards args and isolated env to Pi", () => 
   const fakePi = join(root, "fake-pi.mjs");
   const fakePackage = join(root, "pi-package");
   mkdirSync(fakePackage, { recursive: true });
-  writeFileSync(join(fakePackage, "package.json"), "{\"name\":\"@oppi/pi-package\"}\n", "utf8");
+  writeFileSync(join(fakePackage, "package.json"), "{\"name\":\"@oppiai/pi-package\"}\n", "utf8");
   writeFileSync(fakePi, `import { writeFileSync } from "node:fs";\nwriteFileSync(process.env.OPPI_FAKE_PI_CAPTURE, JSON.stringify({ argv: process.argv.slice(2), OPPI_AGENT_DIR: process.env.OPPI_AGENT_DIR, PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR }));\n`, "utf8");
 
   const result = spawnSync(process.execPath, [resolve("dist", "main.js"), "--agent-dir", agentDir, "-p", "Reply ok"], {
