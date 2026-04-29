@@ -123,7 +123,11 @@ async function waitForMeridian(child: ChildProcess | undefined, timeoutMs = 12_0
 }
 
 async function startEmbeddedMeridian(): Promise<string> {
-  const { startProxyServer } = await import("@rynfar/meridian");
+  // Keep Meridian optional at install time. A literal dynamic import would make
+  // TypeScript/package managers treat @rynfar/meridian as a hard dependency,
+  // but Windows installs currently fail in Meridian's transitive postinstall.
+  const packageName = "@rynfar/meridian";
+  const { startProxyServer } = await import(packageName) as { startProxyServer: (options: { host: string; port: number; silent: boolean }) => Promise<MeridianInstance> };
   const { host, port } = parseHostPort();
   meridianInstance = await startProxyServer({ host, port, silent: true });
   return "embedded package";

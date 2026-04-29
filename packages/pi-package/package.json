@@ -31,7 +31,6 @@
     "access": "public"
   },
   "dependencies": {
-    "@rynfar/meridian": "^1.38.0",
     "beautiful-mermaid": "^1.1.3"
   },
   "peerDependencies": {

@@ -161,6 +161,13 @@ function isEnterKey(data: string): boolean {
   return matchesKey(data, Key.enter) || data === "\r" || data === "\n" || data === "\r\n";
 }
 
+function formatCountdown(ms: number): string {
+  const totalSeconds = Math.max(0, Math.ceil(ms / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}:${String(seconds).padStart(2, "0")}`;
+}
+
 export default function askUserExtension(pi: ExtensionAPI) {
   const registerTool = pi.registerTool.bind(pi) as (tool: any) => void;
   registerTool({
@@ -240,10 +247,14 @@ export default function askUserExtension(pi: ExtensionAPI) {
             : { questionId: q.id, skipped: true };
         }
 
+        let timeout: ReturnType<typeof setTimeout> | undefined;
+        let countdownTimer: ReturnType<typeof setInterval> | undefined;
+
         function complete(cancelled: boolean, timedOut = false): void {
           if (closed) return;
           closed = true;
           if (timeout) clearTimeout(timeout);
+          if (countdownTimer) clearInterval(countdownTimer);
           if (timedOut) {
             for (const q of questions) {
               if (!answers.has(q.id)) answers.set(q.id, recommendedAnswer(q));
@@ -252,12 +263,16 @@ export default function askUserExtension(pi: ExtensionAPI) {
           done({ title, questions, answers: Array.from(answers.values()), cancelled, timedOut });
         }
 
-        const timeout = timeoutMs > 0 ? setTimeout(() => complete(false, true), timeoutMs) : undefined;
-        timeout?.unref?.();
-
         function refresh(): void {
           cached = undefined;
           tui.requestRender();
+        }
+
+        if (timeoutMs > 0) {
+          timeout = setTimeout(() => complete(false, true), timeoutMs);
+          timeout.unref?.();
+          countdownTimer = setInterval(refresh, 1_000);
+          countdownTimer.unref?.();
         }
 
         function moveToNext(): void {
@@ -381,7 +396,7 @@ export default function askUserExtension(pi: ExtensionAPI) {
 
           add(theme.fg("accent", "─".repeat(width)));
           const remainingMs = timeoutMs > 0 ? Math.max(0, timeoutMs - (Date.now() - startedAt)) : 0;
-          const timeoutText = timeoutMs > 0 ? ` · timeout ${Math.max(1, Math.ceil(remainingMs / 60_000))}m` : " · timeout off";
+          const timeoutText = timeoutMs > 0 ? ` · timeout ${formatCountdown(remainingMs)}` : " · timeout off";
           add(`${theme.fg("accent", theme.bold(title))} ${theme.fg("dim", `${current + 1}/${questions.length}${timeoutText}`)}`);
           if (questions.length > 1) {
             const progress = questions.map((item, index) => {
@@ -426,7 +441,15 @@ export default function askUserExtension(pi: ExtensionAPI) {
         }
 
         selected = defaultIndex(question());
-        return { render, invalidate: () => { cached = undefined; }, handleInput };
+        return {
+          render,
+          invalidate: () => { cached = undefined; },
+          handleInput,
+          dispose: () => {
+            if (timeout) clearTimeout(timeout);
+            if (countdownTimer) clearInterval(countdownTimer);
+          },
+        };
       });
 
       const details = result;

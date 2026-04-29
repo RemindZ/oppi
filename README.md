@@ -138,6 +138,8 @@ You can also run Meridian externally and let OPPi connect to it:
 meridian
 ```
 
+To keep global OPPi installs Windows-safe, Meridian is not installed as a hard npm dependency. `/meridian start` uses an embedded/dev package when available, then a `meridian` command on PATH, then an `npx @rynfar/meridian` fallback.
+
 Configuration:
 
 - `OPPI_MERIDIAN_BASE_URL` / `MERIDIAN_BASE_URL` — default `http://127.0.0.1:3456`

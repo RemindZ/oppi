@@ -7,6 +7,11 @@
 - Added `/exit` as OPPi's graceful shutdown command so session shutdown cleanup, Hoppi exit recaps, and exit sync can run before the process closes.
 - Added `suggest_next_message`, a high-confidence ghost reply/prediction tool that can show a grey next-message suggestion in the input box.
 
+### Fixed
+
+- Fixed Windows global npm installs by removing Meridian as a hard install-time dependency; `/meridian start` still supports an installed `meridian` command or npx fallback.
+- Fixed `ask_user` timeout visibility by rendering a live `m:ss` countdown from the selected timeout value.
+
 ### Changed
 
 - Updated the footer hint line while a ghost suggestion is visible: `Enter` sends it, `→` accepts it into the editor, and typing replaces it.
