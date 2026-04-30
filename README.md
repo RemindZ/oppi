@@ -9,7 +9,7 @@ Goals:
 - provide a polished default Pi package with useful tools, prompts, themes, and workflow extensions
 - grow toward a custom terminal harness and VS Code extension without throwing away the Pi-based core
 
-Current version: **0.2.6**.
+Current version: **0.2.7**.
 
 ## Install
 

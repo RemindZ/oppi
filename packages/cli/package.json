@@ -1,6 +1,6 @@
 {
   "name": "@oppiai/cli",
-  "version": "0.2.6",
+  "version": "0.2.7",
   "type": "module",
   "description": "OPPi CLI wrapper around Pi with OPPi defaults, diagnostics, and memory helpers.",
   "license": "MIT",
@@ -46,7 +46,7 @@
   },
   "dependencies": {
     "@mariozechner/pi-coding-agent": "*",
-    "@oppiai/pi-package": "workspace:^0.2.6"
+    "@oppiai/pi-package": "workspace:^0.2.7"
   },
   "devDependencies": {
     "typescript": "^5.8.0"
