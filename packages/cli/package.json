@@ -24,10 +24,11 @@
     "node": ">=20.6.0"
   },
   "files": [
-    "dist/main.js",
-    "dist/main.js.map",
-    "dist/main.d.ts",
-    "dist/main.d.ts.map",
+    "dist",
+    "!dist/*.test.js",
+    "!dist/*.test.js.map",
+    "!dist/*.test.d.ts",
+    "!dist/*.test.d.ts.map",
     "README.md"
   ],
   "publishConfig": {
