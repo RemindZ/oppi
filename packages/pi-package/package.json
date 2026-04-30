@@ -1,6 +1,6 @@
 {
   "name": "@oppiai/pi-package",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "type": "module",
   "description": "OPPi Pi package: extensions, skills, prompts, and themes.",
   "license": "MIT",

@@ -1,6 +1,6 @@
 {
   "name": "oppi-monorepo",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "private": true,
   "type": "module",
   "description": "OPPi monorepo: opinionated Pi-powered coding agent.",
