@@ -53,6 +53,7 @@
       "./extensions/render-mermaid.ts",
       "./extensions/review.ts",
       "./extensions/init.ts",
+      "./extensions/independent.ts",
       "./extensions/todo-write.ts",
       "./extensions/smart-compact.ts",
       "./extensions/ask-user.ts",

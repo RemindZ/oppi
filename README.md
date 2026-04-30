@@ -144,6 +144,7 @@ The current Pi package adds:
 - `image_gen` for Codex-native image generation with OpenAI Images API fallback
 - `/review` for Codex-style prioritized code review prompts
 - `/init` for AGENTS.md contributor-guide generation
+- `/independent @plan.md` for a reusable plan-runner mode that reads a plan document, keeps `todo_write` active, asks only blocking clarification questions, and continues through implementation plus validation
 - `todo_write` plus `/todos` for visible multi-step task tracking; OPPi maintains the list proactively, docks active todos directly above the input, and prunes completed items once their outcomes have been reported or archived
 - `ask_user` for batched structured clarification questions
 - `suggest_next_message` for high-confidence ghost next-message suggestions; when shown, `Enter` sends it, `→` accepts it into the editor, and typing replaces it
