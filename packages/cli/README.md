@@ -2,7 +2,7 @@
 
 Thin `oppi` CLI wrapper for the OPPi Pi package.
 
-Current version: **0.2.7**.
+Current version: **0.2.8**.
 
 ## Install
 
