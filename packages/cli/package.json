@@ -45,7 +45,7 @@
     "prepack": "pnpm run build"
   },
   "dependencies": {
-    "@mariozechner/pi-coding-agent": "*",
+    "@mariozechner/pi-coding-agent": "^0.70.6",
     "@oppiai/pi-package": "workspace:^0.2.7"
   },
   "devDependencies": {
