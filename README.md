@@ -71,6 +71,7 @@ Default behavior:
 - loads enabled OPPi plugins as additional Pi package sources with `-e <source>`
 - stores Pi/OPPi sessions and settings under `~/.oppi/agent`
 - honors `OPPI_AGENT_DIR` and `--agent-dir <dir>`
+- checks npm at most daily before interactive launches and prints a one-line update notice when a newer `@oppiai/cli` is available (`OPPI_UPDATE_CHECK=0` disables it)
 - passes normal Pi flags/messages through unchanged, including `-p`, `--model`, `--provider`, `--continue`, and `--resume`
 - supports `--with-pi-extensions` as an escape hatch for normal Pi extension discovery
 

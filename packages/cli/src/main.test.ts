@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
-import { buildPiArgs, parseOppiArgs, resolveAgentDir } from "./main.js";
+import { buildPiArgs, checkForUpdateNotice, compareVersions, parseOppiArgs, resolveAgentDir } from "./main.js";
 import { parseMarketplaceCommand, parsePluginCommand, resolveEnabledPluginSources } from "./plugins.js";
 
 function tempDir(name: string): string {
@@ -63,6 +63,26 @@ test("resolveAgentDir uses documented precedence", () => {
   assert.equal(resolveAgentDir(undefined, { OPPI_AGENT_DIR: "/oppi", PI_CODING_AGENT_DIR: "/pi" }), resolve("/oppi"));
   assert.equal(resolveAgentDir(undefined, { PI_CODING_AGENT_DIR: "/pi" }), resolve("/pi"));
   assert.equal(resolveAgentDir(undefined, {}), join(homedir(), ".oppi", "agent"));
+});
+
+test("update check notices newer npm versions and throttles daily", async () => {
+  const root = tempDir("update-check");
+  const env = { OPPI_HOME: join(root, "oppi-home"), OPPI_UPDATE_CHECK_LATEST: "9.9.9" };
+  const now = new Date("2026-01-01T00:00:00.000Z");
+
+  assert.equal(compareVersions("0.2.6", "0.2.5"), 1);
+  assert.equal(compareVersions("0.2.5", "0.2.5"), 0);
+  assert.equal(compareVersions("0.2.4", "0.2.5"), -1);
+
+  const first = await checkForUpdateNotice({ env, cwd: root, currentVersion: "0.2.5", now, timeoutMs: 1 });
+  assert.match(first ?? "", /OPPi 9\.9\.9 is available/);
+  assert.match(first ?? "", /npm install -g @oppiai\/cli@latest/);
+
+  const throttled = await checkForUpdateNotice({ env, cwd: root, currentVersion: "0.2.5", now, timeoutMs: 1 });
+  assert.equal(throttled, undefined);
+
+  const disabled = await checkForUpdateNotice({ env: { ...env, OPPI_UPDATE_CHECK: "0" }, cwd: root, currentVersion: "0.2.5", now: new Date("2026-01-02T00:00:01.000Z"), timeoutMs: 1 });
+  assert.equal(disabled, undefined);
 });
 
 test("buildPiArgs isolates extension loading by default", () => {

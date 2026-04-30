@@ -22,6 +22,10 @@ const __dirname = dirname(__filename);
 const HOPPI_PACKAGE_NAME = "@oppiai/hoppi-memory";
 const HOPPI_LEGACY_PACKAGE_NAME = "hoppi-memory";
 const HOPPI_PACKAGE_SPEC = `${HOPPI_PACKAGE_NAME}@^0.1.0`;
+const OPPI_CLI_PACKAGE_NAME = "@oppiai/cli";
+const UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
+const UPDATE_NOTICE_INTERVAL_MS = 24 * 60 * 60 * 1000;
+const UPDATE_CHECK_TIMEOUT_MS = 1200;
 
 export type OppiCommand =
   | { type: "help" }
@@ -59,6 +63,12 @@ function expandHome(value: string): string {
 
 type Env = Record<string, string | undefined>;
 
+type UpdateCheckCache = {
+  lastCheckedAt?: string;
+  latestVersion?: string;
+  lastShownAt?: string;
+};
+
 export function resolveAgentDir(input?: string, env: Env = process.env): string {
   const raw = input?.trim() || env.OPPI_AGENT_DIR?.trim() || env.PI_CODING_AGENT_DIR?.trim() || join(homedir(), ".oppi", "agent");
   const expanded = expandHome(raw);
@@ -73,6 +83,29 @@ function resolveOppiHome(env: Env = process.env, cwd = process.cwd()): string {
 
 function managedPackagesDir(env: Env = process.env, cwd = process.cwd()): string {
   return join(resolveOppiHome(env, cwd), "packages");
+}
+
+function updateCheckCachePath(env: Env = process.env, cwd = process.cwd()): string {
+  return join(resolveOppiHome(env, cwd), "update-check.json");
+}
+
+function readUpdateCheckCache(path: string): UpdateCheckCache {
+  const value = readPackageJson(path);
+  if (!value || typeof value !== "object") return {};
+  return {
+    lastCheckedAt: typeof value.lastCheckedAt === "string" ? value.lastCheckedAt : undefined,
+    latestVersion: typeof value.latestVersion === "string" ? value.latestVersion : undefined,
+    lastShownAt: typeof value.lastShownAt === "string" ? value.lastShownAt : undefined,
+  };
+}
+
+function writeUpdateCheckCache(path: string, cache: UpdateCheckCache): void {
+  try {
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, `${JSON.stringify(cache, null, 2)}\n`, "utf8");
+  } catch {
+    // Update checks must never break OPPi startup.
+  }
 }
 
 function packageRootFromNodeModules(nodeModulesDir: string, packageName: string): string {
@@ -174,6 +207,112 @@ function resolveHoppiModulePath(env: Env = process.env, cwd = process.cwd()): st
   return undefined;
 }
 
+function parseVersionParts(version: string): [number, number, number] {
+  const match = version.match(/^(\d+)\.(\d+)\.(\d+)/);
+  if (!match) return [0, 0, 0];
+  return [Number(match[1]), Number(match[2]), Number(match[3])];
+}
+
+export function compareVersions(left: string, right: string): number {
+  const a = parseVersionParts(left);
+  const b = parseVersionParts(right);
+  for (let i = 0; i < 3; i += 1) {
+    if (a[i] > b[i]) return 1;
+    if (a[i] < b[i]) return -1;
+  }
+  return 0;
+}
+
+function updateCheckDisabled(env: Env): boolean {
+  const raw = (env.OPPI_UPDATE_CHECK ?? "").trim().toLowerCase();
+  return env.OPPI_NO_UPDATE_CHECK === "1" || raw === "0" || raw === "false" || raw === "off" || raw === "no";
+}
+
+function isDue(timestamp: string | undefined, now: Date, intervalMs: number): boolean {
+  if (!timestamp) return true;
+  const parsed = Date.parse(timestamp);
+  return !Number.isFinite(parsed) || now.getTime() - parsed >= intervalMs;
+}
+
+function npmRegistryLatestUrl(env: Env): string {
+  const registry = (env.npm_config_registry || env.NPM_CONFIG_REGISTRY || "https://registry.npmjs.org/").trim() || "https://registry.npmjs.org/";
+  const normalized = registry.endsWith("/") ? registry : `${registry}/`;
+  return `${normalized}${encodeURIComponent(OPPI_CLI_PACKAGE_NAME).replace("%2F", "%2f")}/latest`;
+}
+
+async function fetchLatestCliVersion(env: Env, timeoutMs: number): Promise<string | undefined> {
+  const forced = env.OPPI_UPDATE_CHECK_LATEST?.trim();
+  if (forced) return forced;
+  if (typeof fetch !== "function") return undefined;
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(npmRegistryLatestUrl(env), {
+      signal: controller.signal,
+      headers: { accept: "application/json" },
+    });
+    if (!response.ok) return undefined;
+    const payload = await response.json();
+    return payload && typeof payload === "object" && typeof (payload as Record<string, unknown>).version === "string"
+      ? (payload as Record<string, string>).version
+      : undefined;
+  } catch {
+    return undefined;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function formatUpdateNotice(currentVersion: string, latestVersion: string): string {
+  return `OPPi ${latestVersion} is available (installed ${currentVersion}). Update with: npm install -g ${OPPI_CLI_PACKAGE_NAME}@latest`;
+}
+
+export async function checkForUpdateNotice(options: { env?: Env; cwd?: string; currentVersion?: string; now?: Date; timeoutMs?: number } = {}): Promise<string | undefined> {
+  const env = options.env ?? process.env;
+  if (updateCheckDisabled(env)) return undefined;
+
+  const currentVersion = options.currentVersion ?? cliVersion();
+  const cwd = options.cwd ?? process.cwd();
+  const now = options.now ?? new Date();
+  const path = updateCheckCachePath(env, cwd);
+  const cache = readUpdateCheckCache(path);
+  let nextCache = { ...cache };
+  let latestVersion = cache.latestVersion;
+
+  if (isDue(cache.lastCheckedAt, now, UPDATE_CHECK_INTERVAL_MS)) {
+    const fetched = await fetchLatestCliVersion(env, options.timeoutMs ?? UPDATE_CHECK_TIMEOUT_MS);
+    latestVersion = fetched ?? latestVersion;
+    nextCache = {
+      ...nextCache,
+      lastCheckedAt: now.toISOString(),
+      latestVersion,
+    };
+    writeUpdateCheckCache(path, nextCache);
+  }
+
+  if (!latestVersion || compareVersions(latestVersion, currentVersion) <= 0) return undefined;
+  if (!isDue(nextCache.lastShownAt, now, UPDATE_NOTICE_INTERVAL_MS)) return undefined;
+
+  nextCache = { ...nextCache, lastShownAt: now.toISOString(), latestVersion };
+  writeUpdateCheckCache(path, nextCache);
+  return formatUpdateNotice(currentVersion, latestVersion);
+}
+
+function shouldCheckForUpdatesOnLaunch(command: Extract<OppiCommand, { type: "launch" }>): boolean {
+  return !command.piArgs.includes("-p") && !command.piArgs.includes("--print");
+}
+
+async function maybePrintUpdateNotice(command: Extract<OppiCommand, { type: "launch" }>): Promise<void> {
+  if (!shouldCheckForUpdatesOnLaunch(command)) return;
+  try {
+    const notice = await checkForUpdateNotice();
+    if (notice) console.error(`${notice}\nSet OPPI_UPDATE_CHECK=0 to disable this daily check.`);
+  } catch {
+    // Update checks are best-effort only.
+  }
+}
+
 export function parseOppiArgs(argv: string[]): OppiCommand {
   let agentDir: string | undefined;
   let withPiExtensions = false;
@@ -228,7 +367,7 @@ export function buildPiArgs(command: Extract<OppiCommand, { type: "launch" }>, p
   return args;
 }
 
-function launchPi(command: Extract<OppiCommand, { type: "launch" }>): Promise<number> {
+async function launchPi(command: Extract<OppiCommand, { type: "launch" }>): Promise<number> {
   const piCli = resolvePiCliPath();
   const piPackage = resolvePiPackagePath();
   if (!piCli) {
@@ -242,6 +381,8 @@ function launchPi(command: Extract<OppiCommand, { type: "launch" }>): Promise<nu
 
   const agentDir = resolveAgentDir(command.agentDir);
   mkdirSync(agentDir, { recursive: true });
+
+  await maybePrintUpdateNotice(command);
 
   const pluginSources = resolveEnabledPluginSources();
   const child = spawn(process.execPath, [piCli, ...buildPiArgs(command, piPackage, pluginSources)], {
@@ -495,7 +636,7 @@ async function runMemCommand(command: Extract<OppiCommand, { type: "mem" }>): Pr
 }
 
 function helpText(): string {
-  return `OPPi — opinionated Pi-powered coding agent\n\nUsage:\n  oppi [pi options] [@files...] [messages...]\n  oppi doctor [--json]\n  oppi mem status|setup|install|dashboard [--json]\n  oppi plugin list|add|install|enable|disable|remove|doctor [--json]\n  oppi marketplace list|add|remove [--json]\n\nOPPi options:\n  --agent-dir <dir>       Use a specific OPPi/Pi agent dir for this run\n  --with-pi-extensions    Allow normal Pi extension discovery in addition to OPPi\n  --version, -v           Print OPPi CLI version\n  --help, -h              Show this help\n\nPlugin examples:\n  oppi plugin add ./my-pi-package --local\n  oppi plugin enable my-pi-package --yes\n  oppi marketplace add ./catalog.json\n\nDefaults:\n  - loads the bundled/local @oppiai/pi-package\n  - loads enabled OPPi plugins as additional Pi packages with -e\n  - disables unrelated Pi extension discovery unless --with-pi-extensions is set\n  - stores sessions/settings under OPPI_AGENT_DIR or ~/.oppi/agent\n\nExamples:\n  oppi\n  oppi "summarize this repository"\n  oppi -p "Reply ok"\n  OPPI_AGENT_DIR=/tmp/oppi-agent oppi doctor\n\nAll ordinary Pi flags not listed above are passed through unchanged.`;
+  return `OPPi — opinionated Pi-powered coding agent\n\nUsage:\n  oppi [pi options] [@files...] [messages...]\n  oppi doctor [--json]\n  oppi mem status|setup|install|dashboard [--json]\n  oppi plugin list|add|install|enable|disable|remove|doctor [--json]\n  oppi marketplace list|add|remove [--json]\n\nOPPi options:\n  --agent-dir <dir>       Use a specific OPPi/Pi agent dir for this run\n  --with-pi-extensions    Allow normal Pi extension discovery in addition to OPPi\n  --version, -v           Print OPPi CLI version\n  --help, -h              Show this help\n\nEnvironment:\n  OPPI_UPDATE_CHECK=0     Disable the daily npm update notice\n\nPlugin examples:\n  oppi plugin add ./my-pi-package --local\n  oppi plugin enable my-pi-package --yes\n  oppi marketplace add ./catalog.json\n\nDefaults:\n  - loads the bundled/local @oppiai/pi-package\n  - loads enabled OPPi plugins as additional Pi packages with -e\n  - disables unrelated Pi extension discovery unless --with-pi-extensions is set\n  - stores sessions/settings under OPPI_AGENT_DIR or ~/.oppi/agent\n\nExamples:\n  oppi\n  oppi "summarize this repository"\n  oppi -p "Reply ok"\n  OPPI_AGENT_DIR=/tmp/oppi-agent oppi doctor\n\nAll ordinary Pi flags not listed above are passed through unchanged.`;
 }
 
 export async function run(argv: string[]): Promise<number> {

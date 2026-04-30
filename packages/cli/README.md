@@ -47,6 +47,7 @@ pnpm --filter @oppiai/cli start doctor
 - launches Pi as `pi --no-extensions -e <oppi-pi-package> ...` by default
 - uses `~/.oppi/agent` for Pi/OPPi settings and sessions by default
 - honors `OPPI_AGENT_DIR` and `--agent-dir <dir>`
+- checks npm at most daily before interactive launches and prints a one-line update notice when a newer `@oppiai/cli` is available (`OPPI_UPDATE_CHECK=0` disables it)
 - passes ordinary Pi flags and messages through unchanged
 - provides `oppi doctor [--json]`
 - provides safe Hoppi bridge commands: `oppi mem status|install|setup|dashboard [--json]`
