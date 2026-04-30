@@ -1457,7 +1457,7 @@ function formatMaintenanceSummary(input: {
 }
 
 function memoryMaintenanceHelp(): string {
-  return `Usage: /memory-maintenance [dry-run|apply] [--yes] [--limit N]\n\nTemporary Hoppi cleanup pass. It defaults to GPT-5.4 mini and does not try Claude/Meridian. The final summary always shows the model ultimately used. Override only with OPPI_MEMORY_MAINTENANCE_MODEL=provider/model.\n\nExamples:\n- /memory-maintenance dry-run\n- /memory-maintenance apply\n- /memory-maintenance apply --yes`;
+  return `Usage: /memory-maintenance [dry-run|apply] [--yes] [--limit N]\n\nLegacy fallback Hoppi cleanup pass. Automatic dreaming supersedes this manual command when Idle dream mode is turned on; use /memory-maintenance only for explicit fallback/manual cleanup. It defaults to GPT-5.4 mini and does not try Claude/Meridian. The final summary always shows the model ultimately used. Override only with OPPI_MEMORY_MAINTENANCE_MODEL=provider/model.\n\nExamples:\n- /memory-maintenance dry-run\n- /memory-maintenance apply\n- /memory-maintenance apply --yes`;
 }
 
 async function runMemoryMaintenance(ctx: ExtensionCommandContext, args: string | undefined): Promise<void> {
@@ -1852,22 +1852,33 @@ class HoppiMemoryWorker {
   }
 
   async rememberExitRecap(ctx: ExtensionContext): Promise<void> {
+    await this.rememberSessionRecap(ctx, "exit");
+  }
+
+  async rememberClearRecap(ctx: ExtensionContext): Promise<boolean> {
+    return this.rememberSessionRecap(ctx, "clear");
+  }
+
+  private async rememberSessionRecap(ctx: ExtensionContext, reason: "exit" | "clear"): Promise<boolean> {
     const config = readMemoryConfig(ctx.cwd);
-    if (!config.enabled) return;
+    if (!config.enabled) return false;
     const recap = buildSessionRecap(ctx);
-    if (!recap) return;
+    if (!recap) return false;
+    let saved = false;
     await this.enqueueAndWait(ctx, async (backend) => {
       if (!backend.remember) return;
       await backend.remember({
         project: projectRef(ctx),
         content: recap,
-        tags: ["oppi-exit-recap", "session-recap"],
+        tags: [reason === "clear" ? "oppi-clear-recap" : "oppi-exit-recap", "session-recap"],
         confidence: "observed",
-        source: "oppi:exit",
+        source: `oppi:${reason}`,
         sourceSessionId: sessionSourceId(ctx),
       });
+      saved = true;
       this.markDirty(ctx);
     });
+    return saved;
   }
 
   async drain(): Promise<void> {
@@ -2550,6 +2561,48 @@ async function runSyncSetupWizard(ctx: ExtensionCommandContext): Promise<void> {
   if (initial) await runSync(ctx, "both", "setup", true);
 }
 
+async function runClearSession(ctx: ExtensionCommandContext, memoryWorker: HoppiMemoryWorker, args: string): Promise<void> {
+  const trimmed = args.trim().toLowerCase();
+  if (trimmed === "help" || trimmed === "--help" || trimmed === "-h") {
+    ctx.ui.notify("Usage: /clear (alias: /reset). Saves a Hoppi session recap, drains memory/sync, then starts a fresh session.", "info");
+    return;
+  }
+
+  if (!ctx.isIdle()) ctx.ui.notify("Waiting for the current agent turn before clearing…", "info");
+  await ctx.waitForIdle();
+
+  const previousSessionFile = ctx.sessionManager.getSessionFile();
+  const config = readMemoryConfig(ctx.cwd);
+  let recapSaved = false;
+  let syncPushed = false;
+
+  if (config.enabled) {
+    publishStatus(ctx, "mem:clear…");
+    recapSaved = await memoryWorker.rememberClearRecap(ctx);
+    await memoryWorker.drain();
+    if (config.sync.enabled && config.sync.pushOnExit) {
+      await runSync(ctx, "push", "clear", true);
+      syncPushed = true;
+    }
+  }
+
+  const result = await ctx.newSession({
+    parentSession: previousSessionFile,
+    withSession: async (newCtx) => {
+      const memoryText = config.enabled
+        ? recapSaved
+          ? syncPushed
+            ? "saved recap + pushed sync"
+            : "saved recap"
+          : "memory on; nothing durable to recap"
+        : "memory off";
+      newCtx.ui.notify(`Cleared conversation. Fresh session started (${memoryText}).`, "info");
+    },
+  });
+
+  if (result.cancelled) ctx.ui.notify("Clear cancelled by a session guard.", "warning");
+}
+
 class BackgroundSyncRunner {
   private timer: NodeJS.Timeout | undefined;
   private running = false;
@@ -2647,8 +2700,18 @@ export default function memoryExtension(pi: ExtensionAPI) {
     handler: async (_args, ctx) => openMemoryDashboard(ctx),
   });
 
+  for (const command of ["clear", "reset"] as const) {
+    pi.registerCommand(command, {
+      description: "Clear visible conversation history, save/drain Hoppi memory, and start a fresh OPPi session.",
+      getArgumentCompletions: (prefix: string) => ["help"]
+        .filter((value) => value.startsWith(prefix.toLowerCase()))
+        .map((value) => ({ value, label: value })),
+      handler: async (args, ctx) => runClearSession(ctx, memoryWorker, args),
+    });
+  }
+
   pi.registerCommand("memory-maintenance", {
-    description: "Temporary Hoppi cleanup pass using GPT-5.4 mini. Usage: /memory-maintenance [dry-run|apply] [--yes] [--limit N]",
+    description: "Legacy fallback Hoppi cleanup; automatic dreaming supersedes it when enabled. Usage: /memory-maintenance [dry-run|apply] [--yes] [--limit N]",
     getArgumentCompletions: (prefix: string) => ["dry-run", "apply", "apply --yes", "help"]
       .filter((value) => value.startsWith(prefix.toLowerCase()))
       .map((value) => ({ value, label: value })),
