@@ -15,6 +15,7 @@ test("parseOppiArgs handles OPPi-owned commands", () => {
   assert.deepEqual(parseOppiArgs(["--version"]), { type: "version" });
   assert.deepEqual(parseOppiArgs(["doctor", "--json"]), { type: "doctor", json: true, agentDir: undefined });
   assert.deepEqual(parseOppiArgs(["--agent-dir", "./agent", "doctor"]), { type: "doctor", json: false, agentDir: "./agent" });
+  assert.deepEqual(parseOppiArgs(["update", "--check", "--json"]), { type: "update", check: true, json: true });
   assert.deepEqual(parseOppiArgs(["mem", "status", "--json"]), { type: "mem", subcommand: "status", json: true });
   assert.deepEqual(parseOppiArgs(["mem", "install", "--json"]), { type: "mem", subcommand: "install", json: true });
   assert.deepEqual(parseOppiArgs(["plugin", "list", "--json"]), { type: "plugin", subcommand: "list", json: true, scope: undefined });
@@ -65,6 +66,32 @@ test("resolveAgentDir uses documented precedence", () => {
   assert.equal(resolveAgentDir(undefined, {}), join(homedir(), ".oppi", "agent"));
 });
 
+test("Pi AuthStorage writes under the OPPi-provided agent dir", async () => {
+  const agentDir = tempDir("pi-auth");
+  const previousPiAgentDir = process.env.PI_CODING_AGENT_DIR;
+  process.env.PI_CODING_AGENT_DIR = agentDir;
+
+  try {
+    const { AuthStorage, getAgentDir } = await import("@mariozechner/pi-coding-agent");
+    assert.equal(resolve(getAgentDir()), resolve(agentDir));
+
+    const authStorage = AuthStorage.create();
+    authStorage.set("openai", { type: "api_key", key: "OPENAI_API_KEY" });
+    authStorage.set("openai-codex", { type: "oauth", access: "codex-access", refresh: "codex-refresh", expires: 4_102_444_800_000 });
+    authStorage.set("google-gemini-cli", { type: "oauth", access: "gemini-access", refresh: "gemini-refresh", expires: 4_102_444_800_000 });
+    authStorage.set("anthropic", { type: "oauth", access: "anthropic-access", refresh: "anthropic-refresh", expires: 4_102_444_800_000 });
+
+    const stored = JSON.parse(readFileSync(join(agentDir, "auth.json"), "utf8"));
+    assert.deepEqual(stored.openai, { type: "api_key", key: "OPENAI_API_KEY" });
+    assert.deepEqual(stored["openai-codex"], { type: "oauth", access: "codex-access", refresh: "codex-refresh", expires: 4_102_444_800_000 });
+    assert.deepEqual(stored["google-gemini-cli"], { type: "oauth", access: "gemini-access", refresh: "gemini-refresh", expires: 4_102_444_800_000 });
+    assert.deepEqual(stored.anthropic, { type: "oauth", access: "anthropic-access", refresh: "anthropic-refresh", expires: 4_102_444_800_000 });
+  } finally {
+    if (previousPiAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+    else process.env.PI_CODING_AGENT_DIR = previousPiAgentDir;
+  }
+});
+
 test("update check notices newer npm versions and throttles daily", async () => {
   const root = tempDir("update-check");
   const env = { OPPI_HOME: join(root, "oppi-home"), OPPI_UPDATE_CHECK_LATEST: "9.9.9" };
@@ -76,7 +103,8 @@ test("update check notices newer npm versions and throttles daily", async () => 
 
   const first = await checkForUpdateNotice({ env, cwd: root, currentVersion: "0.2.5", now, timeoutMs: 1 });
   assert.match(first ?? "", /OPPi 9\.9\.9 is available/);
-  assert.match(first ?? "", /npm install -g @oppiai\/cli@latest/);
+  assert.match(first ?? "", /Run oppi update/);
+  assert.match(first ?? "", /Changelog: https:\/\/github\.com\/RemindZ\/oppi\/blob\/main\/CHANGELOG\.md/);
 
   const throttled = await checkForUpdateNotice({ env, cwd: root, currentVersion: "0.2.5", now, timeoutMs: 1 });
   assert.equal(throttled, undefined);

@@ -23,6 +23,7 @@ const HOPPI_PACKAGE_NAME = "@oppiai/hoppi-memory";
 const HOPPI_LEGACY_PACKAGE_NAME = "hoppi-memory";
 const HOPPI_PACKAGE_SPEC = `${HOPPI_PACKAGE_NAME}@^0.1.0`;
 const OPPI_CLI_PACKAGE_NAME = "@oppiai/cli";
+const OPPI_CHANGELOG_URL = "https://github.com/RemindZ/oppi/blob/main/CHANGELOG.md";
 const UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const UPDATE_NOTICE_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const UPDATE_CHECK_TIMEOUT_MS = 1200;
@@ -31,6 +32,7 @@ export type OppiCommand =
   | { type: "help" }
   | { type: "version" }
   | { type: "doctor"; json: boolean; agentDir?: string }
+  | { type: "update"; check: boolean; json: boolean }
   | { type: "mem"; subcommand: "status" | "setup" | "install" | "dashboard" | "open"; json: boolean }
   | PluginCommand
   | MarketplaceCommand
@@ -264,11 +266,18 @@ async function fetchLatestCliVersion(env: Env, timeoutMs: number): Promise<strin
   }
 }
 
-function formatUpdateNotice(currentVersion: string, latestVersion: string): string {
-  return `OPPi ${latestVersion} is available (installed ${currentVersion}). Update with: npm install -g ${OPPI_CLI_PACKAGE_NAME}@latest`;
+export type UpdateNoticePayload = {
+  currentVersion: string;
+  latestVersion: string;
+  updateCommand: string;
+  changelogUrl: string;
+};
+
+function formatUpdateNotice(payload: UpdateNoticePayload): string {
+  return `OPPi ${payload.latestVersion} is available (installed ${payload.currentVersion}). Run ${payload.updateCommand}\nChangelog: ${payload.changelogUrl}`;
 }
 
-export async function checkForUpdateNotice(options: { env?: Env; cwd?: string; currentVersion?: string; now?: Date; timeoutMs?: number } = {}): Promise<string | undefined> {
+export async function checkForUpdateInfo(options: { env?: Env; cwd?: string; currentVersion?: string; now?: Date; timeoutMs?: number } = {}): Promise<UpdateNoticePayload | undefined> {
   const env = options.env ?? process.env;
   if (updateCheckDisabled(env)) return undefined;
 
@@ -296,20 +305,31 @@ export async function checkForUpdateNotice(options: { env?: Env; cwd?: string; c
 
   nextCache = { ...nextCache, lastShownAt: now.toISOString(), latestVersion };
   writeUpdateCheckCache(path, nextCache);
-  return formatUpdateNotice(currentVersion, latestVersion);
+  return { currentVersion, latestVersion, updateCommand: "oppi update", changelogUrl: OPPI_CHANGELOG_URL };
+}
+
+export async function checkForUpdateNotice(options: { env?: Env; cwd?: string; currentVersion?: string; now?: Date; timeoutMs?: number } = {}): Promise<string | undefined> {
+  const payload = await checkForUpdateInfo(options);
+  return payload ? formatUpdateNotice(payload) : undefined;
 }
 
 function shouldCheckForUpdatesOnLaunch(command: Extract<OppiCommand, { type: "launch" }>): boolean {
   return !command.piArgs.includes("-p") && !command.piArgs.includes("--print");
 }
 
-async function maybePrintUpdateNotice(command: Extract<OppiCommand, { type: "launch" }>): Promise<void> {
-  if (!shouldCheckForUpdatesOnLaunch(command)) return;
+async function resolveUpdateNoticeEnv(command: Extract<OppiCommand, { type: "launch" }>): Promise<Env> {
+  if (!shouldCheckForUpdatesOnLaunch(command)) return {};
   try {
-    const notice = await checkForUpdateNotice();
-    if (notice) console.error(`${notice}\nSet OPPI_UPDATE_CHECK=0 to disable this daily check.`);
+    const notice = await checkForUpdateInfo();
+    if (!notice) return {};
+    return {
+      OPPI_UPDATE_CURRENT_VERSION: notice.currentVersion,
+      OPPI_UPDATE_LATEST_VERSION: notice.latestVersion,
+      OPPI_CHANGELOG_URL: notice.changelogUrl,
+    };
   } catch {
     // Update checks are best-effort only.
+    return {};
   }
 }
 
@@ -344,6 +364,7 @@ export function parseOppiArgs(argv: string[]): OppiCommand {
   if (first === "--help" || first === "-h") return { type: "help" };
   if (first === "--version" || first === "-v") return { type: "version" };
   if (first === "doctor") return { type: "doctor", json: rest.includes("--json"), agentDir };
+  if (first === "update") return { type: "update", check: rest.includes("--check"), json: rest.includes("--json") };
   if (first === "plugin") return parsePluginCommand(rest);
   if (first === "marketplace") return parseMarketplaceCommand(rest);
   if (first === "mem") {
@@ -382,13 +403,14 @@ async function launchPi(command: Extract<OppiCommand, { type: "launch" }>): Prom
   const agentDir = resolveAgentDir(command.agentDir);
   mkdirSync(agentDir, { recursive: true });
 
-  await maybePrintUpdateNotice(command);
+  const updateNoticeEnv = await resolveUpdateNoticeEnv(command);
 
   const pluginSources = resolveEnabledPluginSources();
   const child = spawn(process.execPath, [piCli, ...buildPiArgs(command, piPackage, pluginSources)], {
     stdio: "inherit",
     env: {
       ...process.env,
+      ...updateNoticeEnv,
       OPPI_CLI: "1",
       OPPI_AGENT_DIR: agentDir,
       PI_CODING_AGENT_DIR: agentDir,
@@ -533,6 +555,54 @@ function npmSpawnCommand(args: string[]): { command: string; args: string[] } {
   return { command: "npm", args };
 }
 
+async function runUpdateCommand(command: Extract<OppiCommand, { type: "update" }>): Promise<number> {
+  const currentVersion = cliVersion();
+  const latestVersion = await fetchLatestCliVersion(process.env, 10_000);
+  const updateAvailable = latestVersion ? compareVersions(latestVersion, currentVersion) > 0 : null;
+  const payload = {
+    currentVersion,
+    latestVersion,
+    updateAvailable,
+    updateCommand: "oppi update",
+    changelogUrl: OPPI_CHANGELOG_URL,
+  };
+
+  if (command.json) {
+    console.log(JSON.stringify(payload, null, 2));
+    if (command.check) return 0;
+  }
+
+  if (command.check) {
+    if (!latestVersion) console.log(`Could not check the npm registry for OPPi updates.\nChangelog: ${OPPI_CHANGELOG_URL}`);
+    else if (updateAvailable) console.log(formatUpdateNotice({ currentVersion, latestVersion, updateCommand: "oppi update", changelogUrl: OPPI_CHANGELOG_URL }));
+    else console.log(`OPPi ${currentVersion} is current.\nChangelog: ${OPPI_CHANGELOG_URL}`);
+    return 0;
+  }
+
+  if (latestVersion && updateAvailable === false) {
+    console.log(`OPPi ${currentVersion} is already current.\nChangelog: ${OPPI_CHANGELOG_URL}`);
+    return 0;
+  }
+
+  console.log(latestVersion
+    ? `Updating OPPi from ${currentVersion} to ${latestVersion}...`
+    : `Updating OPPi ${currentVersion} to the latest npm release...`);
+  console.log(`Changelog: ${OPPI_CHANGELOG_URL}`);
+
+  const npm = npmSpawnCommand(["install", "-g", `${OPPI_CLI_PACKAGE_NAME}@latest`]);
+  return new Promise((resolveUpdate) => {
+    const child = spawn(npm.command, npm.args, { stdio: "inherit", env: process.env });
+    child.on("error", (error: Error) => {
+      console.error(`OPPi update failed to start npm: ${error.message}`);
+      resolveUpdate(1);
+    });
+    child.on("close", (code: number | null) => {
+      if (code === 0) console.log("OPPi update completed. Restart oppi to use the new version.");
+      resolveUpdate(code ?? 1);
+    });
+  });
+}
+
 type HoppiInstallResult =
   | { ok: true; modulePath: string; output: string }
   | { ok: false; error: string; output: string };
@@ -636,7 +706,7 @@ async function runMemCommand(command: Extract<OppiCommand, { type: "mem" }>): Pr
 }
 
 function helpText(): string {
-  return `OPPi — opinionated Pi-powered coding agent\n\nUsage:\n  oppi [pi options] [@files...] [messages...]\n  oppi doctor [--json]\n  oppi mem status|setup|install|dashboard [--json]\n  oppi plugin list|add|install|enable|disable|remove|doctor [--json]\n  oppi marketplace list|add|remove [--json]\n\nOPPi options:\n  --agent-dir <dir>       Use a specific OPPi/Pi agent dir for this run\n  --with-pi-extensions    Allow normal Pi extension discovery in addition to OPPi\n  --version, -v           Print OPPi CLI version\n  --help, -h              Show this help\n\nEnvironment:\n  OPPI_UPDATE_CHECK=0     Disable the daily npm update notice\n\nPlugin examples:\n  oppi plugin add ./my-pi-package --local\n  oppi plugin enable my-pi-package --yes\n  oppi marketplace add ./catalog.json\n\nDefaults:\n  - loads the bundled/local @oppiai/pi-package\n  - loads enabled OPPi plugins as additional Pi packages with -e\n  - disables unrelated Pi extension discovery unless --with-pi-extensions is set\n  - stores sessions/settings under OPPI_AGENT_DIR or ~/.oppi/agent\n\nExamples:\n  oppi\n  oppi "summarize this repository"\n  oppi -p "Reply ok"\n  OPPI_AGENT_DIR=/tmp/oppi-agent oppi doctor\n\nAll ordinary Pi flags not listed above are passed through unchanged.`;
+  return `OPPi — opinionated Pi-powered coding agent\n\nUsage:\n  oppi [pi options] [@files...] [messages...]\n  oppi doctor [--json]\n  oppi update [--check] [--json]\n  oppi mem status|setup|install|dashboard [--json]\n  oppi plugin list|add|install|enable|disable|remove|doctor [--json]\n  oppi marketplace list|add|remove [--json]\n\nOPPi options:\n  --agent-dir <dir>       Use a specific OPPi/Pi agent dir for this run\n  --with-pi-extensions    Allow normal Pi extension discovery in addition to OPPi\n  --version, -v           Print OPPi CLI version\n  --help, -h              Show this help\n\nEnvironment:\n  OPPI_UPDATE_CHECK=0     Disable the daily npm update banner\n\nUpdates:\n  oppi update             Install the latest @oppiai/cli from npm\n  oppi update --check     Check npm and print the OPPi changelog link\n\nPlugin examples:\n  oppi plugin add ./my-pi-package --local\n  oppi plugin enable my-pi-package --yes\n  oppi marketplace add ./catalog.json\n\nDefaults:\n  - loads the bundled/local @oppiai/pi-package\n  - loads enabled OPPi plugins as additional Pi packages with -e\n  - disables unrelated Pi extension discovery unless --with-pi-extensions is set\n  - stores sessions/settings under OPPI_AGENT_DIR or ~/.oppi/agent\n\nExamples:\n  oppi\n  oppi "summarize this repository"\n  oppi -p "Reply ok"\n  OPPI_AGENT_DIR=/tmp/oppi-agent oppi doctor\n\nAll ordinary Pi flags not listed above are passed through unchanged.`;
 }
 
 export async function run(argv: string[]): Promise<number> {
@@ -658,6 +728,9 @@ export async function run(argv: string[]): Promise<number> {
   }
   if (command.type === "doctor") {
     return printDiagnostics(collectDoctorDiagnostics({ agentDir: command.agentDir }), command.json);
+  }
+  if (command.type === "update") {
+    return runUpdateCommand(command);
   }
   if (command.type === "mem") {
     return runMemCommand(command);
