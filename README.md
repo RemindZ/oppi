@@ -9,7 +9,7 @@ Goals:
 - provide a polished default Pi package with useful tools, prompts, themes, and workflow extensions
 - grow toward a custom terminal harness and VS Code extension without throwing away the Pi-based core
 
-Current version: **0.2.1**.
+Current version: **0.2.4**.
 
 ## Install
 
@@ -68,6 +68,7 @@ oppi -p "Reply ok"
 Default behavior:
 
 - launches Pi with `--no-extensions -e <@oppiai/pi-package>` so unrelated global Pi extensions do not conflict
+- loads enabled OPPi plugins as additional Pi package sources with `-e <source>`
 - stores Pi/OPPi sessions and settings under `~/.oppi/agent`
 - honors `OPPI_AGENT_DIR` and `--agent-dir <dir>`
 - passes normal Pi flags/messages through unchanged, including `-p`, `--model`, `--provider`, `--continue`, and `--resume`
@@ -82,9 +83,51 @@ oppi mem status [--json]
 oppi mem install [--json]
 oppi mem setup
 oppi mem dashboard
+oppi plugin list
+oppi plugin add ./my-pi-package --local
+oppi plugin enable my-pi-package --yes
+oppi marketplace add ./catalog.json
 ```
 
 When developing before the bin is linked globally, use `node packages/cli/dist/main.js ...` or `pnpm --filter @oppiai/cli start <args>`, for example `pnpm --filter @oppiai/cli start --version`.
+
+## Plugins and marketplaces
+
+Stage 3 plugin support lets OPPi manage Pi-compatible packages without handing control to Pi's global settings.
+
+```bash
+oppi plugin add ./plugins/my-plugin --local   # records disabled by default
+oppi plugin doctor my-plugin                  # show source/capability/risk notes
+oppi plugin enable my-plugin --yes            # explicit trust gate
+oppi plugin list --json
+```
+
+Plugin state:
+
+- global: `~/.oppi/plugin-lock.json` or `OPPI_HOME/plugin-lock.json`
+- project-local: `.oppi/plugins.json` when `--local` is used
+- launch: enabled plugins are appended after OPPi's package as extra `-e <source>` Pi package sources
+
+Marketplace catalogs can be local JSON files or URLs:
+
+```bash
+oppi marketplace add ./catalog.json
+oppi marketplace list
+oppi plugin add demo-from-catalog --enable --yes
+```
+
+Catalog shape:
+
+```json
+{
+  "name": "local-dev",
+  "plugins": [
+    { "name": "demo-from-catalog", "source": "./plugins/demo", "description": "Demo Pi package" }
+  ]
+}
+```
+
+Claude marketplace compatibility is a guardrail, not a full adapter yet. OPPi accepts Claude-style catalogs only when entries identify a Pi/OPPi-compatible package source. If an entry looks Claude-specific (MCP server config, hooks, agents, slash commands, etc.) and cannot be loaded safely, `oppi plugin add <name>` reports the incompatibility and prints a copy/paste agent handoff prompt to port it into `.oppi/plugins/<name>`.
 
 ## Development notes
 
@@ -115,6 +158,7 @@ The current Pi package adds:
 - docked command panels: selection/input/custom command UIs render directly above the text input and push chat content upward instead of floating over it
 - `/settings:oppi` opens the unified OPPi settings panel for General, Footer, Memory, Compaction, Permissions, and Theme; Stage 1 uses this namespaced command until the OPPi wrapper can own `/settings`
 - `/exit` shuts down the current OPPi session gracefully, allowing Hoppi memory recaps and exit sync to run when enabled
+- `/clear` and `/reset` save/drain Hoppi memory handoff state, then start a fresh visible conversation session
 - `/oppi-terminal-setup` installs VS Code/Cursor terminal forwarding for Shift+Enter, Ctrl+Enter, and Alt+Up
 - normal terminal mouse selection/copy behavior is preserved; use Shift+Enter for newlines and Alt+Up to edit queued messages
 - feedback intake commands/tools: `/bug-report`, `/feature-request`, and `oppi_feedback_submit`
@@ -194,7 +238,7 @@ On first interactive startup, if Memory is enabled but the Hoppi backend package
 
 Use `/memory` to open the Hoppi dashboard. Detailed Hoppi controls live there: memory CRUD, project scope, stale filtering, private-GitHub sync setup, optional passphrase encryption, manual pull/push/sync, tombstone status, and conflict resolution.
 
-Temporary bridge: `/memory-maintenance [dry-run|apply] [--yes] [--limit N]` runs an explicit cleanup/consolidation pass for the current project store. It defaults to GPT-5.4 mini, does not try Claude/Meridian, shows the model ultimately used, and asks before applying unless `--yes` is supplied.
+Legacy fallback: `/memory-maintenance [dry-run|apply] [--yes] [--limit N]` runs an explicit cleanup/consolidation pass for the current project store. Automatic dreaming supersedes it when Idle dream mode is enabled. It defaults to GPT-5.4 mini, does not try Claude/Meridian, shows the model ultimately used, and asks before applying unless `--yes` is supplied.
 
 Open `/permissions` to choose tool-call policy from a list or use `/settings:oppi permissions`:
 
@@ -250,7 +294,7 @@ Direct GitHub issues may be closed automatically once the intake workflow is ena
 
 ## Status
 
-Stage 2 thin CLI implementation is in place: `@oppiai/cli` builds a usable `oppi` bin that launches Pi with the OPPi package, isolates agent config under `~/.oppi/agent`, and provides `doctor` plus safe memory bridge commands. Direct stock-Pi package launch remains useful for debugging:
+Stage 2 thin CLI implementation is in place, and Stage 3 plugin management has started: `@oppiai/cli` builds a usable `oppi` bin that launches Pi with the OPPi package, isolates agent config under `~/.oppi/agent`, provides `doctor` plus safe memory bridge commands, and can enable trusted Pi-compatible plugin sources through OPPi's plugin lockfile. Direct stock-Pi package launch remains useful for debugging:
 
 ```bash
 pi --no-extensions -e ./packages/pi-package

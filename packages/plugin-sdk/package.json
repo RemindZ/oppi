@@ -5,6 +5,15 @@
   "type": "module",
   "description": "OPPi plugin and marketplace manifest types/helpers.",
   "license": "MIT",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "check": "tsc --noEmit",
+    "build": "tsc"
+  },
   "devDependencies": {
     "typescript": "^5.8.0"
   }

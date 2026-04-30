@@ -29,6 +29,7 @@ declare module "node:fs" {
   export function mkdtempSync(prefix: string): string;
   export function readFileSync(path: string, encoding?: BufferEncoding): string;
   export function rmSync(path: string, options?: any): void;
+  export function statSync(path: string): { isDirectory(): boolean };
   export function writeFileSync(path: string, data: string, encoding?: BufferEncoding): void;
 }
 
@@ -42,7 +43,9 @@ declare module "node:os" {
 }
 
 declare module "node:path" {
+  export function basename(path: string, suffix?: string): string;
   export function dirname(path: string): string;
+  export function extname(path: string): string;
   export function isAbsolute(path: string): boolean;
   export function join(...paths: string[]): string;
   export function resolve(...paths: string[]): string;

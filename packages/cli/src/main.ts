@@ -5,6 +5,16 @@ import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import {
+  collectPluginDiagnostics,
+  parseMarketplaceCommand,
+  parsePluginCommand,
+  resolveEnabledPluginSources,
+  runMarketplaceCommand,
+  runPluginCommand,
+  type MarketplaceCommand,
+  type PluginCommand,
+} from "./plugins.js";
 
 const require = createRequire(import.meta.url);
 const __filename = fileURLToPath(import.meta.url);
@@ -18,6 +28,8 @@ export type OppiCommand =
   | { type: "version" }
   | { type: "doctor"; json: boolean; agentDir?: string }
   | { type: "mem"; subcommand: "status" | "setup" | "install" | "dashboard" | "open"; json: boolean }
+  | PluginCommand
+  | MarketplaceCommand
   | { type: "launch"; piArgs: string[]; agentDir?: string; withPiExtensions: boolean };
 
 export type DiagnosticStatus = "pass" | "warn" | "fail";
@@ -193,6 +205,8 @@ export function parseOppiArgs(argv: string[]): OppiCommand {
   if (first === "--help" || first === "-h") return { type: "help" };
   if (first === "--version" || first === "-v") return { type: "version" };
   if (first === "doctor") return { type: "doctor", json: rest.includes("--json"), agentDir };
+  if (first === "plugin") return parsePluginCommand(rest);
+  if (first === "marketplace") return parseMarketplaceCommand(rest);
   if (first === "mem") {
     const json = rest.includes("--json");
     const sub = rest.find((item) => !item.startsWith("-")) ?? "status";
@@ -205,10 +219,12 @@ export function parseOppiArgs(argv: string[]): OppiCommand {
   return { type: "launch", piArgs: remaining, agentDir, withPiExtensions };
 }
 
-export function buildPiArgs(command: Extract<OppiCommand, { type: "launch" }>, piPackagePath: string): string[] {
+export function buildPiArgs(command: Extract<OppiCommand, { type: "launch" }>, piPackagePath: string, pluginSources: string[] = []): string[] {
   const args: string[] = [];
   if (!command.withPiExtensions) args.push("--no-extensions");
-  args.push("-e", piPackagePath, ...command.piArgs);
+  args.push("-e", piPackagePath);
+  for (const source of pluginSources) args.push("-e", source);
+  args.push(...command.piArgs);
   return args;
 }
 
@@ -227,7 +243,8 @@ function launchPi(command: Extract<OppiCommand, { type: "launch" }>): Promise<nu
   const agentDir = resolveAgentDir(command.agentDir);
   mkdirSync(agentDir, { recursive: true });
 
-  const child = spawn(process.execPath, [piCli, ...buildPiArgs(command, piPackage)], {
+  const pluginSources = resolveEnabledPluginSources();
+  const child = spawn(process.execPath, [piCli, ...buildPiArgs(command, piPackage, pluginSources)], {
     stdio: "inherit",
     env: {
       ...process.env,
@@ -290,6 +307,11 @@ export function collectDoctorDiagnostics(options: { agentDir?: string } = {}): D
   diagnostics.push(piPackage
     ? { status: "pass", name: "OPPi Pi package", message: piPackage }
     : { status: "fail", name: "OPPi Pi package", message: "Could not find packages/pi-package or @oppiai/pi-package" });
+
+  const plugins = collectPluginDiagnostics();
+  diagnostics.push(plugins.warnings.length === 0
+    ? { status: "pass", name: "Plugins", message: `${plugins.enabled}/${plugins.configured} enabled; ${plugins.sources.length} launch source(s)` }
+    : { status: "warn", name: "Plugins", message: `${plugins.enabled}/${plugins.configured} enabled with warnings`, details: plugins.warnings.join("\n") });
 
   diagnostics.push(writable.ok
     ? { status: "pass", name: "OPPi agent dir", message: `${agentDir} is writable` }
@@ -473,7 +495,7 @@ async function runMemCommand(command: Extract<OppiCommand, { type: "mem" }>): Pr
 }
 
 function helpText(): string {
-  return `OPPi — opinionated Pi-powered coding agent\n\nUsage:\n  oppi [pi options] [@files...] [messages...]\n  oppi doctor [--json]\n  oppi mem status|setup|install|dashboard [--json]\n\nOPPi options:\n  --agent-dir <dir>       Use a specific OPPi/Pi agent dir for this run\n  --with-pi-extensions    Allow normal Pi extension discovery in addition to OPPi\n  --version, -v           Print OPPi CLI version\n  --help, -h              Show this help\n\nDefaults:\n  - loads the bundled/local @oppiai/pi-package\n  - disables unrelated Pi extension discovery unless --with-pi-extensions is set\n  - stores sessions/settings under OPPI_AGENT_DIR or ~/.oppi/agent\n\nExamples:\n  oppi\n  oppi "summarize this repository"\n  oppi -p "Reply ok"\n  OPPI_AGENT_DIR=/tmp/oppi-agent oppi doctor\n\nAll ordinary Pi flags not listed above are passed through unchanged.`;
+  return `OPPi — opinionated Pi-powered coding agent\n\nUsage:\n  oppi [pi options] [@files...] [messages...]\n  oppi doctor [--json]\n  oppi mem status|setup|install|dashboard [--json]\n  oppi plugin list|add|install|enable|disable|remove|doctor [--json]\n  oppi marketplace list|add|remove [--json]\n\nOPPi options:\n  --agent-dir <dir>       Use a specific OPPi/Pi agent dir for this run\n  --with-pi-extensions    Allow normal Pi extension discovery in addition to OPPi\n  --version, -v           Print OPPi CLI version\n  --help, -h              Show this help\n\nPlugin examples:\n  oppi plugin add ./my-pi-package --local\n  oppi plugin enable my-pi-package --yes\n  oppi marketplace add ./catalog.json\n\nDefaults:\n  - loads the bundled/local @oppiai/pi-package\n  - loads enabled OPPi plugins as additional Pi packages with -e\n  - disables unrelated Pi extension discovery unless --with-pi-extensions is set\n  - stores sessions/settings under OPPI_AGENT_DIR or ~/.oppi/agent\n\nExamples:\n  oppi\n  oppi "summarize this repository"\n  oppi -p "Reply ok"\n  OPPI_AGENT_DIR=/tmp/oppi-agent oppi doctor\n\nAll ordinary Pi flags not listed above are passed through unchanged.`;
 }
 
 export async function run(argv: string[]): Promise<number> {
@@ -498,6 +520,12 @@ export async function run(argv: string[]): Promise<number> {
   }
   if (command.type === "mem") {
     return runMemCommand(command);
+  }
+  if (command.type === "plugin") {
+    return runPluginCommand(command);
+  }
+  if (command.type === "marketplace") {
+    return runMarketplaceCommand(command);
   }
   return launchPi(command);
 }
