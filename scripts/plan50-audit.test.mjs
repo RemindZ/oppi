@@ -165,6 +165,8 @@ test("plan50 audit separates implemented Windows background adapter from host se
         && route.curatedPublishSet.includes("packages/cli")
         && route.curatedPublishSet.includes("packages/native")
         && route.curatedPublishSet.includes("packages/natives")
+        && route.curatedPublishSet.includes("packages/pi-package/skills/graphify")
+        && route.curatedPublishSet.includes("systemprompts/goals")
         && route.steps.includes("gh auth status")
     ),
     JSON.stringify(payload.closeoutChecklist, null, 2),
@@ -397,6 +399,8 @@ test("plan50 audit separates implemented Windows background adapter from host se
         && action.curatedPaths?.includes("packages/cli")
         && action.curatedPaths?.includes("packages/native")
         && action.curatedPaths?.includes("packages/natives")
+        && action.curatedPaths?.includes("packages/pi-package/skills/graphify")
+        && action.curatedPaths?.includes("systemprompts/goals")
         && action.curatedPaths?.includes(".gitignore")
         && action.curatedPaths?.includes("package.json")
         && action.curatedPaths?.includes("pnpm-lock.yaml")
@@ -520,6 +524,8 @@ test("plan50 audit separates implemented Windows background adapter from host se
   assert.ok(payload.ciEvidenceInputs?.curatedPaths.includes("pnpm-workspace.yaml"));
   assert.ok(payload.ciEvidenceInputs?.curatedPaths.includes("packages/native"));
   assert.ok(payload.ciEvidenceInputs?.curatedPaths.includes("packages/natives"));
+  assert.ok(payload.ciEvidenceInputs?.curatedPaths.includes("packages/pi-package/skills/graphify"));
+  assert.ok(payload.ciEvidenceInputs?.curatedPaths.includes("systemprompts/goals"));
   assert.ok(payload.ciEvidenceInputs?.curatedPaths.includes("scripts/plan50-capture-local-background.mjs"));
   assert.ok(payload.ciEvidenceInputs?.curatedPaths.includes("scripts/plan50-capture-local-terminal.mjs"));
   assert.ok(payload.ciEvidenceInputs?.curatedPaths.includes("scripts/plan50-test.mjs"));
@@ -2730,6 +2736,32 @@ test("plan50 audit rejects path filters outside workflow triggers", () => {
   assert.match(multiOsDogfoodCheck.evidence, /push\/pull_request path filters/i);
 });
 
+test("plan50 audit rejects missing embedded prompt asset path filters", () => {
+  const dir = mkdtempSync(join(tmpdir(), "oppi-plan50-workflow-"));
+  const workflowPath = join(dir, "native-shell.yml");
+  const workflow = readFileSync(realWorkflowPath, "utf8")
+    .replaceAll('      - "packages/pi-package/skills/graphify/**"\n', "")
+    .replaceAll('      - "systemprompts/goals/**"\n', "")
+    .replace(
+      "    timeout-minutes: 20",
+      "    timeout-minutes: 20\n    env:\n      PLAN50_UNUSED_PATH_FILTER: systemprompts/goals/**\n      PLAN50_UNUSED_GRAPHIFY_FILTER: packages/pi-package/skills/graphify/**",
+    );
+  writeFileSync(workflowPath, workflow, "utf8");
+
+  const result = spawnSync(process.execPath, ["scripts/plan50-audit.mjs", "--workflow-path", workflowPath, "--json"], {
+    cwd: repoRoot,
+    encoding: "utf8",
+    windowsHide: true,
+  });
+
+  assert.equal(result.status, 1, result.stderr || result.stdout);
+  const payload = JSON.parse(result.stdout);
+  assert.equal(resolve(payload.workflowPath), workflowPath);
+  const multiOsDogfoodCheck = payload.checks.find((check) => check.id === "multi-os-ci-dogfood-defined");
+  assert.equal(multiOsDogfoodCheck?.ok, false);
+  assert.match(multiOsDogfoodCheck.evidence, /push\/pull_request path filters/i);
+});
+
 test("plan50 audit rejects path filter strings outside path list items", () => {
   const dir = mkdtempSync(join(tmpdir(), "oppi-plan50-workflow-"));
   const workflowPath = join(dir, "native-shell.yml");
@@ -2768,6 +2800,8 @@ test("plan50 audit rejects path filters outside the top-level on block", () => {
     '      - "packages/cli/**"',
     '      - "packages/native/**"',
     '      - "packages/natives/**"',
+    '      - "packages/pi-package/skills/graphify/**"',
+    '      - "systemprompts/goals/**"',
     '      - "scripts/plan50-*.mjs"',
     '      - ".github/workflows/native-shell.yml"',
   ].join("\n");
@@ -2781,6 +2815,8 @@ test("plan50 audit rejects path filters outside the top-level on block", () => {
     '    - "packages/cli/**"',
     '    - "packages/native/**"',
     '    - "packages/natives/**"',
+    '    - "packages/pi-package/skills/graphify/**"',
+    '    - "systemprompts/goals/**"',
     '    - "scripts/plan50-*.mjs"',
     '    - ".github/workflows/native-shell.yml"',
   ].join("\n");

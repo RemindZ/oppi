@@ -32,6 +32,8 @@ const ciEvidenceInputPaths = [
   "packages/cli",
   "packages/native",
   "packages/natives",
+  "packages/pi-package/skills/graphify",
+  "systemprompts/goals",
 ];
 const ciEvidenceSensitiveReviewPaths = [
   ".github/workflows",
@@ -615,6 +617,8 @@ const PLAN50_WORKFLOW_PATH_FILTERS = [
   "packages/cli/**",
   "packages/native/**",
   "packages/natives/**",
+  "packages/pi-package/skills/graphify/**",
+  "systemprompts/goals/**",
   "scripts/plan50-*.mjs",
   ".github/workflows/native-shell.yml",
 ];
