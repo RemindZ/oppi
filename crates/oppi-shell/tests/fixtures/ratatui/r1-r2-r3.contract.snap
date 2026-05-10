@@ -1,0 +1,54 @@
+# Exact terminal-cell contracts extracted from .reference/design-v2/tab1-ratatui.jsx
+# Width: 78 cells. Lines are trim-end normalized to match buffer_to_string().
+
+-- R1_IDLE_78X15 --
+• OPPi · anthropic/claude-sonnet-4.5 · perms: default · ready
+ ›  explain the diff between Result<T,E> and ?
+
+ ◇  OPPi
+    Result<T,E> is the type. The ? operator is sugar for
+    early-returning the Err arm via From conversion.
+
+ ›  when does it not work?
+
+────────────────────────────────────────────────────────────────── docks: idle
+╭────────────────────────────────────────────────────────────────────────────╮
+│ › █                                                                       │
+╰────────────────────────────────────────────────────────────────────────────╯
+ ctx 12.4k/200k  ·  $0.084  ·  auto-edit on
+ Tab complete  ⌃R run  ⌃C cancel  / cmds  Alt+K hide
+
+-- R2_RUNNING_78X15 --
+◐ OPPi · anthropic/claude-sonnet-4.5 · running╭───────────────────────────╮
+                                              │ ◎ refactor auth middleware │
+                                              ╰───────────────────────────╯
+ ›  refactor auth middleware to use the new SessionGuard
+
+ ◇  OPPi
+    Reading src/middleware/auth.rs ... done
+    Reading src/session/guard.rs ... done
+    Drafting changes... I'll replace the manual cookie▍
+────────────────────────────────────────────────────────────────── docks: idle
+╭────────────────────────────────────────────────────────────────────────────╮
+│ › █                                                                       │
+╰────────────────────────────────────────────────────────────────────────────╯
+ ctx 38.1k/200k  ·  $0.214  ·  auto-edit on
+ Esc cancel  ⌃R rerun  / cmds  Alt+K hide
+
+-- R3_SLASH_78X16 --
+• OPPi · anthropic/claude-sonnet-4.5 · ready
+ ›  explain the diff between Result<T,E> and ?
+
+╭────────────────────────────────────────────────────────────────────────────╮
+│ › /settings    open settings overlay                                       │
+│   /model       switch provider/model                                       │
+│   /sessions    browse session history                                      │
+│   /background  send to background runner                                  │
+│   /todos       show task list                                              │
+│   /effort      model-aware thinking slider                                 │
+│   /exit        quit OPPi                                                   │
+╰────────────────────────────────────────────────────────────────────────────╯
+╭────────────────────────────────────────────────────────────────────────────╮
+│ › /█                                                                      │
+╰────────────────────────────────────────────────────────────────────────────╯
+ ↑↓ select  Tab insert  Enter submit  Esc close

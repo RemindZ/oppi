@@ -1,0 +1,18 @@
+╭─ OPPi retained scrollback (foundation) ─
+```diff
++ add
+- del
+```
+tool oppi:write_file started (write-1)
+tool oppi:write_file → ok
+{"outputPath":"docs/native-shell-dogfood.md"}
+artifact: docs/native-shell-dogfood.md
+artifact artifact-image-1 created: output/image.png (image/png, 64x64, 1.0KiB, backend=openai-images, model=g…
+├─ docks ─
+todos: 50-14:InProgress | 50-15:Pending
+approval: approval-1 pending for write-1 — /approve or /deny
+question: Choose path — /answer <text-or-option-id>
+background: 1 running, 1 completed; latest=task-2
+suggestion: Run snapshots
+status: role=executor model=mock-scripted permissions=auto-review memory=client-hosted todos=2 queued=1 diagn…
+╰─ line-mode fallback remains available ─

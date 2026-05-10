@@ -1,0 +1,11 @@
+[package]
+name = "oppi-protocol"
+description = "OPPi runtime protocol types for threads, turns, items, events, approvals, and tools."
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+version.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true

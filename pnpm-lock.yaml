@@ -18,12 +18,16 @@ importers:
         specifier: ^0.70.6
         version: 0.70.6(@modelcontextprotocol/sdk@1.29.0(zod@4.3.6))(ws@8.20.0)(zod@4.3.6)
       '@oppiai/pi-package':
-        specifier: workspace:^0.2.9
+        specifier: workspace:^0.2.11
         version: link:../pi-package
     devDependencies:
       typescript:
         specifier: ^5.8.0
         version: 5.9.3
+    optionalDependencies:
+      '@oppiai/natives':
+        specifier: workspace:^0.2.9
+        version: link:../natives
 
   packages/core:
     devDependencies:
@@ -42,6 +46,18 @@ importers:
       wrangler:
         specifier: ^4.0.0
         version: 4.85.0(@cloudflare/workers-types@4.20260426.1)
+
+  packages/native:
+    devDependencies:
+      typescript:
+        specifier: ^5.8.0
+        version: 5.9.3
+
+  packages/natives:
+    devDependencies:
+      typescript:
+        specifier: ^5.8.0
+        version: 5.9.3
 
   packages/pi-package:
     dependencies:

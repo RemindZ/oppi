@@ -1,8 +1,8 @@
 # @oppiai/cli
 
-Thin `oppi` CLI wrapper for the OPPi Pi package.
+Thin `oppi` CLI wrapper for the OPPi Pi package. This remains the stable/Pi-backed package while `@oppiai/native` ships the Rust-first preview as a side-by-side `oppi-native` binary.
 
-Current version: **0.2.9**.
+Current version: **0.2.11**.
 
 ## Install
 
@@ -10,6 +10,14 @@ Current version: **0.2.9**.
 npm install -g @oppiai/cli
 oppi doctor
 oppi
+```
+
+Optional Rust-first preview, installed side by side without taking over `oppi`:
+
+```bash
+npm install -g @oppiai/native
+oppi-native doctor
+oppi-native smoke --mock --json
 ```
 
 Source install for local development:
@@ -47,12 +55,14 @@ pnpm --filter @oppiai/cli start doctor
 - launches Pi as `pi --no-extensions -e <oppi-pi-package> ...` by default
 - uses `~/.oppi/agent` for Pi/OPPi settings and sessions by default
 - honors `OPPI_AGENT_DIR` and `--agent-dir <dir>`
+- runs `oppi doctor` probes against `OPPI_AGENT_DIR` or the current repo's `.oppi/agent` by default, so sandboxed repo sessions do not fail on a read-only user-profile agent dir
 - checks npm at most daily before interactive launches and shows a Pi-style OPPi update banner with `oppi update` and the changelog link when a newer `@oppiai/cli` is available (`OPPI_UPDATE_CHECK=0` disables it)
 - passes ordinary Pi flags and messages through unchanged
 - provides `oppi doctor [--json]`
 - provides `oppi update [--check] [--json]`
 - provides safe Hoppi bridge commands: `oppi mem status|install|setup|dashboard [--json]`
 - installs optional Hoppi backend explicitly with `oppi mem install`; OPPi never installs `@oppiai/hoppi-memory` silently
+- provides native-session resume helpers when the Rust shell is available: `oppi resume <thread-id>` resumes directly, while bare `oppi resume` lists project sessions
 - manages Stage 3 plugins with `oppi plugin list|add|install|enable|disable|remove|doctor`
 - manages marketplace catalogs with `oppi marketplace list|add|remove`
 - loads enabled OPPi plugins as extra Pi package sources (`-e <source>`) after the built-in OPPi package

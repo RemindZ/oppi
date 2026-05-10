@@ -1,0 +1,50 @@
+{
+  "name": "@oppiai/natives",
+  "version": "0.2.9",
+  "type": "module",
+  "description": "Optional native-helper probes, benchmarks, and JS fallbacks for OPPi.",
+  "license": "MIT",
+  "keywords": [
+    "oppi",
+    "native",
+    "rust",
+    "napi",
+    "benchmark"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/RemindZ/oppi.git",
+    "directory": "packages/natives"
+  },
+  "bugs": {
+    "url": "https://github.com/RemindZ/oppi/issues"
+  },
+  "homepage": "https://github.com/RemindZ/oppi#readme",
+  "engines": {
+    "node": ">=20.6.0"
+  },
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "check": "tsc --noEmit",
+    "build": "tsc",
+    "test": "pnpm run build && node --test dist/*.test.js",
+    "prepack": "pnpm run build"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.0"
+  }
+}

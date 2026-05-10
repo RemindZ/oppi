@@ -1,0 +1,11 @@
+[package]
+name = "oppi-agents"
+description = "Slash-agent definition and resolution primitives for the OPPi runtime."
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+version.workspace = true
+
+[dependencies]
+oppi-protocol.workspace = true
+serde.workspace = true

@@ -1,0 +1,11 @@
+[package]
+name = "oppi-tools"
+description = "Tool-call invariants and routing primitives for the OPPi Rust runtime."
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+version.workspace = true
+
+[dependencies]
+oppi-protocol.workspace = true
+serde_json.workspace = true

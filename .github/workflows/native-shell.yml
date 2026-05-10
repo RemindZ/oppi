@@ -1,0 +1,165 @@
+name: Native shell validation
+
+on:
+  push:
+    paths:
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "crates/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "packages/cli/**"
+      - "packages/native/**"
+      - "packages/natives/**"
+      - "scripts/plan50-*.mjs"
+      - ".github/workflows/native-shell.yml"
+  pull_request:
+    paths:
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "crates/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "packages/cli/**"
+      - "packages/native/**"
+      - "packages/natives/**"
+      - "scripts/plan50-*.mjs"
+      - ".github/workflows/native-shell.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  native-shell:
+    name: ${{ matrix.os }} native shell
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Enable pnpm
+        run: corepack enable
+      - name: Install Linux sandbox dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y bubblewrap
+      - name: Install workspace dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Build native shell and server
+        run: cargo build -p oppi-server -p oppi-shell
+      - name: Prepare Plan 50 evidence folder
+        shell: bash
+        run: mkdir -p plan50-evidence
+      - name: Test native Rust workspace
+        run: cargo test --workspace
+      - name: Check Linux Bubblewrap host sandbox
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test -p oppi-sandbox host_linux_bubblewrap_blocks_network_when_disabled -- --ignored --nocapture 2>&1 | tee "plan50-evidence/linux-bubblewrap-host-sandbox-${RUNNER_OS}.log"
+      - name: Check terminal cleanup lifecycle
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test -p oppi-shell ratatui_lifecycle_exit_paths_share_cleanup_contract -- --nocapture 2>&1 | tee "plan50-evidence/terminal-cleanup-lifecycle-${RUNNER_OS}.log"
+          cargo test -p oppi-shell ratatui_terminal_cleanup_sequence_resets_and_clears -- --nocapture 2>&1 | tee "plan50-evidence/terminal-cleanup-reset-${RUNNER_OS}.log"
+      - name: Build CLI wrapper
+        run: pnpm --filter @oppiai/cli build
+      - name: Test CLI package
+        run: pnpm --filter @oppiai/cli test
+      - name: Test native npm packages
+        run: |
+          pnpm --filter @oppiai/native test
+          pnpm --filter @oppiai/natives test
+      - name: Test Plan 50 audit helpers
+        run: pnpm run plan50:test
+      - name: Smoke native shell through CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${RUNNER_OS}" == "Windows" ]]; then
+            root="$(cygpath -w "${PWD}")"
+            OPPI_SERVER_BIN="${root}\\target\\debug\\oppi-server.exe" \
+            OPPI_SHELL_BIN="${root}\\target\\debug\\oppi-shell.exe" \
+            node packages/cli/dist/main.js tui smoke --mock --json | tee "plan50-evidence/tui-smoke-${RUNNER_OS}.json"
+          else
+            OPPI_SERVER_BIN="${PWD}/target/debug/oppi-server" \
+            OPPI_SHELL_BIN="${PWD}/target/debug/oppi-shell" \
+            node packages/cli/dist/main.js tui smoke --mock --json | tee "plan50-evidence/tui-smoke-${RUNNER_OS}.json"
+          fi
+      - name: Dogfood native shell through CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${RUNNER_OS}" == "Windows" ]]; then
+            root="$(cygpath -w "${PWD}")"
+            OPPI_SERVER_BIN="${root}\\target\\debug\\oppi-server.exe" \
+            OPPI_SHELL_BIN="${root}\\target\\debug\\oppi-shell.exe" \
+            node packages/cli/dist/main.js tui dogfood --mock --json | tee "plan50-evidence/tui-dogfood-${RUNNER_OS}.json"
+          else
+            OPPI_SERVER_BIN="${PWD}/target/debug/oppi-server" \
+            OPPI_SHELL_BIN="${PWD}/target/debug/oppi-shell" \
+            node packages/cli/dist/main.js tui dogfood --mock --json | tee "plan50-evidence/tui-dogfood-${RUNNER_OS}.json"
+          fi
+      - name: Strict sandboxed background dogfood on Linux
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          OPPI_SERVER_BIN="${PWD}/target/debug/oppi-server" \
+          OPPI_SHELL_BIN="${PWD}/target/debug/oppi-shell" \
+          node packages/cli/dist/main.js tui dogfood --mock --json --require-background-lifecycle | tee "plan50-evidence/tui-dogfood-strict-${RUNNER_OS}.json"
+      - name: Write Plan 50 evidence manifest
+        if: always()
+        shell: bash
+        env:
+          MATRIX_OS: ${{ matrix.os }}
+        run: |
+          node scripts/plan50-write-evidence-manifest.mjs --evidence-dir plan50-evidence
+      - name: Upload Plan 50 native shell evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: plan50-native-shell-evidence-${{ matrix.os }}
+          path: plan50-evidence/**
+          if-no-files-found: error
+          retention-days: 14
+
+  plan50-evidence:
+    name: Plan 50 evidence bundle verifier
+    runs-on: ubuntu-latest
+    needs: native-shell
+    if: always()
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Download Plan 50 native shell evidence artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: plan50-native-shell-evidence-*
+          path: plan50-downloaded-evidence
+          merge-multiple: false
+      - name: Verify Plan 50 evidence bundle
+        run: node scripts/plan50-evidence-verify.mjs plan50-downloaded-evidence --json
+      - name: Require native shell matrix success
+        if: ${{ always() && needs.native-shell.result != 'success' }}
+        run: |
+          echo "native-shell matrix result was ${{ needs.native-shell.result }}"
+          exit 1

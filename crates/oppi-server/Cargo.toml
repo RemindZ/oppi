@@ -1,0 +1,14 @@
+[package]
+name = "oppi-server"
+description = "Experimental local JSON-RPC server for the OPPi Rust runtime spine."
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+version.workspace = true
+
+[dependencies]
+oppi-core.workspace = true
+oppi-protocol.workspace = true
+oppi-sandbox.workspace = true
+serde.workspace = true
+serde_json.workspace = true

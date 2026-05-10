@@ -1,20 +1,21 @@
 {
-  "name": "@oppiai/cli",
+  "name": "@oppiai/native",
   "version": "0.2.11",
   "type": "module",
-  "description": "OPPi CLI wrapper around Pi with OPPi defaults, diagnostics, and memory helpers.",
+  "description": "Rust-first OPPi preview launcher with bundled oppi-shell and oppi-server binaries.",
   "license": "MIT",
   "keywords": [
     "oppi",
-    "pi",
+    "native",
+    "rust",
     "coding-agent",
     "agent-cli",
-    "ai"
+    "terminal"
   ],
   "repository": {
     "type": "git",
     "url": "git+https://github.com/RemindZ/oppi.git",
-    "directory": "packages/cli"
+    "directory": "packages/native"
   },
   "bugs": {
     "url": "https://github.com/RemindZ/oppi/issues"
@@ -23,33 +24,32 @@
   "engines": {
     "node": ">=20.6.0"
   },
+  "main": "dist/main.js",
+  "types": "dist/main.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/main.d.ts",
+      "default": "./dist/main.js"
+    }
+  },
   "files": [
     "dist",
-    "!dist/*.test.js",
-    "!dist/*.test.js.map",
-    "!dist/*.test.d.ts",
-    "!dist/*.test.d.ts.map",
+    "bin",
     "README.md"
   ],
   "publishConfig": {
     "access": "public"
   },
   "bin": {
-    "oppi": "./dist/main.js"
+    "oppi-native": "./dist/main.js",
+    "oppi-rs": "./dist/main.js"
   },
   "scripts": {
     "check": "tsc --noEmit",
     "build": "tsc && node -e \"try{require('fs').chmodSync('dist/main.js',0o755)}catch{}\"",
-    "start": "node dist/main.js",
+    "build:binaries": "node scripts/build-binaries.mjs",
     "test": "pnpm run build && node --test dist/*.test.js",
-    "prepack": "pnpm run build"
-  },
-  "dependencies": {
-    "@mariozechner/pi-coding-agent": "^0.70.6",
-    "@oppiai/pi-package": "workspace:^0.2.11"
-  },
-  "optionalDependencies": {
-    "@oppiai/natives": "workspace:^0.2.9"
+    "prepack": "pnpm run build && pnpm run build:binaries"
   },
   "devDependencies": {
     "typescript": "^5.8.0"

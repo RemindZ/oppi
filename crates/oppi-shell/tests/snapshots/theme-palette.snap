@@ -1,0 +1,4 @@
+plain: accent="" dim="" code="" success="" warning="" error="" sample="# Title | code | ok | warn | err"
+light: accent="\u{1b}[34;1m" dim="\u{1b}[2m" code="\u{1b}[35m" success="\u{1b}[32m" warning="\u{1b}[33m" error="\u{1b}[31m" sample="\u{1b}[34;1m# Title\u{1b}[0m | \u{1b}[35mcode\u{1b}[0m | \u{1b}[32mok\u{1b}[0m | \u{1b}[33mwarn\u{1b}[0m | \u{1b}[31merr\u{1b}[0m"
+dark: accent="\u{1b}[36;1m" dim="\u{1b}[2m" code="\u{1b}[35m" success="\u{1b}[32m" warning="\u{1b}[33m" error="\u{1b}[31m" sample="\u{1b}[36;1m# Title\u{1b}[0m | \u{1b}[35mcode\u{1b}[0m | \u{1b}[32mok\u{1b}[0m | \u{1b}[33mwarn\u{1b}[0m | \u{1b}[31merr\u{1b}[0m"
+oppi: accent="\u{1b}[38;5;81;1m" dim="\u{1b}[2m" code="\u{1b}[38;5;141m" success="\u{1b}[38;5;114m" warning="\u{1b}[38;5;221m" error="\u{1b}[38;5;203m" sample="\u{1b}[38;5;81;1m# Title\u{1b}[0m | \u{1b}[38;5;141mcode\u{1b}[0m | \u{1b}[38;5;114mok\u{1b}[0m | \u{1b}[38;5;221mwarn\u{1b}[0m | \u{1b}[38;5;203merr\u{1b}[0m"

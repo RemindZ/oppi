@@ -1,0 +1,31 @@
+[workspace]
+members = [
+  "crates/oppi-agents",
+  "crates/oppi-core",
+  "crates/oppi-protocol",
+  "crates/oppi-sandbox",
+  "crates/oppi-server",
+  "crates/oppi-shell",
+  "crates/oppi-tools",
+]
+resolver = "2"
+
+[workspace.package]
+edition = "2024"
+license = "MIT"
+repository = "https://github.com/RemindZ/oppi"
+version = "0.1.0"
+
+[workspace.dependencies]
+oppi-agents = { path = "crates/oppi-agents" }
+oppi-core = { path = "crates/oppi-core" }
+oppi-protocol = { path = "crates/oppi-protocol" }
+oppi-sandbox = { path = "crates/oppi-sandbox" }
+oppi-tools = { path = "crates/oppi-tools" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+ureq = { version = "2", features = ["json"] }
+base64 = "0.22"
+getrandom = "0.2"
+ring = "0.17"
+unicode-width = "0.2"
