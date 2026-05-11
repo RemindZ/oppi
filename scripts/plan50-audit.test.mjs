@@ -20,6 +20,7 @@ writeFileSync(defaultTestPlanPath, [
   "",
 ].join("\n"), "utf8");
 process.env.OPPI_PLAN50_PLAN_PATH = process.env.OPPI_PLAN50_PLAN_PATH || defaultTestPlanPath;
+process.env.OPPI_PLAN50_TEST_SANDBOX_READY = process.env.OPPI_PLAN50_TEST_SANDBOX_READY || "0";
 
 function tempEvidenceRoot() {
   return mkdtempSync(join(tmpdir(), "oppi-plan50-audit-evidence-"));

@@ -298,6 +298,7 @@ function providerConfigured() {
 
 function sandboxReady() {
   if (process.env.OPPI_PLAN50_TEST_SANDBOX_READY === "1") return true;
+  if (process.env.OPPI_PLAN50_TEST_SANDBOX_READY === "0") return false;
   if (process.platform === "win32") {
     return envConfigured("OPPI_WINDOWS_SANDBOX_USERNAME")
       && envConfigured("OPPI_WINDOWS_SANDBOX_PASSWORD")
