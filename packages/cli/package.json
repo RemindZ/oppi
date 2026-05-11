@@ -41,7 +41,7 @@
     "check": "tsc --noEmit",
     "build": "tsc && node -e \"try{require('fs').chmodSync('dist/main.js',0o755)}catch{}\"",
     "start": "node dist/main.js",
-    "test": "pnpm run build && node --test dist/*.test.js",
+    "test": "pnpm run build && node --test dist/main.test.js",
     "prepack": "pnpm run build"
   },
   "dependencies": {

@@ -1036,11 +1036,15 @@ test("CLI smoke: runtime-worker prompt shows stable Pi fallback when provider au
 });
 
 test("CLI smoke: natives status --json reports optional fallback state", () => {
-  const result = spawnSync(process.execPath, [resolve("dist", "main.js"), "natives", "status", "--json"], { encoding: "utf8" });
+  const result = spawnSync(process.execPath, [resolve("dist", "main.js"), "natives", "status", "--json"], {
+    encoding: "utf8",
+    env: { ...process.env, OPPI_DISABLE_NATIVES: "1" },
+  });
   assert.equal(result.status, 0, result.stderr);
   const parsed = JSON.parse(result.stdout);
   assert.equal(parsed.packageName, "@oppiai/natives");
-  assert.equal(typeof parsed.native.available, "boolean");
+  assert.equal(parsed.native.available, false);
+  assert.match(parsed.native.error, /OPPI_DISABLE_NATIVES/);
 });
 
 test("CLI smoke: --version prints package version", () => {

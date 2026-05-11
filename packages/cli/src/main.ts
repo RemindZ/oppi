@@ -1580,13 +1580,40 @@ async function importHoppiModule(env: Env = process.env, cwd = process.cwd()): P
   return import(pathToFileURL(modulePath).href);
 }
 
-async function importNativesModule(): Promise<any> {
+async function importNativesModule(env: Env = process.env): Promise<any> {
+  if (env.OPPI_DISABLE_NATIVES?.trim() === "1") {
+    throw new Error("Optional @oppiai/natives package disabled by OPPI_DISABLE_NATIVES.");
+  }
   try {
     return await import("@oppiai/natives");
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     throw new Error(`Optional @oppiai/natives package not available: ${message}`);
   }
+}
+
+function unavailableNativeStatus(error: string) {
+  return {
+    packageName: "@oppiai/natives",
+    packageVersion: "unavailable",
+    platform: process.platform,
+    arch: process.arch,
+    native: {
+      available: false,
+      candidatePaths: [],
+      error,
+    },
+    fallbacks: {
+      search: "js-benchmark-only",
+      pty: "deferred",
+      clipboard: "deferred",
+      sandbox: "deferred",
+    },
+    recommendations: [
+      "Optional @oppiai/natives package is not installed for this platform; JS fallbacks remain in use.",
+      "Run `oppi natives benchmark --json` only after installing a platform-compatible native package.",
+    ],
+  };
 }
 
 export function resolveOppiServerBin(env: Env = process.env, cwd = process.cwd()): string | undefined {
@@ -3682,8 +3709,30 @@ async function runServerCommand(command: Extract<OppiCommand, { type: "server" }
 }
 
 async function runNativesCommand(command: Extract<OppiCommand, { type: "natives" }>): Promise<number> {
+  let natives: any;
   try {
-    const natives = await importNativesModule();
+    natives = await importNativesModule();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (command.subcommand === "status") {
+      const status = unavailableNativeStatus(message);
+      if (command.json) console.log(JSON.stringify(status, null, 2));
+      else {
+        console.log("OPPi natives");
+        console.log(`package: ${status.packageName}@${status.packageVersion}`);
+        console.log(`platform: ${status.platform}/${status.arch}`);
+        console.log(`native module: not loaded`);
+        console.log(`fallback reason: ${status.native.error}`);
+        for (const recommendation of status.recommendations) console.log(`- ${recommendation}`);
+      }
+      return 0;
+    }
+    if (command.json) console.log(JSON.stringify({ ok: false, error: message }, null, 2));
+    else console.error(`OPPi natives ${command.subcommand} failed: ${message}`);
+    return 1;
+  }
+
+  try {
     if (command.subcommand === "benchmark") {
       const result = await natives.benchmarkSearch?.({ root: process.cwd() });
       if (!result) throw new Error("Installed @oppiai/natives does not expose benchmarkSearch().");
