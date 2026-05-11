@@ -2504,10 +2504,21 @@ function main() {
   };
 
   const json = process.argv.includes("--json");
+  const jsonOutputPath = argValue("--json-output");
   const summary = process.argv.includes("--summary");
   const approval = process.argv.includes("--approval");
   if (json) {
-    console.log(JSON.stringify(payload, null, 2));
+    const rendered = JSON.stringify(payload, null, 2);
+    if (jsonOutputPath) {
+      const resolvedJsonOutputPath = resolve(jsonOutputPath);
+      writeFileSync(resolvedJsonOutputPath, `${rendered}\n`, "utf8");
+      console.log(JSON.stringify({
+        ok,
+        jsonOutputPath: resolvedJsonOutputPath,
+      }, null, 2));
+    } else {
+      console.log(rendered);
+    }
   } else if (summary) {
     process.stdout.write(formatAuditSummary(payload));
   } else if (approval) {

@@ -3358,7 +3358,10 @@ async function runNativeShellDogfood(command: Extract<OppiCommand, { type: "tui"
     if (finished) return 1;
     finished = true;
     clearTimeout(timeout);
-    const backgroundLifecycleOk = Boolean(backgroundTaskId) && backgroundListed && backgroundRead && backgroundKilled;
+    const backgroundLifecycleOk = Boolean(backgroundTaskId)
+      && backgroundListed
+      && backgroundKilled
+      && (backgroundRead || !strictBackgroundLifecycle);
     const scenarios: NativeShellDogfoodScenario[] = [
       {
         name: "repo-edit-approval",
@@ -3480,8 +3483,13 @@ async function runNativeShellDogfood(command: Extract<OppiCommand, { type: "tui"
       const items = Array.isArray(value.background.items) ? value.background.items : [];
       backgroundListed = items.some((item: any) => item?.id === backgroundTaskId);
       if (backgroundListed && !backgroundReadSent) {
-        backgroundReadSent = true;
-        send(`/background read ${backgroundTaskId} 30000`);
+        if (strictBackgroundLifecycle) {
+          backgroundReadSent = true;
+          send(`/background read ${backgroundTaskId} 30000`);
+        } else if (!backgroundKillSent) {
+          backgroundKillSent = true;
+          send(`/background kill ${backgroundTaskId}`);
+        }
       }
       return;
     }

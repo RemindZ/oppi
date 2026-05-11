@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { spawnSync as nodeSpawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtempSync, mkdirSync, readFileSync as fsReadFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync as fsReadFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
@@ -24,10 +24,25 @@ process.env.OPPI_PLAN50_TEST_SANDBOX_READY = process.env.OPPI_PLAN50_TEST_SANDBO
 process.env.OPPI_OPENAI_API_KEY = process.env.OPPI_OPENAI_API_KEY || "plan50-test-provider-key";
 
 function spawnSync(command, args, options = {}) {
-  return nodeSpawnSync(command, args, {
+  const useJsonOutputFile = command === process.execPath
+    && Array.isArray(args)
+    && args[0] === "scripts/plan50-audit.mjs"
+    && args.includes("--json")
+    && !args.includes("--json-output");
+  const auditJsonOutputPath = useJsonOutputFile
+    ? join(mkdtempSync(join(tmpdir(), "oppi-plan50-audit-json-")), "payload.json")
+    : undefined;
+  const result = nodeSpawnSync(command, auditJsonOutputPath ? [...args, "--json-output", auditJsonOutputPath] : args, {
     maxBuffer: 16 * 1024 * 1024,
     ...options,
   });
+  if (auditJsonOutputPath && existsSync(auditJsonOutputPath)) {
+    return {
+      ...result,
+      stdout: fsReadFileSync(auditJsonOutputPath, "utf8"),
+    };
+  }
+  return result;
 }
 
 function readFileSync(path, options) {
@@ -3888,7 +3903,11 @@ test("plan50 audit summary prints concise closeout routes", () => {
   );
   assert.match(result.stdout, /github-ci-evidence-run \[approval required, requires network, requires GitHub auth, requires commit\/push, mutates remote, unavailable here\]: gh workflow run native-shell\.yml --ref /);
   assert.match(result.stdout, /verify-downloaded-ci-evidence \[unavailable here, requires input\]: node scripts\/plan50-evidence-verify\.mjs <downloaded-plan50-evidence-root> --json/);
-  assert.match(result.stdout, /unix-terminal-restore-evidence \[unavailable here, requires WSL\/Unix or CI\]: node scripts\/plan50-capture-local-terminal\.mjs --output-dir/);
+  if (process.platform === "win32") {
+    assert.match(result.stdout, /unix-terminal-restore-evidence \[unavailable here, requires WSL\/Unix or CI\]: node scripts\/plan50-capture-local-terminal\.mjs --output-dir/);
+  } else {
+    assert.match(result.stdout, /unix-terminal-restore-evidence: node scripts\/plan50-capture-local-terminal\.mjs --output-dir/);
+  }
   assert.match(result.stdout, /local-background-lifecycle-evidence \[unavailable here, requires sandbox setup\]: node scripts\/plan50-capture-local-background\.mjs --output .*tui-dogfood-strict-(Windows|Linux|macOS)\.json/);
   assert.doesNotMatch(result.stdout, /local-background-lifecycle-evidence \[unavailable here, requires sandbox setup\]: node packages\/cli\/dist\/main\.js tui dogfood --mock --json --require-background-lifecycle/);
   if (process.platform === "win32") {
