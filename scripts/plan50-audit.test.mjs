@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawnSync as nodeSpawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync as fsReadFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
@@ -21,6 +21,22 @@ writeFileSync(defaultTestPlanPath, [
 ].join("\n"), "utf8");
 process.env.OPPI_PLAN50_PLAN_PATH = process.env.OPPI_PLAN50_PLAN_PATH || defaultTestPlanPath;
 process.env.OPPI_PLAN50_TEST_SANDBOX_READY = process.env.OPPI_PLAN50_TEST_SANDBOX_READY || "0";
+process.env.OPPI_OPENAI_API_KEY = process.env.OPPI_OPENAI_API_KEY || "plan50-test-provider-key";
+
+function spawnSync(command, args, options = {}) {
+  return nodeSpawnSync(command, args, {
+    maxBuffer: 16 * 1024 * 1024,
+    ...options,
+  });
+}
+
+function readFileSync(path, options) {
+  const content = fsReadFileSync(path, options);
+  if (typeof content === "string" && resolve(path) === realWorkflowPath) {
+    return content.replace(/\r\n/g, "\n");
+  }
+  return content;
+}
 
 function tempEvidenceRoot() {
   return mkdtempSync(join(tmpdir(), "oppi-plan50-audit-evidence-"));
@@ -280,16 +296,17 @@ test("plan50 audit separates implemented Windows background adapter from host se
   assert.ok(actionDownloadIndex >= 0, JSON.stringify(ciAction, null, 2));
   assert.ok(actionVerifyIndex > actionDownloadIndex, JSON.stringify(ciAction, null, 2));
   assert.ok(actionApplyIndex > actionVerifyIndex, JSON.stringify(ciAction, null, 2));
+  assert.equal(
+    localRoute.steps.includes("node packages/cli/dist/main.js sandbox setup-windows --yes --json"),
+    process.platform === "win32",
+    JSON.stringify(localRoute, null, 2),
+  );
   assert.ok(
-    payload.closeoutChecklist.routes.some((route) =>
-        route.id === "local-windows-sandbox"
-        && route.requiresExplicitUserApproval === true
-        && route.steps.includes("node packages/cli/dist/main.js sandbox setup-windows --yes --json")
-        && route.steps.some((step) =>
-          step.includes("node scripts/plan50-capture-local-terminal.mjs --output-dir")
-            && step.includes("plan50-terminal-evidence"))
-        && route.blockedBy.includes("Unix terminal restore evidence is not captured on this host.")
-    ),
+    localRoute.requiresExplicitUserApproval === true
+      && localRoute.steps.some((step) =>
+        step.includes("node scripts/plan50-capture-local-terminal.mjs --output-dir")
+          && step.includes("plan50-terminal-evidence"))
+      && localRoute.blockedBy.includes("Unix terminal restore evidence is not captured on this host."),
     JSON.stringify(payload.closeoutChecklist, null, 2),
   );
   const evidenceArtifactCheck = payload.checks.find((check) => check.id === "multi-os-ci-evidence-artifacts-defined");
@@ -305,17 +322,20 @@ test("plan50 audit separates implemented Windows background adapter from host se
   assert.match(workflowDispatchCheck.evidence, /gh workflow run/i);
   const multiOsDogfoodCheck = payload.checks.find((check) => check.id === "multi-os-ci-dogfood-defined");
   assert.equal(multiOsDogfoodCheck?.ok, true);
-  assert.ok(
-    payload.nextActions.some((action) =>
-      action.id === "windows-sandbox-setup-dry-run"
-        && action.command === "node packages/cli/dist/main.js sandbox setup-windows --dry-run --json"
-        && action.dryRun === true
-        && action.hostMutation === false
-        && action.requiresExplicitUserApproval === false
-        && action.verifyAfter?.includes("node packages/cli/dist/main.js sandbox status --json")
-    ),
-    JSON.stringify(payload.nextActions, null, 2),
-  );
+  const windowsSandboxSetupDryRunAction = payload.nextActions.find((action) => action.id === "windows-sandbox-setup-dry-run");
+  if (process.platform === "win32") {
+    assert.ok(
+      windowsSandboxSetupDryRunAction
+        && windowsSandboxSetupDryRunAction.command === "node packages/cli/dist/main.js sandbox setup-windows --dry-run --json"
+        && windowsSandboxSetupDryRunAction.dryRun === true
+        && windowsSandboxSetupDryRunAction.hostMutation === false
+        && windowsSandboxSetupDryRunAction.requiresExplicitUserApproval === false
+        && windowsSandboxSetupDryRunAction.verifyAfter?.includes("node packages/cli/dist/main.js sandbox status --json"),
+      JSON.stringify(payload.nextActions, null, 2),
+    );
+  } else {
+    assert.equal(windowsSandboxSetupDryRunAction, undefined, JSON.stringify(payload.nextActions, null, 2));
+  }
   assert.ok(
     payload.nextActions.some((action) =>
       action.id === "verify-downloaded-ci-evidence"
@@ -540,20 +560,23 @@ test("plan50 audit separates implemented Windows background adapter from host se
   assert.ok(payload.ciEvidenceInputs?.curatedPaths.includes("scripts/plan50-capture-local-terminal.mjs"));
   assert.ok(payload.ciEvidenceInputs?.curatedPaths.includes("scripts/plan50-test.mjs"));
   assert.ok(payload.ciEvidenceInputs?.curatedPaths.includes("scripts/plan50-evidence-verify.mjs"));
-  assert.ok(
-    payload.nextActions.some((action) =>
-      action.id === "windows-sandbox-setup-explicit-approval"
-        && action.routeId === "local-windows-sandbox"
-        && action.completionScope === "partial-on-this-host"
-        && action.requiresAdditionalEvidence?.includes("Unix terminal restore evidence from WSL/Unix or CI.")
-        && action.command === "node packages/cli/dist/main.js sandbox setup-windows --yes --json"
-        && action.requiresExplicitUserApproval === true
-        && action.requiresElevation === true
-        && action.hostMutation === true
-        && action.approvalPhrase === "approve Windows sandbox setup for Plan 50"
-    ),
-    JSON.stringify(payload.nextActions, null, 2),
-  );
+  const windowsSandboxSetupApprovalAction = payload.nextActions.find((action) => action.id === "windows-sandbox-setup-explicit-approval");
+  if (process.platform === "win32") {
+    assert.ok(
+      windowsSandboxSetupApprovalAction
+        && windowsSandboxSetupApprovalAction.routeId === "local-windows-sandbox"
+        && windowsSandboxSetupApprovalAction.completionScope === "partial-on-this-host"
+        && windowsSandboxSetupApprovalAction.requiresAdditionalEvidence?.includes("Unix terminal restore evidence from WSL/Unix or CI.")
+        && windowsSandboxSetupApprovalAction.command === "node packages/cli/dist/main.js sandbox setup-windows --yes --json"
+        && windowsSandboxSetupApprovalAction.requiresExplicitUserApproval === true
+        && windowsSandboxSetupApprovalAction.requiresElevation === true
+        && windowsSandboxSetupApprovalAction.hostMutation === true
+        && windowsSandboxSetupApprovalAction.approvalPhrase === "approve Windows sandbox setup for Plan 50",
+      JSON.stringify(payload.nextActions, null, 2),
+    );
+  } else {
+    assert.equal(windowsSandboxSetupApprovalAction, undefined, JSON.stringify(payload.nextActions, null, 2));
+  }
   assert.ok(
     payload.nextActions.some((action) =>
       action.id === "unix-terminal-restore-evidence"
@@ -3840,8 +3863,13 @@ test("plan50 audit summary prints concise closeout routes", () => {
   assert.match(result.stdout, /GitHub CLI auth is not valid/);
   assert.match(result.stdout, /Local non-approval closeout: unavailable/);
   assert.match(result.stdout, /blocked: Local sandbox adapter is not configured; run the approved sandbox setup route or use CI\./);
-  assert.match(result.stdout, /windows-sandbox-setup-dry-run \[dry run, no host mutation\]: node packages\/cli\/dist\/main\.js sandbox setup-windows --dry-run --json/);
-  assert.match(result.stdout, /windows-sandbox-setup-explicit-approval \[approval required, requires elevation, mutates host\]: node packages\/cli\/dist\/main\.js sandbox setup-windows --yes --json/);
+  if (process.platform === "win32") {
+    assert.match(result.stdout, /windows-sandbox-setup-dry-run \[dry run, no host mutation\]: node packages\/cli\/dist\/main\.js sandbox setup-windows --dry-run --json/);
+    assert.match(result.stdout, /windows-sandbox-setup-explicit-approval \[approval required, requires elevation, mutates host\]: node packages\/cli\/dist\/main\.js sandbox setup-windows --yes --json/);
+  } else {
+    assert.doesNotMatch(result.stdout, /windows-sandbox-setup-dry-run/);
+    assert.doesNotMatch(result.stdout, /windows-sandbox-setup-explicit-approval/);
+  }
   assert.match(result.stdout, /publish-ci-evidence-inputs \[review only, no remote mutation\]: git status --short/);
   assert.match(result.stdout, /publish-ci-evidence-inputs[\s\S]*review doc: \.oppi-plans\/50-ci-evidence-publish-set-review\.md/);
   assert.match(result.stdout, /publish-ci-evidence-inputs[\s\S]*warning: dirty sensitive paths outside curated Plan 50 publish set: \.github\/workflows\/sandbox\.yml/);
@@ -3863,7 +3891,9 @@ test("plan50 audit summary prints concise closeout routes", () => {
   assert.match(result.stdout, /unix-terminal-restore-evidence \[unavailable here, requires WSL\/Unix or CI\]: node scripts\/plan50-capture-local-terminal\.mjs --output-dir/);
   assert.match(result.stdout, /local-background-lifecycle-evidence \[unavailable here, requires sandbox setup\]: node scripts\/plan50-capture-local-background\.mjs --output .*tui-dogfood-strict-(Windows|Linux|macOS)\.json/);
   assert.doesNotMatch(result.stdout, /local-background-lifecycle-evidence \[unavailable here, requires sandbox setup\]: node packages\/cli\/dist\/main\.js tui dogfood --mock --json --require-background-lifecycle/);
-  assert.match(result.stdout, /windows-sandbox-setup-dry-run[\s\S]*\n  verify: node packages\/cli\/dist\/main\.js sandbox status --json/);
+  if (process.platform === "win32") {
+    assert.match(result.stdout, /windows-sandbox-setup-dry-run[\s\S]*\n  verify: node packages\/cli\/dist\/main\.js sandbox status --json/);
+  }
   assert.doesNotMatch(result.stdout, /^\{/);
 });
 

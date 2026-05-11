@@ -1508,6 +1508,9 @@ function nextActions(checks, githubCli, inputStatus = ciEvidenceInputStatus(), c
   const sandboxAdapterLocal = checks.find((check) => check.id === "sandbox-adapter-local-ready");
   const sandboxLocal = checks.find((check) => check.id === "sandboxed-background-local");
   const unixTerminal = checks.find((check) => check.id === "terminal-restore-unix-local");
+  const needsUnixTerminalEvidence = unixTerminal && !unixTerminal.ok;
+  const needsSandboxEvidence = sandboxLocal && !sandboxLocal.ok;
+  const needsCiEvidenceRoute = needsUnixTerminalEvidence || needsSandboxEvidence;
   const unixRunnerAvailable = unixEvidenceRunnerAvailable();
   const localSandboxAvailable = sandboxReady();
   const localRouteNeedsUnixEvidence = context.localRouteNeedsUnixEvidence ?? (unixTerminal && !unixTerminal.ok);
@@ -1550,8 +1553,7 @@ function nextActions(checks, githubCli, inputStatus = ciEvidenceInputStatus(), c
       ],
     });
   }
-  if (unixTerminal && !unixTerminal.ok) {
-    if (ciArtifacts?.ok) {
+  if (needsCiEvidenceRoute && ciArtifacts?.ok) {
       const ref = currentGitRef();
       const githubAuthAction = {
         id: "github-auth-preflight",
@@ -1731,7 +1733,8 @@ function nextActions(checks, githubCli, inputStatus = ciEvidenceInputStatus(), c
         requiresExplicitUserApproval: false,
         reason: "After a successful native-shell workflow run, download the plan50-native-shell-evidence-* artifacts and verify they prove strict Linux background lifecycle plus Windows/Unix terminal restore.",
       });
-    }
+  }
+  if (needsUnixTerminalEvidence) {
     actions.push({
       id: "unix-terminal-restore-evidence",
       routeId: LOCAL_WINDOWS_SANDBOX_ROUTE.id,
