@@ -14,6 +14,9 @@ on:
       - "packages/natives/**"
       - "packages/pi-package/skills/graphify/**"
       - "systemprompts/goals/**"
+      - "systemprompts/main/oppi-feature-routing-system-append.md"
+      - "systemprompts/experiments/promptname_a/oppi-feature-routing-system-append.md"
+      - "systemprompts/experiments/promptname_b/oppi-feature-routing-system-append.md"
       - "scripts/plan50-*.mjs"
       - ".github/workflows/native-shell.yml"
   pull_request:
@@ -29,6 +32,9 @@ on:
       - "packages/natives/**"
       - "packages/pi-package/skills/graphify/**"
       - "systemprompts/goals/**"
+      - "systemprompts/main/oppi-feature-routing-system-append.md"
+      - "systemprompts/experiments/promptname_a/oppi-feature-routing-system-append.md"
+      - "systemprompts/experiments/promptname_b/oppi-feature-routing-system-append.md"
       - "scripts/plan50-*.mjs"
       - ".github/workflows/native-shell.yml"
   workflow_dispatch:

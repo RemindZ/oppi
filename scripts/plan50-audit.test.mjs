@@ -167,6 +167,9 @@ test("plan50 audit separates implemented Windows background adapter from host se
         && route.curatedPublishSet.includes("packages/natives")
         && route.curatedPublishSet.includes("packages/pi-package/skills/graphify")
         && route.curatedPublishSet.includes("systemprompts/goals")
+        && route.curatedPublishSet.includes("systemprompts/main/oppi-feature-routing-system-append.md")
+        && route.curatedPublishSet.includes("systemprompts/experiments/promptname_a/oppi-feature-routing-system-append.md")
+        && route.curatedPublishSet.includes("systemprompts/experiments/promptname_b/oppi-feature-routing-system-append.md")
         && route.steps.includes("gh auth status")
     ),
     JSON.stringify(payload.closeoutChecklist, null, 2),
@@ -401,6 +404,9 @@ test("plan50 audit separates implemented Windows background adapter from host se
         && action.curatedPaths?.includes("packages/natives")
         && action.curatedPaths?.includes("packages/pi-package/skills/graphify")
         && action.curatedPaths?.includes("systemprompts/goals")
+        && action.curatedPaths?.includes("systemprompts/main/oppi-feature-routing-system-append.md")
+        && action.curatedPaths?.includes("systemprompts/experiments/promptname_a/oppi-feature-routing-system-append.md")
+        && action.curatedPaths?.includes("systemprompts/experiments/promptname_b/oppi-feature-routing-system-append.md")
         && action.curatedPaths?.includes(".gitignore")
         && action.curatedPaths?.includes("package.json")
         && action.curatedPaths?.includes("pnpm-lock.yaml")
@@ -526,6 +532,9 @@ test("plan50 audit separates implemented Windows background adapter from host se
   assert.ok(payload.ciEvidenceInputs?.curatedPaths.includes("packages/natives"));
   assert.ok(payload.ciEvidenceInputs?.curatedPaths.includes("packages/pi-package/skills/graphify"));
   assert.ok(payload.ciEvidenceInputs?.curatedPaths.includes("systemprompts/goals"));
+  assert.ok(payload.ciEvidenceInputs?.curatedPaths.includes("systemprompts/main/oppi-feature-routing-system-append.md"));
+  assert.ok(payload.ciEvidenceInputs?.curatedPaths.includes("systemprompts/experiments/promptname_a/oppi-feature-routing-system-append.md"));
+  assert.ok(payload.ciEvidenceInputs?.curatedPaths.includes("systemprompts/experiments/promptname_b/oppi-feature-routing-system-append.md"));
   assert.ok(payload.ciEvidenceInputs?.curatedPaths.includes("scripts/plan50-capture-local-background.mjs"));
   assert.ok(payload.ciEvidenceInputs?.curatedPaths.includes("scripts/plan50-capture-local-terminal.mjs"));
   assert.ok(payload.ciEvidenceInputs?.curatedPaths.includes("scripts/plan50-test.mjs"));
@@ -2742,9 +2751,12 @@ test("plan50 audit rejects missing embedded prompt asset path filters", () => {
   const workflow = readFileSync(realWorkflowPath, "utf8")
     .replaceAll('      - "packages/pi-package/skills/graphify/**"\n', "")
     .replaceAll('      - "systemprompts/goals/**"\n', "")
+    .replaceAll('      - "systemprompts/main/oppi-feature-routing-system-append.md"\n', "")
+    .replaceAll('      - "systemprompts/experiments/promptname_a/oppi-feature-routing-system-append.md"\n', "")
+    .replaceAll('      - "systemprompts/experiments/promptname_b/oppi-feature-routing-system-append.md"\n', "")
     .replace(
       "    timeout-minutes: 20",
-      "    timeout-minutes: 20\n    env:\n      PLAN50_UNUSED_PATH_FILTER: systemprompts/goals/**\n      PLAN50_UNUSED_GRAPHIFY_FILTER: packages/pi-package/skills/graphify/**",
+      "    timeout-minutes: 20\n    env:\n      PLAN50_UNUSED_PATH_FILTER: systemprompts/goals/**\n      PLAN50_UNUSED_GRAPHIFY_FILTER: packages/pi-package/skills/graphify/**\n      PLAN50_UNUSED_ROUTING_FILTER: systemprompts/main/oppi-feature-routing-system-append.md",
     );
   writeFileSync(workflowPath, workflow, "utf8");
 
@@ -2802,6 +2814,9 @@ test("plan50 audit rejects path filters outside the top-level on block", () => {
     '      - "packages/natives/**"',
     '      - "packages/pi-package/skills/graphify/**"',
     '      - "systemprompts/goals/**"',
+    '      - "systemprompts/main/oppi-feature-routing-system-append.md"',
+    '      - "systemprompts/experiments/promptname_a/oppi-feature-routing-system-append.md"',
+    '      - "systemprompts/experiments/promptname_b/oppi-feature-routing-system-append.md"',
     '      - "scripts/plan50-*.mjs"',
     '      - ".github/workflows/native-shell.yml"',
   ].join("\n");
@@ -2817,6 +2832,9 @@ test("plan50 audit rejects path filters outside the top-level on block", () => {
     '    - "packages/natives/**"',
     '    - "packages/pi-package/skills/graphify/**"',
     '    - "systemprompts/goals/**"',
+    '    - "systemprompts/main/oppi-feature-routing-system-append.md"',
+    '    - "systemprompts/experiments/promptname_a/oppi-feature-routing-system-append.md"',
+    '    - "systemprompts/experiments/promptname_b/oppi-feature-routing-system-append.md"',
     '    - "scripts/plan50-*.mjs"',
     '    - ".github/workflows/native-shell.yml"',
   ].join("\n");

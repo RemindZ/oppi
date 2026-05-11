@@ -34,6 +34,9 @@ const ciEvidenceInputPaths = [
   "packages/natives",
   "packages/pi-package/skills/graphify",
   "systemprompts/goals",
+  "systemprompts/main/oppi-feature-routing-system-append.md",
+  "systemprompts/experiments/promptname_a/oppi-feature-routing-system-append.md",
+  "systemprompts/experiments/promptname_b/oppi-feature-routing-system-append.md",
 ];
 const ciEvidenceSensitiveReviewPaths = [
   ".github/workflows",
@@ -619,6 +622,9 @@ const PLAN50_WORKFLOW_PATH_FILTERS = [
   "packages/natives/**",
   "packages/pi-package/skills/graphify/**",
   "systemprompts/goals/**",
+  "systemprompts/main/oppi-feature-routing-system-append.md",
+  "systemprompts/experiments/promptname_a/oppi-feature-routing-system-append.md",
+  "systemprompts/experiments/promptname_b/oppi-feature-routing-system-append.md",
   "scripts/plan50-*.mjs",
   ".github/workflows/native-shell.yml",
 ];
