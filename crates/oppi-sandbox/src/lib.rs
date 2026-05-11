@@ -2787,14 +2787,18 @@ mod tests {
         if std::env::consts::OS != "linux" || !command_exists("bwrap") {
             return;
         }
-        let mut request = request(".");
+        let root = std::env::current_dir()
+            .unwrap_or_else(|_| PathBuf::from("."))
+            .to_string_lossy()
+            .to_string();
+        let mut request = request(&root);
         request.command = "printf 'oppi-bwrap-host-ok\\n'".to_string();
         let result = execute_sandboxed(SandboxExecParams {
             policy: SandboxPolicy {
                 permission_profile: PermissionProfile {
                     mode: PermissionMode::FullAccess,
-                    readable_roots: vec![".".to_string()],
-                    writable_roots: vec![".".to_string()],
+                    readable_roots: vec![root.clone()],
+                    writable_roots: vec![root],
                     filesystem_rules: Vec::new(),
                     protected_patterns: Vec::new(),
                 },
