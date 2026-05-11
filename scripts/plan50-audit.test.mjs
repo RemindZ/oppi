@@ -10,6 +10,22 @@ import test from "node:test";
 const repoRoot = resolve(import.meta.dirname, "..");
 const realWorkflowPath = join(repoRoot, ".github", "workflows", "native-shell.yml");
 const realManifestWriterPath = join(repoRoot, "scripts", "plan50-write-evidence-manifest.mjs");
+const linuxSandboxDepsStep = [
+  "      - name: Install Linux sandbox dependencies",
+  "        if: runner.os == 'Linux'",
+  "        shell: bash",
+  "        run: |",
+  "          set -euo pipefail",
+  "          sudo apt-get update",
+  "          sudo apt-get install -y bubblewrap uidmap",
+  "          if [[ -e /proc/sys/kernel/unprivileged_userns_clone ]]; then",
+  "            sudo sysctl -w kernel.unprivileged_userns_clone=1",
+  "          fi",
+  "          if [[ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]]; then",
+  "            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0",
+  "          fi",
+  "",
+].join("\n");
 const defaultTestPlanDir = mkdtempSync(join(tmpdir(), "oppi-plan50-default-plan-"));
 const defaultTestPlanPath = join(defaultTestPlanDir, "50-standalone-oppi-finish-line.md");
 writeFileSync(defaultTestPlanPath, [
@@ -1891,13 +1907,10 @@ test("plan50 audit rejects Linux sandbox dependency setup drift", () => {
   const dir = mkdtempSync(join(tmpdir(), "oppi-plan50-workflow-"));
   const workflowPath = join(dir, "native-shell.yml");
   const workflow = readFileSync(realWorkflowPath, "utf8")
-    .replace(
-      "      - name: Install Linux sandbox dependencies\n        if: runner.os == 'Linux'\n        run: sudo apt-get update && sudo apt-get install -y bubblewrap\n",
-      "      - name: Install Linux sandbox dependencies\n        if: runner.os == 'Linux'\n        run: echo skipped\n",
-    )
+    .replace(linuxSandboxDepsStep, "      - name: Install Linux sandbox dependencies\n        if: runner.os == 'Linux'\n        shell: bash\n        run: echo skipped\n")
     .replace(
       "    timeout-minutes: 20",
-      "    timeout-minutes: 20\n    env:\n      PLAN50_UNUSED_LINUX_SANDBOX_DEPS: sudo apt-get update && sudo apt-get install -y bubblewrap",
+      "    timeout-minutes: 20\n    env:\n      PLAN50_UNUSED_LINUX_SANDBOX_DEPS: |\n        sudo apt-get update\n        sudo apt-get install -y bubblewrap uidmap\n        sudo sysctl -w kernel.unprivileged_userns_clone=1\n        sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0",
     );
   writeFileSync(workflowPath, workflow, "utf8");
 
@@ -1970,7 +1983,6 @@ test("plan50 audit rejects Rust toolchain setup after native build", () => {
 test("plan50 audit rejects Linux sandbox dependencies after host sandbox evidence", () => {
   const dir = mkdtempSync(join(tmpdir(), "oppi-plan50-workflow-"));
   const workflowPath = join(dir, "native-shell.yml");
-  const linuxSandboxDepsStep = "      - name: Install Linux sandbox dependencies\n        if: runner.os == 'Linux'\n        run: sudo apt-get update && sudo apt-get install -y bubblewrap\n";
   const workflow = readFileSync(realWorkflowPath, "utf8")
     .replace(linuxSandboxDepsStep, "")
     .replace(

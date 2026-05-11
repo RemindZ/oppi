@@ -1130,7 +1130,12 @@ function workflowDefinesNativeShellRustToolchainOrder(workflow) {
 function workflowDefinesLinuxSandboxDependencyInstall(workflow) {
   const stepName = "Install Linux sandbox dependencies";
   return workflowNativeShellStepScalarMatches(workflow, stepName, "if", /^runner\.os == 'Linux'$/)
-    && workflowNativeShellStepScalarMatches(workflow, stepName, "run", /^sudo apt-get update && sudo apt-get install -y bubblewrap$/);
+    && workflowNativeShellStepScalarMatches(workflow, stepName, "shell", /^bash$/)
+    && workflowNativeShellStepRunBodyIncludes(workflow, stepName, /^[ \t]*set -euo pipefail\s*$/)
+    && workflowNativeShellStepRunBodyIncludes(workflow, stepName, /^[ \t]*sudo apt-get update\s*$/)
+    && workflowNativeShellStepRunBodyIncludes(workflow, stepName, /^[ \t]*sudo apt-get install -y bubblewrap uidmap\s*$/)
+    && workflowNativeShellStepRunBodyIncludes(workflow, stepName, /kernel\.unprivileged_userns_clone=1/)
+    && workflowNativeShellStepRunBodyIncludes(workflow, stepName, /kernel\.apparmor_restrict_unprivileged_userns=0/);
 }
 
 function workflowDefinesLinuxSandboxDependencyOrder(workflow) {

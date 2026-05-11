@@ -2791,7 +2791,7 @@ mod tests {
             return;
         }
         let mut request = request(".");
-        request.command = "true".to_string();
+        request.command = "printf 'oppi-bwrap-host-ok\\n'".to_string();
         let result = execute_sandboxed(SandboxExecParams {
             policy: SandboxPolicy {
                 permission_profile: PermissionProfile {
@@ -2816,6 +2816,9 @@ mod tests {
             result.plan.unwrap().sandbox_type,
             SandboxType::LinuxBubblewrap
         );
+        assert_eq!(result.exit_code, Some(0), "stderr: {}", result.stderr);
+        assert!(!result.timed_out);
+        assert!(result.stdout.contains("oppi-bwrap-host-ok"));
     }
 
     #[cfg(windows)]
