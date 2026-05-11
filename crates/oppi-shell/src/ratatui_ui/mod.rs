@@ -2915,7 +2915,8 @@ mod tests {
         let fixture = include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/tests/fixtures/ratatui/r1-r2-r3.contract.snap"
-        ));
+        ))
+        .replace("\r\n", "\n");
         let marker = format!("-- {section} --");
         let start = fixture
             .find(&marker)
@@ -2923,7 +2924,7 @@ mod tests {
             + marker.len();
         let rest = &fixture[start..];
         let end = rest.find("\n-- ").unwrap_or(rest.len());
-        rest[..end].trim_matches('\n').to_string()
+        rest[..end].trim_matches(['\r', '\n']).to_string()
     }
 
     fn design_frame_section(kind: model::DesignFrameKind) -> &'static str {

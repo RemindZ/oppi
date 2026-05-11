@@ -2971,15 +2971,21 @@ async function runSandboxCommand(command: Extract<OppiCommand, { type: "sandbox"
   }
 
   if (process.platform !== "win32") {
+    const plan = command.dryRun
+      ? windowsSandboxSetupPlan(envAccount, command.persistEnv)
+      : { diagnostics: ["Windows sandbox account setup is only needed on Windows."] };
     const result: WindowsSandboxSetupResult = {
       ok: command.dryRun,
       platform: process.platform,
       account: envAccount,
       action: "planned",
       dryRun: command.dryRun,
+      persistedEnv: false,
+      restartRequired: false,
+      ...plan,
       diagnostics: command.dryRun
-        ? ["Windows sandbox account setup is only needed on Windows. No changes were made."]
-        : ["Windows sandbox account setup is only needed on Windows."],
+        ? ["Windows sandbox account setup is only needed on Windows. No changes were made.", ...plan.diagnostics]
+        : plan.diagnostics,
     };
     if (command.json) console.log(JSON.stringify(result, null, 2));
     else console.error(result.diagnostics[0]);

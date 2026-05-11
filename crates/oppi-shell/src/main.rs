@@ -11507,19 +11507,26 @@ You are a careful repo helper.
             .join("tests")
             .join("snapshots")
             .join(name);
-        let actual = if actual.ends_with('\n') {
+        let actual_with_newline = if actual.ends_with('\n') {
             actual.to_string()
         } else {
             format!("{actual}\n")
         };
+        let actual = normalize_snapshot_newlines(&actual_with_newline);
         if env::var("OPPI_UPDATE_SNAPSHOTS").ok().as_deref() == Some("1") {
             fs::create_dir_all(path.parent().unwrap()).unwrap();
             fs::write(&path, actual).unwrap();
             return;
         }
-        let expected = fs::read_to_string(&path)
-            .unwrap_or_else(|error| panic!("read snapshot {}: {error}", path.display()));
+        let expected = normalize_snapshot_newlines(
+            &fs::read_to_string(&path)
+                .unwrap_or_else(|error| panic!("read snapshot {}: {error}", path.display())),
+        );
         assert_eq!(actual, expected, "snapshot {} changed", path.display());
+    }
+
+    fn normalize_snapshot_newlines(value: &str) -> String {
+        value.replace("\r\n", "\n").replace('\r', "\n")
     }
 
     fn theme_palette_snapshot() -> String {
