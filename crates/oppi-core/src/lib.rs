@@ -4949,6 +4949,19 @@ fn default_shell_policy(cwd: &str) -> SandboxPolicy {
     })
 }
 
+fn shell_sandbox_preference_from_call(
+    call: &ToolCall,
+    fallback: SandboxPreference,
+) -> SandboxPreference {
+    call.arguments
+        .get("sandboxPreference")
+        .or_else(|| call.arguments.get("sandbox_preference"))
+        .or_else(|| call.arguments.get("preference"))
+        .cloned()
+        .and_then(|value| serde_json::from_value::<SandboxPreference>(value).ok())
+        .unwrap_or(fallback)
+}
+
 fn policy_with_cwd_defaults(mut policy: SandboxPolicy, cwd: &str) -> SandboxPolicy {
     if policy.permission_profile.readable_roots.is_empty() {
         policy
@@ -9132,6 +9145,7 @@ impl Runtime {
         policy: SandboxPolicy,
         request: SandboxExecRequest,
         cwd: String,
+        preference: SandboxPreference,
     ) -> ToolResult {
         if let Some(reason) = protected_path_preflight_denial(&policy, &request) {
             return ToolResult {
@@ -9181,7 +9195,7 @@ impl Runtime {
         let spawn = spawn_sandboxed_background(SandboxBackgroundSpawnParams {
             policy: policy.clone(),
             request: request.clone(),
-            preference: SandboxPreference::Require,
+            preference,
             approval_granted: true,
             stdout,
             stderr,
@@ -9295,6 +9309,14 @@ impl Runtime {
             .or_else(|| call.arguments.get("run_in_background"))
             .and_then(serde_json::Value::as_bool)
             .unwrap_or(false);
+        let sandbox_preference = shell_sandbox_preference_from_call(
+            call,
+            if run_in_background {
+                SandboxPreference::Require
+            } else {
+                SandboxPreference::Auto
+            },
+        );
         if let Some(reason) = protected_path_preflight_denial(&policy, &request) {
             return ToolResult {
                 call_id: call.id.clone(),
@@ -9304,12 +9326,18 @@ impl Runtime {
             };
         }
         if run_in_background {
-            return self.start_background_shell_task(call, policy, request, cwd);
+            return self.start_background_shell_task(
+                call,
+                policy,
+                request,
+                cwd,
+                sandbox_preference,
+            );
         }
         let result = execute_sandboxed(SandboxExecParams {
             policy,
             request,
-            preference: SandboxPreference::Auto,
+            preference: sandbox_preference,
             approval_granted: call
                 .arguments
                 .get("approvalGranted")
@@ -11752,6 +11780,11 @@ mod tests {
             filesystem_rules: Vec::new(),
             protected_patterns: Vec::new(),
         });
+        let background_command = if cfg!(windows) {
+            "echo shell-task-parity & ping -n 10 127.0.0.1 > nul"
+        } else {
+            "printf 'shell-task-parity\\n'; sleep 10"
+        };
         let started = runtime
             .run_agentic_turn(AgenticTurnParams {
                 thread_id: thread.id.clone(),
@@ -11766,9 +11799,10 @@ mod tests {
                         name: "shell_exec".to_string(),
                         namespace: Some("oppi".to_string()),
                         arguments: json!({
-                            "command": "echo shell-task-parity",
+                            "command": background_command,
                             "runInBackground": true,
-                            "cwd": root.display().to_string()
+                            "cwd": root.display().to_string(),
+                            "sandboxPreference": "forbid"
                         }),
                     }],
                     tool_results: Vec::new(),
@@ -13330,6 +13364,7 @@ mod tests {
                             "command": "echo plan21-shell",
                             "cwd": cwd,
                             "policy": policy,
+                            "sandboxPreference": "forbid",
                             "approvalGranted": true,
                             "maxOutputBytes": 4096,
                             "timeoutMs": 5000,

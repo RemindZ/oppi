@@ -1434,9 +1434,15 @@ impl Drop for ProcessContainmentGuard {
 fn kill_process_tree(child: &mut std::process::Child) {
     let pid = child.id().to_string();
     if cfg!(windows) {
-        let _ = Command::new("taskkill")
+        let taskkill = Command::new("taskkill")
             .args(["/PID", &pid, "/T", "/F"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
             .status();
+        if !matches!(taskkill, Ok(status) if status.success()) {
+            let _ = child.kill();
+        }
     } else {
         let _ = Command::new("pkill").args(["-TERM", "-P", &pid]).status();
         let _ = child.kill();
