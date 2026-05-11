@@ -128,12 +128,14 @@ console.log(JSON.stringify({ fakeShell: true, args: argv, server: argv[serverInd
   return bin;
 }
 
-function createFakeDogfoodShell(root: string, options: { requireAgentDir?: string; requireRuntimeStoreDirPrefix?: string; backgroundSandboxDenied?: boolean } = {}): string {
+function createFakeDogfoodShell(root: string, options: { requireAgentDir?: string; requireRuntimeStoreDirPrefix?: string; backgroundSandboxDenied?: boolean; backgroundReadNeverMatches?: boolean; backgroundReadMarkerAfterAttempts?: number } = {}): string {
   const script = join(root, "fake-oppi-dogfood-shell.mjs");
   writeFileSync(script, `import { createInterface } from 'node:readline';
 const requiredAgentDir = ${JSON.stringify(options.requireAgentDir ?? "")};
 const requiredRuntimeStoreDirPrefix = ${JSON.stringify(options.requireRuntimeStoreDirPrefix ?? "")};
 const backgroundSandboxDenied = ${JSON.stringify(options.backgroundSandboxDenied ?? false)};
+const backgroundReadNeverMatches = ${JSON.stringify(options.backgroundReadNeverMatches ?? false)};
+const backgroundReadMarkerAfterAttempts = ${JSON.stringify(options.backgroundReadMarkerAfterAttempts ?? 1)};
 if (requiredAgentDir && process.env.OPPI_AGENT_DIR !== requiredAgentDir) {
   console.error('expected OPPI_AGENT_DIR=' + requiredAgentDir + ', got ' + (process.env.OPPI_AGENT_DIR || ''));
   process.exit(17);
@@ -145,6 +147,7 @@ if (requiredRuntimeStoreDirPrefix && !(process.env.OPPI_RUNTIME_STORE_DIR || '')
 const rl = createInterface({ input: process.stdin });
 const taskId = 'task-dogfood-fake';
 let phase = 'permissions';
+let backgroundReadAttempts = 0;
 function emit(value) { console.log(JSON.stringify(value)); }
 function event(type, extra = {}) { emit({ kind: { type, ...extra } }); }
 rl.on('line', (line) => {
@@ -159,7 +162,14 @@ rl.on('line', (line) => {
   if (line === '/approve' && phase === 'background' && backgroundSandboxDenied) { event('toolCallCompleted', { result: { status: 'denied', error: 'sandboxed background execution is unavailable on this host' } }); event('turnCompleted'); phase = 'readonly-setup'; return; }
   if (line === '/approve' && phase === 'background') { event('toolCallCompleted', { result: { output: 'background shell task started: ' + taskId } }); event('turnCompleted'); return; }
   if (line === '/background list') { emit({ background: { items: [{ id: taskId, status: 'running', cwd: '.' }] } }); return; }
-  if (line.startsWith('/background read ')) { emit({ backgroundRead: { task: { id: taskId, status: 'running' }, output: 'oppi-background-dogfood' } }); return; }
+  if (line.startsWith('/background read ')) {
+    backgroundReadAttempts += 1;
+    const output = backgroundReadNeverMatches || backgroundReadAttempts < backgroundReadMarkerAfterAttempts
+      ? 'background output pending'
+      : 'oppi-background-dogfood';
+    emit({ backgroundRead: { task: { id: taskId, status: 'running' }, output } });
+    return;
+  }
   if (line === '/background kill ' + taskId) { emit({ backgroundKill: { task: { id: taskId, status: 'killed' } } }); phase = 'readonly-setup'; return; }
   if (line === '/permissions read-only') { emit({ permissions: { mode: 'read-only' } }); phase = 'readonly'; return; }
   if (line === 'oppi-dogfood-readonly-write') { event('approvalRequested'); return; }
@@ -648,6 +658,47 @@ test("CLI smoke: tui dogfood strict background lifecycle rejects sandbox degrada
   assert.equal(backgroundScenario.status, "sandbox-unavailable-denied");
   assert.match(parsed.diagnostics.join("\n"), /strict background lifecycle/i);
   assert.match(backgroundScenario.diagnostics.join("\n"), /sandboxed background execution is unavailable on this host/);
+});
+
+test("CLI smoke: tui dogfood strict background lifecycle retries delayed output", () => {
+  const root = tempDir("tui-dogfood-strict-background-delayed-read");
+  const fakeServer = createFakeRuntimeServer(root);
+  const fakeShell = createFakeDogfoodShell(root, { backgroundReadMarkerAfterAttempts: 3 });
+
+  const result = spawnSync(process.execPath, [resolve("dist", "main.js"), "tui", "dogfood", "--mock", "--json", "--require-background-lifecycle"], {
+    encoding: "utf8",
+    timeout: 10_000,
+    env: { ...process.env, OPPI_SERVER_BIN: fakeServer, OPPI_SHELL_BIN: fakeShell, OPPI_SERVER_AUTH_TOKEN: "super-secret-tui-dogfood-delayed-read-token", OPPI_AGENT_DIR: join(root, "agent") },
+  });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.equal(result.stdout.includes("super-secret-tui-dogfood-delayed-read-token"), false);
+  const parsed = JSON.parse(result.stdout);
+  const backgroundScenario = parsed.scenarios.find((scenario: any) => scenario.name === "background-sandbox-execution");
+  assert.equal(parsed.ok, true);
+  assert.equal(backgroundScenario.ok, true);
+  assert.equal(backgroundScenario.status, "started, list=true, read=true, kill=true");
+});
+
+test("CLI smoke: tui dogfood strict background lifecycle fails fast when output marker is missing", () => {
+  const root = tempDir("tui-dogfood-strict-background-missing-marker");
+  const fakeServer = createFakeRuntimeServer(root);
+  const fakeShell = createFakeDogfoodShell(root, { backgroundReadNeverMatches: true });
+
+  const result = spawnSync(process.execPath, [resolve("dist", "main.js"), "tui", "dogfood", "--mock", "--json", "--require-background-lifecycle"], {
+    encoding: "utf8",
+    timeout: 10_000,
+    env: { ...process.env, OPPI_SERVER_BIN: fakeServer, OPPI_SHELL_BIN: fakeShell, OPPI_SERVER_AUTH_TOKEN: "super-secret-tui-dogfood-missing-marker-token", OPPI_AGENT_DIR: join(root, "agent") },
+  });
+  assert.equal(result.stdout.includes("super-secret-tui-dogfood-missing-marker-token"), false);
+  const parsed = JSON.parse(result.stdout);
+  const backgroundScenario = parsed.scenarios.find((scenario: any) => scenario.name === "background-sandbox-execution");
+  assert.equal(result.status, 1, result.stderr || result.stdout);
+  assert.equal(parsed.ok, false);
+  assert.equal(parsed.exitCode, 0);
+  assert.equal(backgroundScenario.ok, false);
+  assert.equal(backgroundScenario.status, "started, list=true, read=false, kill=true");
+  assert.equal(parsed.scenarios.find((scenario: any) => scenario.name === "failure-read-only-write")?.ok, true);
+  assert.doesNotMatch(parsed.diagnostics.join("\n"), /timeout/i);
 });
 
 test("CLI smoke: tui dogfood defaults agent dir to the current repository", () => {

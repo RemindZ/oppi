@@ -3349,6 +3349,9 @@ async function runNativeShellDogfood(command: Extract<OppiCommand, { type: "tui"
   let networkDenied = false;
   let missingImageFailedClosed = false;
   let finished = false;
+  const backgroundReadMaxAttempts = 30;
+  const backgroundReadRetryMs = 200;
+  const backgroundReadMaxBytes = 30_000;
 
   const send = (line: string) => {
     if (!child.stdin.destroyed && child.stdin.writable) child.stdin.write(`${line}\n`);
@@ -3444,10 +3447,20 @@ async function runNativeShellDogfood(command: Extract<OppiCommand, { type: "tui"
     return ok ? 0 : 1;
   };
 
-  const maybeRetryBackgroundRead = () => {
-    if (!backgroundTaskId || backgroundRead || backgroundReadAttempts >= 6) return;
+  const sendBackgroundRead = () => {
+    if (!backgroundTaskId || backgroundRead || backgroundKillSent) return;
     backgroundReadAttempts += 1;
-    setTimeout(() => send(`/background read ${backgroundTaskId} 30000`), 80);
+    send(`/background read ${backgroundTaskId} ${backgroundReadMaxBytes}`);
+  };
+
+  const maybeRetryBackgroundRead = () => {
+    if (!backgroundTaskId || backgroundRead || backgroundKillSent) return;
+    if (backgroundReadAttempts >= backgroundReadMaxAttempts) {
+      backgroundKillSent = true;
+      send(`/background kill ${backgroundTaskId}`);
+      return;
+    }
+    setTimeout(sendBackgroundRead, backgroundReadRetryMs);
   };
 
   const handleJsonLine = (value: any) => {
@@ -3485,7 +3498,7 @@ async function runNativeShellDogfood(command: Extract<OppiCommand, { type: "tui"
       if (backgroundListed && !backgroundReadSent) {
         if (strictBackgroundLifecycle) {
           backgroundReadSent = true;
-          send(`/background read ${backgroundTaskId} 30000`);
+          sendBackgroundRead();
         } else if (!backgroundKillSent) {
           backgroundKillSent = true;
           send(`/background kill ${backgroundTaskId}`);

@@ -5910,7 +5910,11 @@ fn mock_model_steps_after_answer() -> Value {
 }
 
 fn dogfood_background_command() -> String {
-    "node -e \"console.log('oppi-background-dogfood'); setTimeout(()=>{}, 30000)\"".to_string()
+    if cfg!(windows) {
+        "echo oppi-background-dogfood & ping -n 20 127.0.0.1 > nul".to_string()
+    } else {
+        "printf 'oppi-background-dogfood\\n'; sleep 20".to_string()
+    }
 }
 
 fn redact_debug_text(value: &str) -> String {
@@ -10664,6 +10668,19 @@ mod tests {
         assert!(parsed.list_sessions);
         assert!(!parsed.interactive);
         assert!(matches!(parsed.provider, ProviderConfig::Mock));
+    }
+
+    #[test]
+    fn dogfood_background_command_uses_portable_shell_marker() {
+        let command = dogfood_background_command();
+        assert!(command.contains("oppi-background-dogfood"));
+        assert!(!command.contains("node -e"));
+        if cfg!(windows) {
+            assert!(command.contains("ping -n"));
+        } else {
+            assert!(command.starts_with("printf "));
+            assert!(command.contains("; sleep "));
+        }
     }
 
     #[test]
