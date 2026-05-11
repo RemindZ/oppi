@@ -1549,11 +1549,7 @@ fn shell_command(command: &str) -> Result<Command, String> {
 }
 
 fn append_shell_args(command: &mut Command, script: &str) {
-    if cfg!(windows) {
-        command.args(["cmd", "/C", script]);
-    } else {
-        command.args(["sh", "-c", script]);
-    }
+    command.args(["/bin/sh", "-c", script]);
 }
 
 fn macos_seatbelt_profile(plan: &SandboxExecPlan) -> String {
@@ -2513,6 +2509,7 @@ mod tests {
                 .any(|window| window == ["--bind", "/repo", "/repo"])
         );
         assert!(args.iter().any(|arg| arg == "--unshare-net"));
+        assert!(args.windows(2).any(|window| window == ["/bin/sh", "-c"]));
     }
 
     #[test]
