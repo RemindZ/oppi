@@ -5913,7 +5913,7 @@ fn dogfood_background_command() -> String {
     if cfg!(windows) {
         "echo oppi-background-dogfood & ping -n 20 127.0.0.1 > nul".to_string()
     } else {
-        "printf 'oppi-background-dogfood\\n'; sleep 20".to_string()
+        "/bin/echo oppi-background-dogfood; sleep 20".to_string()
     }
 }
 
@@ -10678,7 +10678,7 @@ mod tests {
         if cfg!(windows) {
             assert!(command.contains("ping -n"));
         } else {
-            assert!(command.starts_with("printf "));
+            assert!(command.starts_with("/bin/echo "));
             assert!(command.contains("; sleep "));
         }
     }

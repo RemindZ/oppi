@@ -3341,6 +3341,8 @@ async function runNativeShellDogfood(command: Extract<OppiCommand, { type: "tui"
   let backgroundSandboxDenied = false;
   let backgroundSandboxDeniedError: string | undefined;
   let backgroundReadAttempts = 0;
+  let backgroundReadLastStatus: string | undefined;
+  let backgroundReadLastOutput = "";
   let backgroundListSent = false;
   let backgroundReadSent = false;
   let backgroundKillSent = false;
@@ -3365,6 +3367,18 @@ async function runNativeShellDogfood(command: Extract<OppiCommand, { type: "tui"
       && backgroundListed
       && backgroundKilled
       && (backgroundRead || !strictBackgroundLifecycle);
+    const backgroundScenarioDiagnostics = strictBackgroundLifecycle && backgroundSandboxDenied && !backgroundLifecycleOk
+      ? [
+          "Strict background lifecycle dogfood requires a real sandboxed /background list/read/kill run; sandbox degradation is not enough for default promotion.",
+          backgroundSandboxDeniedError ? `Sandbox denial: ${redactText(backgroundSandboxDeniedError)}` : undefined,
+        ].filter((message): message is string => Boolean(message))
+      : strictBackgroundLifecycle && backgroundTaskId && backgroundListed && !backgroundRead
+        ? [
+            `Background output did not include the dogfood marker after ${backgroundReadAttempts} read attempt(s).`,
+            backgroundReadLastStatus ? `Last task status: ${backgroundReadLastStatus}` : undefined,
+            `Last output sample: ${backgroundReadLastOutput ? redactText(backgroundReadLastOutput).slice(0, 240) : "<empty>"}`,
+          ].filter((message): message is string => Boolean(message))
+        : undefined;
     const scenarios: NativeShellDogfoodScenario[] = [
       {
         name: "repo-edit-approval",
@@ -3382,12 +3396,7 @@ async function runNativeShellDogfood(command: Extract<OppiCommand, { type: "tui"
         status: backgroundSandboxDenied
           ? "sandbox-unavailable-denied"
           : `${backgroundTaskId ? "started" : "not-started"}, list=${backgroundListed}, read=${backgroundRead}, kill=${backgroundKilled}`,
-        diagnostics: strictBackgroundLifecycle && backgroundSandboxDenied && !backgroundLifecycleOk
-          ? [
-              "Strict background lifecycle dogfood requires a real sandboxed /background list/read/kill run; sandbox degradation is not enough for default promotion.",
-              backgroundSandboxDeniedError ? `Sandbox denial: ${redactText(backgroundSandboxDeniedError)}` : undefined,
-            ].filter((message): message is string => Boolean(message))
-          : undefined,
+        diagnostics: backgroundScenarioDiagnostics,
       },
       {
         name: "failure-read-only-write",
@@ -3411,7 +3420,7 @@ async function runNativeShellDogfood(command: Extract<OppiCommand, { type: "tui"
       },
     ];
     const ok = scenarios.every((scenario) => scenario.ok) && exitCode === 0;
-    const strictBackgroundFailure = strictBackgroundLifecycle && backgroundSandboxDenied && !backgroundLifecycleOk;
+    const strictBackgroundFailure = strictBackgroundLifecycle && !backgroundLifecycleOk;
     const payload: NativeShellDogfoodResult = {
       ok,
       shellBin,
@@ -3508,6 +3517,8 @@ async function runNativeShellDogfood(command: Extract<OppiCommand, { type: "tui"
     }
     if (value?.backgroundRead && backgroundTaskId) {
       const output = String(value.backgroundRead.output ?? "");
+      backgroundReadLastStatus = value.backgroundRead.task?.status ? String(value.backgroundRead.task.status) : undefined;
+      backgroundReadLastOutput = output;
       if (output.includes("oppi-background-dogfood")) {
         backgroundRead = true;
         if (!backgroundKillSent) {
