@@ -1,5 +1,5 @@
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import { readPromptVariantSurface } from "./prompt-variant";
+import { promptVariantAppend } from "./prompt-variant";
 
 const REVIEW_PROMPT = `# Review guidelines:
 
@@ -253,14 +253,12 @@ export default function reviewExtension(pi: ExtensionAPI) {
 
     if (pending === "audit") {
       return {
-        systemPrompt: `${event.systemPrompt}\n\n${AUDIT_SYSTEM_PROMPT}`,
+        systemPrompt: `${event.systemPrompt}\n\n${AUDIT_SYSTEM_PROMPT}${promptVariantAppend("review-audit-system-append.md")}`,
       };
     }
 
-    const variant = readPromptVariantSurface("review-system-append.md");
-    const variantOverlay = variant.text ? `\n\n<!-- OPPi review prompt variant: ${variant.variant} (${variant.path}) -->\n\n${variant.text}` : "";
     return {
-      systemPrompt: `${event.systemPrompt}\n\n${REVIEW_PROMPT}${variantOverlay}`,
+      systemPrompt: `${event.systemPrompt}\n\n${REVIEW_PROMPT}${promptVariantAppend("review-system-append.md")}`,
     };
   });
 

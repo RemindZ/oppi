@@ -14,5 +14,5 @@ approval: approval-1 pending for write-1 — /approve or /deny
 question: Choose path — /answer <text-or-option-id>
 background: 1 running, 1 completed; latest=task-2
 suggestion: Run snapshots
-status: role=executor model=mock-scripted permissions=auto-review memor…
+status: role=executor model=local-test permissions=auto-review memory=c…
 ╰─ line-mode fallback remains available ─

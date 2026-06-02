@@ -10,12 +10,21 @@ This folder catalogs the prompts OPPi/Pi sends to language models so they can be
 | --- | --- | --- | --- |
 | `pi-default-main` | Main system prompt template | `main/pi-default-system-prompt.template.md` | Pi `buildSystemPrompt()` |
 | `oppi-tool-additions` | Tool snippets and guidelines injected into the main prompt | `main/oppi-active-tool-snippets-and-guidelines.md` | OPPi tool definitions |
+| `oppi-feature-routing-system-append` | Always-on OPPi feature routing append | `main/oppi-feature-routing-system-append.md` | `packages/pi-package/extensions/model-guidance.ts` |
+| `follow-up-chain-system-append` | Hidden queued-follow-up routing append | `follow-up/follow-up-chain-system-append.md` | `packages/pi-package/extensions/enter-routing.ts` |
+| `goal-continuation-system-append` | Hidden active-goal continuation append | `goals/continuation.md` | `crates/oppi-core/src/goals.rs` |
+| `goal-budget-limit-system-append` | Hidden goal-budget wrap-up append | `goals/budget-limit.md` | `crates/oppi-core/src/goals.rs` |
 | `review-system-append` | `/review` turn-specific system append | `review/codex-review-system-append.md` | `packages/pi-package/extensions/review.ts` |
 | `review-audit-system-append` | `/review` full-audit turn-specific system append | `audit/codebase-audit-system-append.md` | `packages/pi-package/extensions/review.ts` |
 | `permissions-auto-review-system` | Isolated auto-reviewer system prompt | `permissions/auto-review-system.md` | `packages/pi-package/extensions/permissions.ts` |
 | `permissions-auto-review-user-template` | Auto-reviewer user prompt template | `permissions/auto-review-user-prompt.template.md` | `packages/pi-package/extensions/permissions.ts` |
 | `image-gen-codex-native-adapter` | OpenAI Responses `instructions` for native image generation | `image-gen/codex-native-adapter-instructions.md` | `packages/pi-package/extensions/image-gen.ts` |
+| `memory-maintenance-system` | Hoppi Stage 2 dream-worker system prompt | `memory/maintenance-system.md` | `packages/pi-package/extensions/memory.ts` |
+| `memory-deep-maintenance-system` | Hoppi Stage 3 deep dream-worker system prompt | `memory/deep-maintenance-system.md` | `packages/pi-package/extensions/memory.ts` |
+| `smart-compact-user-prompt` | Todo-aware scoped compaction prompt | `compaction/smart-compact-user-prompt.md` | `packages/pi-package/extensions/smart-compact.ts` |
 | `init-command-user-prompt` | `/init` user prompt | `commands/init-user-prompt.md` | `packages/pi-package/extensions/init.ts` |
+| `independent-command-user-prompt` | `/independent` user prompt | `commands/independent-user-prompt.md` | `packages/pi-package/extensions/independent.ts` |
+| `feedback-triage-user-prompt` | `/bug-report` and `/feature-request` user prompt | `commands/feedback-triage-user-prompt.md` | `packages/pi-package/extensions/feedback.ts` |
 | `review-command-user-prompts` | `/review` user prompt templates | `commands/review-user-prompts.md` | `packages/pi-package/extensions/review.ts` |
 | `review-audit-user-prompts` | `/review` full-audit user prompt templates | `commands/review-audit-user-prompts.md` | `packages/pi-package/extensions/review.ts` |
 
@@ -70,10 +79,13 @@ Current A/B variants:
 - `promptname_a` — agentic-loop and prompt-architecture overlay based on the authorized writeups.
 - `promptname_b` — Caveman-full compressed counterpart to `promptname_a`; this compresses system prompt prose only and preserves normal OPPi user-facing style.
 
-Use the runtime selector inside OPPi. It appends the selected main prompt overlay and lets OPPi extensions read matching variant files for review, permission-reviewer, and image-generation adapter surfaces where wired:
+Use the runtime selector inside OPPi. It appends the selected main prompt overlay and lets OPPi extensions read matching variant files for feature routing, review/audit, permission reviewer, image-generation adapter, memory maintenance, compaction, command prompts, and follow-up-chain surfaces where wired:
 
 ```text
 /prompt-variant
+/prompt-variant a
+/prompt-variant b
+/prompt-variant caveman
 /prompt-variant promptname_a
 /prompt-variant promptname_b
 /prompt-variant off
@@ -82,6 +94,9 @@ Use the runtime selector inside OPPi. It appends the selected main prompt overla
 For non-interactive comparisons, set the same selector through the environment:
 
 ```bash
+OPPI_SYSTEM_PROMPT_VARIANT=a pi --no-extensions -e ./packages/pi-package -p "<fixed benchmark task>"
+OPPI_SYSTEM_PROMPT_VARIANT=b pi --no-extensions -e ./packages/pi-package -p "<fixed benchmark task>"
+# canonical names also work:
 OPPI_SYSTEM_PROMPT_VARIANT=promptname_a pi --no-extensions -e ./packages/pi-package -p "<fixed benchmark task>"
 OPPI_SYSTEM_PROMPT_VARIANT=promptname_b pi --no-extensions -e ./packages/pi-package -p "<fixed benchmark task>"
 ```

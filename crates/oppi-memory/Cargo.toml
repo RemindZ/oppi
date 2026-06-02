@@ -1,0 +1,11 @@
+[package]
+name = "oppi-memory"
+description = "Embedded Rust memory storage and lexical search for OPPi."
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+version.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true

@@ -1,6 +1,7 @@
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { promptVariantAppend } from "./prompt-variant";
 
 const MAX_EXISTING_AGENTS_CHARS = 32_000;
 
@@ -57,10 +58,14 @@ After creating or refreshing AGENTS.md, finish with a concise completion status 
 
 Do not just say "done" when the file changed; tell the user what changed.`;
 
+function activeInitPrompt(): string {
+  return `${INIT_PROMPT}${promptVariantAppend("init-user-prompt-append.md")}`;
+}
+
 function refreshPrompt(existing: string): string {
   const truncated = existing.length > MAX_EXISTING_AGENTS_CHARS;
   const visibleExisting = truncated ? `${existing.slice(0, MAX_EXISTING_AGENTS_CHARS)}\n\n[... existing AGENTS.md truncated ...]` : existing;
-  return `${INIT_PROMPT}
+  return `${activeInitPrompt()}
 
 AGENTS.md already exists, so refresh it instead of skipping.
 
@@ -86,12 +91,13 @@ export default function initExtension(pi: ExtensionAPI) {
     description: "Generate or refresh AGENTS.md repository guidelines.",
     handler: async (_args, ctx) => {
       const target = join(ctx.cwd, "AGENTS.md");
-      if (existsSync(target)) {
-        const existing = readFileSync(target, "utf8");
-        await (ctx as any).sendUserMessage(refreshPrompt(existing));
-        return;
+      const prompt = existsSync(target) ? refreshPrompt(readFileSync(target, "utf8")) : activeInitPrompt();
+      if (ctx.isIdle()) {
+        pi.sendUserMessage(prompt);
+      } else {
+        pi.sendUserMessage(prompt, { deliverAs: "followUp" });
+        if (ctx.hasUI) ctx.ui.notify("Queued /init for after the current turn.", "info");
       }
-      await (ctx as any).sendUserMessage(INIT_PROMPT);
     },
   });
 }

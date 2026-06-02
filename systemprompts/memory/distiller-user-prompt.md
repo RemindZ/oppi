@@ -23,11 +23,14 @@ Return only JSON matching this shape:
   "decisions": ["decision or trade-off"],
   "next": ["active next step"],
   "files": ["path/or/component"],
-  "tags": ["short-topic"]
+  "tags": ["short-topic"],
+  "recurringTasks": [{"task": "repeatable work pattern", "rationale": "why this may deserve a future skill", "promptHints": ["user wording or trigger"], "outcomes": ["useful delivered outcome"], "relatedMemoryIds": ["optional memory id"], "tags": ["short-topic"]}]
 }
 
 Rules:
 - Max 3 items in each array, max 18 words per item.
+- Max 2 recurringTasks, and only include patterns likely to recur across projects or sessions.
+- Recurring task candidates are system-scope drafts only. They must never create or update skills without future user approval.
 - Use standalone statements; avoid pronouns without a referent.
 - Do not describe the act of summarizing or observing.
 - If remember is false, all arrays may be empty.

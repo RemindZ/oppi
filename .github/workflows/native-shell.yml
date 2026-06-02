@@ -103,6 +103,10 @@ jobs:
         run: |
           pnpm --filter @oppiai/native test
           pnpm --filter @oppiai/natives test
+      - name: Verify native npm package artifacts
+        run: |
+          pnpm --filter @oppiai/native build:binaries
+          pnpm --filter @oppiai/native verify:pack
       - name: Test Plan 50 audit helpers
         run: pnpm run plan50:test
       - name: Smoke native shell through CLI

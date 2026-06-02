@@ -1,3 +1,5 @@
+export * from "./runtime-protocol.js";
+
 export type OppiPluginCapability = "shell" | "network" | "native" | "filesystem" | "model" | (string & {});
 
 export type OppiPluginPermissionDeclaration = {

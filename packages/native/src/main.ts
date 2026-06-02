@@ -54,16 +54,63 @@ type ResolveOptions = {
   includeCargoTarget?: boolean;
 };
 
+export type NativePackageFileEntry = string | { path?: string };
+
+export type NativePackageFileVerification = {
+  ok: boolean;
+  platform: string;
+  arch: string;
+  requiredFiles: string[];
+  missingFiles: string[];
+  files: string[];
+  diagnostics: string[];
+};
+
 type ParsedCommand =
   | { type: "help" }
   | { type: "version"; json: boolean }
   | { type: "doctor"; json: boolean }
   | { type: "smoke"; json: boolean; mock: boolean; shellArgs: string[] }
   | { type: "server"; args: string[] }
+  | { type: "managed"; args: string[] }
   | { type: "shell"; args: string[] };
 
 function packageRootFromDist(): string {
   return resolve(__dirname, "..");
+}
+
+function resolveManagedCliEntrypoint(
+  env: Env = process.env,
+  cwd = process.cwd(),
+  packageRoot = packageRootFromDist(),
+): { path?: string; diagnostic?: string } {
+  const override = env.OPPI_CLI_BIN?.trim();
+  if (override) {
+    const candidate = resolvePath(override, cwd);
+    return existsSync(candidate)
+      ? { path: candidate }
+      : {
+        diagnostic:
+          `OPPi native management command requires @oppiai/cli. OPPI_CLI_BIN points to a missing entrypoint: ${candidate}`,
+      };
+  }
+
+  const candidates: string[] = [];
+  try {
+    candidates.push(join(dirname(require.resolve("@oppiai/cli/package.json")), "dist", "main.js"));
+  } catch {
+    // Fall through to monorepo sibling candidates.
+  }
+  candidates.push(resolve(packageRoot, "..", "cli", "dist", "main.js"));
+  candidates.push(resolve(packageRoot, "..", "..", "packages", "cli", "dist", "main.js"));
+
+  const found = candidates.find((candidate) => existsSync(candidate));
+  return found
+    ? { path: found }
+    : {
+      diagnostic:
+        `OPPi native management command requires @oppiai/cli. Build or install @oppiai/cli, or set OPPI_CLI_BIN to packages/cli/dist/main.js. Tried: ${candidates.join(", ")}`,
+    };
 }
 
 function readPackageVersion(packageRoot = packageRootFromDist()): string {
@@ -92,6 +139,54 @@ function executableName(name: NativeBinaryName, platform = process.platform): st
 
 function platformKey(platform = process.platform, arch = process.arch): string {
   return `${platform}-${arch}`;
+}
+
+function normalizeNativePackageFilePath(value: string): string {
+  let normalized = value.replaceAll("\\", "/").replace(/^\.\/+/, "");
+  if (normalized.startsWith("package/")) normalized = normalized.slice("package/".length);
+  return normalized.replace(/^\/+/, "");
+}
+
+export function expectedNativePackageFiles(options: { platform?: string; arch?: string } = {}): string[] {
+  const platform = options.platform ?? process.platform;
+  const arch = options.arch ?? process.arch;
+  const key = platformKey(platform, arch);
+  return [
+    "package.json",
+    "README.md",
+    "dist/main.js",
+    "dist/main.d.ts",
+    `bin/${key}/manifest.json`,
+    `bin/${key}/${executableName("oppi-server", platform)}`,
+    `bin/${key}/${executableName("oppi-shell", platform)}`,
+  ];
+}
+
+export function verifyNativePackageFileList(
+  entries: NativePackageFileEntry[],
+  options: { platform?: string; arch?: string } = {},
+): NativePackageFileVerification {
+  const platform = options.platform ?? process.platform;
+  const arch = options.arch ?? process.arch;
+  const files = entries
+    .map((entry) => typeof entry === "string" ? entry : entry.path ?? "")
+    .filter((path) => path.trim().length > 0)
+    .map(normalizeNativePackageFilePath)
+    .sort();
+  const present = new Set(files);
+  const requiredFiles = expectedNativePackageFiles({ platform, arch });
+  const missingFiles = requiredFiles.filter((path) => !present.has(path));
+  return {
+    ok: missingFiles.length === 0,
+    platform,
+    arch,
+    requiredFiles,
+    missingFiles,
+    files,
+    diagnostics: missingFiles.length === 0
+      ? [`native package file list includes required ${platformKey(platform, arch)} artifacts`]
+      : [`missing required native package files for ${platformKey(platform, arch)}: ${missingFiles.join(", ")}`],
+  };
 }
 
 function optionalPlatformPackageName(platform = process.platform, arch = process.arch): string {
@@ -267,9 +362,29 @@ function hasOption(args: string[], name: string): boolean {
   return args.some((arg) => arg === name || arg.startsWith(`${name}=`));
 }
 
-function withShellDefaults(args: string[], serverBin: string): string[] {
+function hasProviderOption(args: string[]): boolean {
+  return hasOption(args, "--mock") || hasOption(args, "--provider") || hasOption(args, "--model");
+}
+
+function normalizeDefaultProvider(value: string | undefined): "openai-compatible" | "openai-codex" {
+  const normalized = value?.trim().toLowerCase();
+  if (["openai-compatible", "openai", "api", "api-key"].includes(normalized ?? "")) return "openai-compatible";
+  if (["openai-codex", "codex", "chatgpt", "subscription"].includes(normalized ?? "")) return "openai-codex";
+  return "openai-codex";
+}
+
+function withShellDefaults(args: string[], serverBin: string, env: Env = process.env): string[] {
   const next = [...args];
   if (!hasOption(next, "--server")) next.unshift("--server", serverBin);
+  if (!hasOption(next, "--list-sessions") && !next.includes("--sessions") && !hasProviderOption(next)) {
+    const provider = normalizeDefaultProvider(env.OPPI_RUNTIME_WORKER_PROVIDER);
+    next.unshift(
+      "--provider",
+      provider,
+      "--model",
+      env.OPPI_RUNTIME_WORKER_MODEL?.trim() || "gpt-5.5",
+    );
+  }
   return next;
 }
 
@@ -289,6 +404,21 @@ function parseBooleanFlag(args: string[], name: string): boolean {
   return args.includes(name);
 }
 
+const MANAGED_CLI_COMMANDS = new Set([
+  "update",
+  "mem",
+  "natives",
+  "native",
+  "sandbox",
+  "resume",
+  "runtime-loop",
+  "runtime",
+  "runtime-worker",
+  "worker",
+  "plugin",
+  "marketplace",
+]);
+
 export function parseNativeArgs(argv: string[]): ParsedCommand {
   const [first, ...rest] = argv;
   if (!first || first === "shell" || first === "run" || first === "tui") return { type: "shell", args: first ? rest : [] };
@@ -297,11 +427,12 @@ export function parseNativeArgs(argv: string[]): ParsedCommand {
   if (first === "doctor" || first === "status") return { type: "doctor", json: parseBooleanFlag(rest, "--json") };
   if (first === "smoke") {
     const json = parseBooleanFlag(rest, "--json");
-    const mock = !rest.includes("--live");
+    const mock = rest.includes("--mock");
     const shellArgs = rest.filter((arg) => !["--json", "--mock", "--live"].includes(arg));
     return { type: "smoke", json, mock, shellArgs };
   }
   if (first === "server") return { type: "server", args: rest.length > 0 ? rest : ["--stdio"] };
+  if (MANAGED_CLI_COMMANDS.has(first)) return { type: "managed", args: argv };
   return { type: "shell", args: argv };
 }
 
@@ -313,16 +444,26 @@ function printHelp(): void {
   console.log(`OPPi native — Rust/Ratatui UI launcher
 
 Usage:
-  oppi-native [oppi-shell options] [prompt]
+  oppi-native [oppi-shell options] [prompt]   # defaults to openai-codex/gpt-5.5
   oppi-native shell [oppi-shell options]
   oppi-native server [--stdio]
   oppi-native doctor [--json]
-  oppi-native smoke --mock [--json]
+  oppi-native smoke [--json] [--mock]
+  oppi-native plugin list|add|install|enable|disable|remove|doctor [--json]
+  oppi-native marketplace list|add|remove [--json]
+  oppi-native mem status|setup|install|dashboard [--json]
+  oppi-native sandbox status|setup-windows [--yes|--dry-run] [--json]
+  oppi-native runtime-worker smoke [--json]
+  oppi-native runtime-loop smoke [--json]
   oppi-native --version
 
 Side-by-side install:
   npm install -g @oppiai/cli      # legacy Pi-backed package; owns \`oppi\`
   npm install -g @oppiai/native   # Rust/Ratatui native UI; owns \`oppi-native\` and \`oppi-rs\`
+
+Management bridge:
+  Known management commands delegate to @oppiai/cli so they keep the stable OPPi stores and safety checks.
+  Set OPPI_CLI_BIN=/path/to/packages/cli/dist/main.js to override the bridge during development.
 
 Binary overrides:
   OPPI_NATIVE_SHELL_BIN=/path/to/oppi-shell
@@ -336,7 +477,7 @@ async function runShell(command: Extract<ParsedCommand, { type: "shell" }>, stat
     console.error(missingBinaryMessage(status));
     return 1;
   }
-  const target = windowsCmdShim(status.shell.path, withShellDefaults(command.args, status.server.path));
+  const target = windowsCmdShim(status.shell.path, withShellDefaults(command.args, status.server.path, env));
   const child = spawn(target.command, target.args, {
     stdio: "inherit",
     env: nativeShellEnv(env),
@@ -372,6 +513,29 @@ async function runServer(command: Extract<ParsedCommand, { type: "server" }>, st
   });
 }
 
+async function runManagedCli(command: Extract<ParsedCommand, { type: "managed" }>, env: Env, cwd: string): Promise<number> {
+  const resolved = resolveManagedCliEntrypoint(env, cwd);
+  if (!resolved.path) {
+    console.error(resolved.diagnostic ?? "OPPi native management command requires @oppiai/cli.");
+    return 1;
+  }
+  const child = spawn(process.execPath, [resolved.path, ...command.args], {
+    stdio: "inherit",
+    cwd,
+    env,
+  });
+  return new Promise((resolveExit) => {
+    child.on("error", (error: Error) => {
+      console.error(`OPPi failed to start @oppiai/cli bridge: ${error.message}`);
+      resolveExit(1);
+    });
+    child.on("exit", (code: number | null, signal: string | null) => {
+      if (signal) resolveExit(signal === "SIGINT" ? 130 : signal === "SIGTERM" ? 143 : 1);
+      else resolveExit(code ?? 0);
+    });
+  });
+}
+
 function runSmoke(command: Extract<ParsedCommand, { type: "smoke" }>, status: NativePackageStatus, env: Env): number {
   const started = Date.now();
   if (!status.ok || !status.shell.path || !status.server.path) {
@@ -381,13 +545,15 @@ function runSmoke(command: Extract<ParsedCommand, { type: "smoke" }>, status: Na
     return 1;
   }
   const args = [
-    ...(command.mock ? ["--mock"] : []),
+    ...withShellDefaults(
+      [...(command.mock ? ["--mock"] : []), ...command.shellArgs],
+      status.server.path,
+      env,
+    ),
     "--json",
-    "--server",
-    status.server.path,
-    ...command.shellArgs,
     "OPPi native package smoke: reply ok.",
   ];
+  const smokeMode = command.mock ? "mock" : "live";
   const target = windowsCmdShim(status.shell.path, args);
   const result = spawnSync(target.command, target.args, {
     encoding: "utf8",
@@ -407,7 +573,7 @@ function runSmoke(command: Extract<ParsedCommand, { type: "smoke" }>, status: Na
     exitCode: result.status,
     durationMs: Date.now() - started,
     stdoutLineCount: stdout.split(/\r?\n/).filter(Boolean).length,
-    diagnostics: [ok ? "oppi-native mock smoke completed" : result.error?.message || stderr.trim() || `oppi-shell exited ${result.status ?? "without a code"}`],
+    diagnostics: [ok ? `oppi-native ${smokeMode} smoke completed` : result.error?.message || stderr.trim() || `oppi-shell exited ${result.status ?? "without a code"}`],
     stderr: stderr.trim() || undefined,
   };
   if (command.json) printJson(payload);
@@ -433,6 +599,7 @@ export async function run(argv = process.argv.slice(2), env: Env = process.env, 
     else console.log(`${PACKAGE_NAME}@${readPackageVersion()} (${NATIVE_BINS.join(", ")}; legacy ${LEGACY_CLI_BIN} preserved)`);
     return 0;
   }
+  if (command.type === "managed") return runManagedCli(command, env, cwd);
 
   const status = getNativePackageStatus({ env, cwd });
   if (command.type === "doctor") {

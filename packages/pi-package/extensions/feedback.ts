@@ -6,6 +6,7 @@ import { readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { arch, homedir, platform, release } from "node:os";
+import { promptVariantAppend } from "./prompt-variant";
 
 const DEFAULT_REPO = "RemindZ/oppi";
 const DEFAULT_ENDPOINT = "https://oppi-intake.mesh-medic.workers.dev";
@@ -268,7 +269,7 @@ function triagePrompt(type: FeedbackKind, initialDescription: string): string {
     ? `The user started ${commandName} with this description:\n\n${initialDescription.trim()}`
     : `The user started ${commandName} without a description.`;
 
-  return `${starter}\n\nYour job: help create a high-quality OPPi ${type === "bug-report" ? "bug report" : "feature request"}.\n\nVerify enough context before submitting. Required context: ${required}. If anything important is missing, ask concise follow-up questions first. Once you have enough context, call the \`oppi_feedback_submit\` tool with structured fields. Prefer includeDiagnostics=true. Only set includeLogs=true if the user agrees or logs are clearly needed. Do not include secrets or raw private conversation history.`;
+  return `${starter}\n\nYour job: help create a high-quality OPPi ${type === "bug-report" ? "bug report" : "feature request"}.\n\nVerify enough context before submitting. Required context: ${required}. If anything important is missing, ask concise follow-up questions first. Once you have enough context, call the \`oppi_feedback_submit\` tool with structured fields. Prefer includeDiagnostics=true. Only set includeLogs=true if the user agrees or logs are clearly needed. Do not include secrets or raw private conversation history.${promptVariantAppend("feedback-triage-user-prompt-append.md")}`;
 }
 
 export default function feedbackExtension(pi: ExtensionAPI) {
@@ -286,7 +287,7 @@ export default function feedbackExtension(pi: ExtensionAPI) {
     },
   });
 
-  pi.registerTool({
+  (pi.registerTool as any)({
     name: "oppi_feedback_submit",
     label: "OPPi Feedback",
     description:

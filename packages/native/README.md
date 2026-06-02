@@ -14,7 +14,7 @@ npm install -g @oppiai/native   # Rust/Ratatui native UI; installs `oppi-native`
 ```bash
 oppi-native --version
 oppi-native doctor --json
-oppi-native smoke --mock --json
+oppi-native smoke --json
 oppi-native                 # launches the Ratatui native UI
 oppi-native --mock          # launches the Ratatui native UI with the mock provider
 oppi-native --no-tui --mock # line-mode fallback for pipes/debugging
@@ -22,6 +22,20 @@ oppi-native server --stdio  # runs the bundled server over stdio
 ```
 
 `oppi-rs` is an alias for `oppi-native`.
+
+## Management bridge commands
+
+`oppi-native` owns Rust shell/server launch directly, and delegates existing management commands to `@oppiai/cli` so native-only users do not accidentally send management words to the model:
+
+```bash
+oppi-native plugin list --json
+oppi-native marketplace list --json
+oppi-native mem status
+oppi-native sandbox status --json
+oppi-native runtime-worker smoke --json
+```
+
+The bridge preserves the stable OPPi plugin stores (`OPPI_HOME/plugin-lock.json` and project `.oppi/plugins.json`) and marketplace registry. Rust-native runtime loading covers enabled, trusted local or materialized plugin skills, prompt templates, and themes, and thread-aware `plugin/list` reports source type, materialization, executable-boundary, resource, and diagnostic metadata for configured plugins. `oppi-native plugin materialize ...` delegates to the stable CLI management bridge; package copy/cache mutation stays out of the runtime JSON-RPC server. Executable plugin code is not Pi `-e` loading: native execution requires an explicit `jsonRpcSubprocess` runner manifest, project `.oppi/plugin-runners.json` enable/trust, and the Rust sandbox/Guardian tool path. Pi extensions, app-server handlers, remote/non-local fetchers, and implicit native code execution remain tracked in `.oppi-plans/61-rust-native-plan-gap-audit.md`.
 
 ## Binary resolution
 
@@ -62,10 +76,18 @@ Manual equivalent:
 cargo build -p oppi-server -p oppi-shell
 pnpm --filter @oppiai/native build
 node packages/native/dist/main.js doctor
-node packages/native/dist/main.js smoke --mock --json
+node packages/native/dist/main.js smoke --json
 ```
 
-For publish/pack preparation, `pnpm --filter @oppiai/native build:binaries` builds release binaries and copies them into the package `bin/` directory. The package has no `postinstall` compile step.
+For publish/pack preparation, build the release binaries and verify the npm dry-run pack list before publishing:
+
+```bash
+pnpm --filter @oppiai/native build:binaries
+pnpm --filter @oppiai/native verify:pack
+npm pack --workspace packages/native --dry-run --ignore-scripts
+```
+
+`verify:pack` checks that the dry-run tarball file list includes `dist/main.js`, `dist/main.d.ts`, `README.md`, `package.json`, `bin/<platform>-<arch>/manifest.json`, `oppi-server[.exe]`, and `oppi-shell[.exe]` for the current platform. The package has no `postinstall` compile step.
 
 ## Relationship to other packages
 

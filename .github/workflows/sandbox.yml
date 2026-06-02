@@ -1,0 +1,56 @@
+name: Sandbox host validation
+
+on:
+  push:
+    paths:
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "crates/**"
+      - ".github/workflows/sandbox.yml"
+  pull_request:
+    paths:
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "crates/**"
+      - ".github/workflows/sandbox.yml"
+  workflow_dispatch:
+
+jobs:
+  rust-sandbox:
+    name: ${{ matrix.os }} sandbox tests
+    runs-on: ${{ matrix.os }}
+    env:
+      OPPI_WINDOWS_SANDBOX_USERNAME: ${{ secrets.OPPI_WINDOWS_SANDBOX_USERNAME }}
+      OPPI_WINDOWS_SANDBOX_PASSWORD: ${{ secrets.OPPI_WINDOWS_SANDBOX_PASSWORD }}
+      OPPI_WINDOWS_SANDBOX_DOMAIN: ${{ secrets.OPPI_WINDOWS_SANDBOX_DOMAIN }}
+      OPPI_WINDOWS_SANDBOX_WFP_READY: ${{ secrets.OPPI_WINDOWS_SANDBOX_WFP_READY }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install Linux sandbox dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y bubblewrap
+      - name: Build Rust workspace
+        run: cargo build --workspace
+      - name: Run Rust sandbox package tests
+        run: cargo test -p oppi-sandbox -p oppi-protocol -p oppi-server
+      - name: Run Linux bubblewrap host test
+        if: runner.os == 'Linux'
+        run: cargo test -p oppi-sandbox host_linux_bubblewrap_blocks_network_when_disabled -- --ignored --nocapture
+      - name: Run macOS Seatbelt host test
+        if: runner.os == 'macOS'
+        run: cargo test -p oppi-sandbox host_macos_seatbelt_executes_basic_command -- --ignored --nocapture
+      - name: Run Windows sandbox smoke tests
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          cargo test -p oppi-sandbox windows_restricted_token_adapter_is_detected_and_runs_under_job_object -- --nocapture
+          cargo test -p oppi-sandbox windows_junction_escape_is_rejected_by_existing_prefix_canonicalization -- --nocapture
+      - name: Run configured Windows WFP/restricted-token host smoke test
+        if: runner.os == 'Windows' && env.OPPI_WINDOWS_SANDBOX_USERNAME != '' && env.OPPI_WINDOWS_SANDBOX_PASSWORD != ''
+        shell: pwsh
+        run: cargo test -p oppi-sandbox host_windows_restricted_token_wfp_smoke_runs_with_configured_sandbox_account -- --ignored --nocapture

@@ -227,7 +227,7 @@ test("plan50 audit separates implemented Windows background adapter from host se
   assert.equal(payload.closeoutChecklist.recommendedRouteId, "multi-os-ci-artifacts");
   assert.equal(localRoute.approvalPhrase, "approve Windows sandbox setup for Plan 50");
   assert.equal(ciRoute.approvalPhrase, "approve Plan 50 CI evidence route");
-  assert.equal(ciRoute.reviewDocument, ".oppi-plans/50-ci-evidence-publish-set-review.md");
+  assert.equal(ciRoute.reviewDocument, ".oppi-plans/completed/done_50-ci-evidence-publish-set-review.md");
   assert.equal(localRoute.requiresElevation, true);
   assert.equal(localRoute.hostMutation, true);
   assert.equal(ciRoute.requiresNetwork, true);
@@ -283,7 +283,7 @@ test("plan50 audit separates implemented Windows background adapter from host se
   assert.equal(ciApproval?.remoteMutation, true);
   assert.equal(ciRoute.githubAuthMutation, true);
   assert.equal(ciApproval?.githubAuthMutation, true);
-  assert.equal(ciApproval?.reviewDocument, ".oppi-plans/50-ci-evidence-publish-set-review.md");
+  assert.equal(ciApproval?.reviewDocument, ".oppi-plans/completed/done_50-ci-evidence-publish-set-review.md");
   assert.deepEqual(ciRoute.approvalGatedSteps, [
     "Review the curated Plan 50 publish set.",
     "Stage only the curated Plan 50 publish set.",
@@ -464,7 +464,7 @@ test("plan50 audit separates implemented Windows background adapter from host se
         && action.curatedPaths?.includes("pnpm-lock.yaml")
         && action.curatedPaths?.includes("pnpm-workspace.yaml")
         && action.command === payload.ciEvidenceInputs?.statusCommand
-        && action.reviewDocument === ".oppi-plans/50-ci-evidence-publish-set-review.md"
+        && action.reviewDocument === ".oppi-plans/completed/done_50-ci-evidence-publish-set-review.md"
     ),
     JSON.stringify(payload.nextActions, null, 2),
   );
@@ -3870,7 +3870,7 @@ test("plan50 audit summary prints concise closeout routes", () => {
   assert.match(result.stdout, /CI artifact route: review\/stage\/test\/commit the curated Plan 50 set, fix gh auth, push, run the workflow, download artifacts, verify, then apply evidence\./);
   assert.doesNotMatch(result.stdout, /CI artifact route: review\/stage\/test\/commit\/push the curated Plan 50 set, fix gh auth/);
   assert.match(result.stdout, /CI artifact route[\s\S]*recommended: yes/);
-  assert.match(result.stdout, /review doc: \.oppi-plans\/50-ci-evidence-publish-set-review\.md/);
+  assert.match(result.stdout, /review doc: \.oppi-plans\/completed\/done_50-ci-evidence-publish-set-review\.md/);
   assert.match(result.stdout, /requires network: yes/);
   assert.match(result.stdout, /requires GitHub auth: yes/);
   assert.match(result.stdout, /requires commit\/push: yes/);
@@ -3898,7 +3898,7 @@ test("plan50 audit summary prints concise closeout routes", () => {
     assert.doesNotMatch(result.stdout, /windows-sandbox-setup-explicit-approval/);
   }
   assert.match(result.stdout, /publish-ci-evidence-inputs \[review only, no remote mutation\]: git status --short/);
-  assert.match(result.stdout, /publish-ci-evidence-inputs[\s\S]*review doc: \.oppi-plans\/50-ci-evidence-publish-set-review\.md/);
+  assert.match(result.stdout, /publish-ci-evidence-inputs[\s\S]*review doc: \.oppi-plans\/completed\/done_50-ci-evidence-publish-set-review\.md/);
   assert.match(result.stdout, /publish-ci-evidence-inputs[\s\S]*warning: dirty sensitive paths outside curated Plan 50 publish set: \.github\/workflows\/sandbox\.yml/);
   assert.match(result.stdout, /publish-ci-evidence-inputs[\s\S]*warning: worktree has 2 dirty path\(s\) outside the curated Plan 50 publish set; use the exact stage command, not git add -A\./);
   assert.match(result.stdout, /stage-ci-evidence-inputs \[approval required, mutates local repo, no remote mutation\]: git add --/);
@@ -3968,7 +3968,7 @@ test("plan50 audit approval view prints only approval options", () => {
   assert.match(result.stdout, /requires commit\/push: yes/);
   assert.match(result.stdout, /mutates local repo: yes/);
   assert.match(result.stdout, /mutates remote: yes/);
-  assert.match(result.stdout, /review doc: \.oppi-plans\/50-ci-evidence-publish-set-review\.md/);
+  assert.match(result.stdout, /review doc: \.oppi-plans\/completed\/done_50-ci-evidence-publish-set-review\.md/);
   assert.match(result.stdout, /warning: dirty sensitive paths outside curated Plan 50 publish set: \.github\/workflows\/sandbox\.yml/);
   assert.match(result.stdout, /warning: worktree has 2 dirty path\(s\) outside the curated Plan 50 publish set; use the exact stage command, not git add -A\./);
   assert.match(result.stdout, /gated step: Review the curated Plan 50 publish set\./);

@@ -121,7 +121,7 @@ function installAuthStoragePolicyPatch(): void {
 
   proto.login = async function loginWithOppiPolicy(this: AuthStorage, providerId: string, callbacks: OAuthLoginCallbacks) {
     if (DISABLED_OAUTH_PROVIDERS.has(providerId)) {
-      throw new Error("Native Anthropic subscription sign-in is disabled in OPPi. Use an Anthropic API key, or OPPi's throughput bridge once it is available in a later stage.");
+      throw new Error("Native Anthropic subscription sign-in is routed through OPPi's Meridian bridge. Use /meridian install then /meridian start, or use an Anthropic API key while native /login parity is being ported.");
     }
     return originalLogin.call(this, providerId, callbacks);
   };

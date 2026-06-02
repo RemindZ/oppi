@@ -25,6 +25,8 @@
     "plan50:summary": "node scripts/plan50-audit.mjs --summary",
     "plan50:approval": "node scripts/plan50-audit.mjs --approval",
     "plan50:test": "node scripts/plan50-test.mjs",
+    "plan72:ci-evidence": "node scripts/plan72-ci-evidence.mjs --latest --summary",
+    "plan72:test": "node --test scripts/plan72-ci-evidence.test.mjs",
     "rust:check": "cargo check --workspace",
     "rust:test": "cargo test --workspace",
     "setup:references": "node scripts/setup-references.mjs",

@@ -380,7 +380,7 @@ fn frame_settings() -> DesignFrameContent {
             "info",
             "info",
             "│",
-            "overlay anchored above editor — ←/→ tabs · ↑/↓ settings · Enter open · Esc close",
+            "overlay anchored above editor — ←/→ sections · ↑/↓ settings · Type to search · Enter open · Esc close",
         )],
         dock: separator("docks: idle"),
         editor: editor("Ask, build, or type / for commands…", false),
@@ -388,14 +388,14 @@ fn frame_settings() -> DesignFrameContent {
         slash_items: Vec::new(),
         overlay: Some(DesignOverlayFixture {
             title: "settings",
-            help: "←/→ tabs · ↑/↓ settings · Enter open · Esc close",
+            help: "←/→ sections · ↑/↓ settings · Type to search · Enter open · Esc close",
             selected: 1,
             confirmed: None,
             items: vec![
                 overlay_item(
-                    "General › Status shortcuts",
+                    "General › Status & usage",
                     "/usage",
-                    "Usage/status, keybindings, and debug surfaces",
+                    "Usage/status, footer, and debug surfaces",
                     false,
                 ),
                 overlay_item(
@@ -454,14 +454,14 @@ fn frame_settings() -> DesignFrameContent {
                 ),
                 overlay_item(
                     "Memory › Hoppi",
-                    "client-hosted",
+                    "runtime-backed",
                     "Recall, dashboard, and maintenance",
                     false,
                 ),
                 overlay_item(
-                    "Compaction › Context handoff",
-                    "manual",
-                    "Manual memory compaction and maintenance shortcuts",
+                    "Compaction › Compact now",
+                    "handoff",
+                    "Create a todo-aware memory handoff now",
                     false,
                 ),
                 overlay_item(

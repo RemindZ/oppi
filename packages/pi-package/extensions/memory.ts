@@ -5,8 +5,9 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { execFileSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { complete } from "@mariozechner/pi-ai";
+import type { Transport } from "@mariozechner/pi-ai";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext, Theme } from "@mariozechner/pi-coding-agent";
-import { getAgentDir } from "@mariozechner/pi-coding-agent";
+import { getAgentDir, SettingsManager } from "@mariozechner/pi-coding-agent";
 import type { Component } from "@mariozechner/pi-tui";
 import { Key, matchesKey, truncateToWidth, visibleWidth } from "@mariozechner/pi-tui";
 import {
@@ -24,9 +25,11 @@ import {
   clearSessionPermissionState,
   coerceTimeout,
   MODES as PERMISSION_MODES,
+  effectiveSandboxConfig,
   permissionStatusText,
   publishMode,
   readPermissionConfig,
+  sandboxStatusSummary,
   showPermissionHistory,
   writeGlobalPermissionConfig,
   type PermissionConfig,
@@ -34,6 +37,7 @@ import {
 import { askUserTimeoutLabel, ASK_USER_TIMEOUT_MINUTES, coerceAskUserTimeout, readAskUserConfig, writeGlobalAskUserConfig, type AskUserConfig } from "./ask-user";
 import { currentThemeName, normalizeThemeName, openThemePreview, OPPI_THEMES, setOppiTheme, themeLabel } from "./themes";
 import { FOOTER_CONFIG_CHANGED_EVENT, FOOTER_HELP_SHORTCUT_LABEL, FOOTER_USAGE_DISPLAY_VALUES, footerUsageDisplayLabel, readFooterConfig, writeFooterConfig, type FooterConfig } from "./usage";
+import { promptVariantAppend } from "./prompt-variant";
 
 type SyncConflictMode = "keep-both" | "keep-local" | "overwrite-local";
 type SyncDirection = "pull" | "push" | "both";
@@ -77,6 +81,91 @@ type OppiSettingsFile = Record<string, any> & {
     memory?: Partial<MemoryConfig> & { sync?: Partial<MemorySyncConfig> };
   };
 };
+
+type PiSettingsConfig = {
+  autoCompact: boolean;
+  showImages: boolean;
+  imageWidthCells: number;
+  autoResizeImages: boolean;
+  blockImages: boolean;
+  enableSkillCommands: boolean;
+  steeringMode: "all" | "one-at-a-time";
+  followUpMode: "all" | "one-at-a-time";
+  transport: Transport;
+  defaultThinkingLevel: "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
+  hideThinkingBlock: boolean;
+  collapseChangelog: boolean;
+  enableInstallTelemetry: boolean;
+  quietStartup: boolean;
+  doubleEscapeAction: "fork" | "tree" | "none";
+  treeFilterMode: "default" | "no-tools" | "user-only" | "labeled-only" | "all";
+  showHardwareCursor: boolean;
+  editorPaddingX: number;
+  autocompleteMaxVisible: number;
+  clearOnShrink: boolean;
+  showTerminalProgress: boolean;
+};
+
+const THINKING_LEVEL_VALUES: PiSettingsConfig["defaultThinkingLevel"][] = ["off", "minimal", "low", "medium", "high", "xhigh"];
+const TRANSPORT_VALUES: Transport[] = ["sse", "websocket", "auto"];
+const DOUBLE_ESCAPE_VALUES: PiSettingsConfig["doubleEscapeAction"][] = ["fork", "tree", "none"];
+const TREE_FILTER_VALUES: PiSettingsConfig["treeFilterMode"][] = ["default", "no-tools", "user-only", "labeled-only", "all"];
+const EDITOR_PADDING_VALUES = [0, 1, 2, 3] as const;
+const AUTOCOMPLETE_VISIBLE_VALUES = [3, 5, 7, 10, 15, 20] as const;
+const IMAGE_WIDTH_VALUES = [60, 80, 120] as const;
+
+function readPiSettingsConfig(cwd: string): PiSettingsConfig {
+  const settings = SettingsManager.create(cwd);
+  return {
+    autoCompact: settings.getCompactionEnabled(),
+    showImages: settings.getShowImages(),
+    imageWidthCells: settings.getImageWidthCells(),
+    autoResizeImages: settings.getImageAutoResize(),
+    blockImages: settings.getBlockImages(),
+    enableSkillCommands: settings.getEnableSkillCommands(),
+    steeringMode: settings.getSteeringMode(),
+    followUpMode: settings.getFollowUpMode(),
+    transport: settings.getTransport(),
+    defaultThinkingLevel: settings.getDefaultThinkingLevel() ?? "medium",
+    hideThinkingBlock: settings.getHideThinkingBlock(),
+    collapseChangelog: settings.getCollapseChangelog(),
+    enableInstallTelemetry: settings.getEnableInstallTelemetry(),
+    quietStartup: settings.getQuietStartup(),
+    doubleEscapeAction: settings.getDoubleEscapeAction(),
+    treeFilterMode: settings.getTreeFilterMode(),
+    showHardwareCursor: settings.getShowHardwareCursor(),
+    editorPaddingX: settings.getEditorPaddingX(),
+    autocompleteMaxVisible: settings.getAutocompleteMaxVisible(),
+    clearOnShrink: settings.getClearOnShrink(),
+    showTerminalProgress: settings.getShowTerminalProgress(),
+  };
+}
+
+function writePiSettingsConfig(cwd: string, config: PiSettingsConfig): void {
+  const settings = SettingsManager.create(cwd);
+  settings.setCompactionEnabled(config.autoCompact);
+  settings.setShowImages(config.showImages);
+  settings.setImageWidthCells(config.imageWidthCells);
+  settings.setImageAutoResize(config.autoResizeImages);
+  settings.setBlockImages(config.blockImages);
+  settings.setEnableSkillCommands(config.enableSkillCommands);
+  settings.setSteeringMode(config.steeringMode);
+  settings.setFollowUpMode(config.followUpMode);
+  settings.setTransport(config.transport);
+  settings.setDefaultThinkingLevel(config.defaultThinkingLevel);
+  settings.setHideThinkingBlock(config.hideThinkingBlock);
+  settings.setCollapseChangelog(config.collapseChangelog);
+  settings.setEnableInstallTelemetry(config.enableInstallTelemetry);
+  settings.setQuietStartup(config.quietStartup);
+  settings.setDoubleEscapeAction(config.doubleEscapeAction);
+  settings.setTreeFilterMode(config.treeFilterMode);
+  settings.setShowHardwareCursor(config.showHardwareCursor);
+  settings.setEditorPaddingX(config.editorPaddingX);
+  settings.setAutocompleteMaxVisible(config.autocompleteMaxVisible);
+  settings.setClearOnShrink(config.clearOnShrink);
+  settings.setShowTerminalProgress(config.showTerminalProgress);
+  void settings.flush();
+}
 
 type HoppiProjectRef = { cwd: string; displayName?: string };
 
@@ -138,14 +227,14 @@ type HoppiModule = {
   rebuildEmbeddings?: (root: string, options?: Record<string, unknown>) => Promise<{ available: boolean; rebuilt: number; error?: string }>;
 };
 
-type SettingsAction = "close" | "install-hoppi" | "setup-sync" | "sync-now" | "pull-now" | "push-now" | "open-dashboard" | "permission-history" | "permission-clear" | "permission-reviewer-model" | "permission-status" | "theme-preview";
+type SettingsAction = "close" | "install-hoppi" | "setup-sync" | "sync-now" | "pull-now" | "push-now" | "open-dashboard" | "permission-history" | "permission-clear" | "permission-reviewer-model" | "permission-status" | "permission-sandbox-project" | "permission-sandbox-read" | "permission-sandbox-write" | "permission-sandbox-protected" | "theme-preview";
 
 const HOPPI_PACKAGE_NAME = "@oppiai/hoppi-memory";
 const HOPPI_LEGACY_PACKAGE_NAME = "hoppi-memory";
 const HOPPI_PACKAGE_SPEC = `${HOPPI_PACKAGE_NAME}@^0.1.0`;
 const DEFAULT_PASSPHRASE_ENV = "OPPI_HOPPI_SYNC_PASSPHRASE";
 const DEFAULT_SYNC_REPO_NAME = "hoppi-memories";
-const SETTINGS_TABS = ["⚙️ General", "🧭 Footer", "🧠 Memory", "🗜️ Compaction", "🔐 Permissions", "🎨 Theme"] as const;
+const SETTINGS_TABS = ["⚙️ General", "🧩 Pi", "🧭 Footer", "🧠 Memory", "🗜️ Compaction", "🔐 Permissions", "🎨 Theme"] as const;
 const BACKGROUND_VALUES: BackgroundSync[] = ["off", "15m", "30m", "60m"];
 const CONFLICT_VALUES: SyncConflictMode[] = ["keep-both", "keep-local", "overwrite-local"];
 const AGENT_MODEL_VALUES: MemoryAgentModel[] = ["auto", "claude", "gpt"];
@@ -566,11 +655,22 @@ type DistilledTurnMemory = {
   next?: string[];
   files?: string[];
   tags?: string[];
+  recurringTasks?: unknown;
+  recurringTaskCandidates?: unknown;
+};
+
+type RecurringTaskCandidate = {
+  task: string;
+  rationale?: string;
+  promptHints: string[];
+  outcomes: string[];
+  relatedMemoryIds: string[];
+  tags: string[];
 };
 
 type ModelTurnSummary =
-  | { kind: "memory"; content: string; tags: string[] }
-  | { kind: "skip" };
+  | { kind: "memory"; content: string; tags: string[]; recurringCandidates: RecurringTaskCandidate[] }
+  | { kind: "skip"; recurringCandidates: RecurringTaskCandidate[] };
 
 const MEMORY_DISTILLER_PROMPT = `You are OPPi's memory distiller. You observe one completed coding-agent turn and decide whether to save a compact memory for future sessions.
 
@@ -590,11 +690,14 @@ Return only JSON matching this shape:
   "decisions": ["decision or trade-off"],
   "next": ["active next step"],
   "files": ["path/or/component"],
-  "tags": ["short-topic"]
+  "tags": ["short-topic"],
+  "recurringTasks": [{"task": "repeatable work pattern", "rationale": "why this may deserve a future skill", "promptHints": ["user wording or trigger"], "outcomes": ["useful delivered outcome"], "relatedMemoryIds": ["optional memory id"], "tags": ["short-topic"]}]
 }
 
 Rules:
 - Max 3 items in each array, max 18 words per item.
+- Max 2 recurringTasks, and only include patterns likely to recur across projects or sessions.
+- Recurring task candidates are system-scope drafts only. They must never create or update skills without future user approval.
 - Use standalone statements; avoid pronouns without a referent.
 - Do not describe the act of summarizing or observing.
 - If remember is false, all arrays may be empty.`;
@@ -741,10 +844,51 @@ function stringArray(value: unknown, limit: number, maxChars: number): string[] 
     .slice(0, limit);
 }
 
+function sanitizeMemoryTag(tag: string): string {
+  return tag.toLowerCase().replace(/[^a-z0-9:_-]+/g, "-").replace(/^-+|-+$/g, "");
+}
+
 function distillerTags(memory: DistilledTurnMemory): string[] {
   return stringArray(memory.tags, 4, 40)
-    .map((tag) => tag.toLowerCase().replace(/[^a-z0-9:_-]+/g, "-").replace(/^-+|-+$/g, ""))
+    .map(sanitizeMemoryTag)
     .filter((tag) => tag.length >= 2 && !tag.startsWith("project:"));
+}
+
+function recurringTaskCandidates(value: unknown): RecurringTaskCandidate[] {
+  if (!Array.isArray(value)) return [];
+  const candidates: RecurringTaskCandidate[] = [];
+  for (const item of value.slice(0, 4)) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) continue;
+    const record = item as Record<string, unknown>;
+    const task = memorySnippet(
+      typeof record.task === "string" ? record.task
+        : typeof record.title === "string" ? record.title
+          : typeof record.pattern === "string" ? record.pattern
+            : undefined,
+      140,
+    );
+    if (task.length < 12) continue;
+    const rationale = memorySnippet(
+      typeof record.rationale === "string" ? record.rationale
+        : typeof record.reason === "string" ? record.reason
+          : typeof record.why === "string" ? record.why
+            : undefined,
+      220,
+    );
+    const tags = stringArray(record.tags, 5, 40)
+      .map(sanitizeMemoryTag)
+      .filter((tag) => tag.length >= 2 && !tag.startsWith("project:"));
+    candidates.push({
+      task,
+      rationale: rationale || undefined,
+      promptHints: stringArray(record.promptHints ?? record.prompts ?? record.triggers, 4, 180),
+      outcomes: stringArray(record.outcomes ?? record.outcomeHints ?? record.results, 4, 180),
+      relatedMemoryIds: stringArray(record.relatedMemoryIds ?? record.memoryIds ?? record.sources, 8, 80),
+      tags,
+    });
+    if (candidates.length >= 2) break;
+  }
+  return candidates;
 }
 
 function distilledTurnContent(memory: DistilledTurnMemory): string | undefined {
@@ -775,6 +919,55 @@ function distilledTurnContent(memory: DistilledTurnMemory): string | undefined {
   return content.length >= 80 ? content : undefined;
 }
 
+function recurringTaskProjectRef(): HoppiProjectRef {
+  return {
+    cwd: join(homedir(), ".oppi", "system", "recurring-task-candidates"),
+    displayName: "OPPi recurring task candidates",
+  };
+}
+
+function recurringTaskCandidateContent(candidate: RecurringTaskCandidate, messages: readonly AgentMessageLike[], ctx: ExtensionContext): string {
+  const userTexts = uniqueRecentTexts(messagesByRole(messages, "user"), 3);
+  const assistantTexts = uniqueRecentTexts(messagesByRole(messages, "assistant"), 3);
+  const lines = [
+    `Recurring task candidate (${new Date().toISOString()})`,
+    `Task: ${candidate.task}`,
+    candidate.rationale ? `Rationale: ${candidate.rationale}` : undefined,
+    `Source project: ${ctx.cwd}`,
+    `Source session: ${sessionSourceId(ctx) ?? "unknown"}`,
+    "Approval gate: only propose skill creation after this pattern repeats, and ask the user before creating or updating any skill.",
+    candidate.promptHints.length ? "Prompt hints:" : undefined,
+    ...candidate.promptHints.map((hint) => `- ${hint}`),
+    userTexts.length ? "Recent user wording:" : undefined,
+    ...userTexts.map((text) => `- ${memorySnippet(text, 180)}`),
+    candidate.outcomes.length ? "Outcome hints:" : undefined,
+    ...candidate.outcomes.map((outcome) => `- ${outcome}`),
+    assistantTexts.length ? "Recent outcomes:" : undefined,
+    ...assistantTexts.map((text) => `- ${memorySnippet(text, 180)}`),
+    candidate.relatedMemoryIds.length ? `Related memories: ${candidate.relatedMemoryIds.join(", ")}` : undefined,
+  ].filter(Boolean) as string[];
+  return lines.join("\n");
+}
+
+async function rememberRecurringTaskCandidates(backend: HoppiBackend, ctx: ExtensionContext, messages: readonly AgentMessageLike[], candidates: readonly RecurringTaskCandidate[]): Promise<number> {
+  if (!backend.remember || candidates.length === 0) return 0;
+  let saved = 0;
+  const project = recurringTaskProjectRef();
+  for (const candidate of candidates.slice(0, 2)) {
+    await backend.remember({
+      project,
+      content: recurringTaskCandidateContent(candidate, messages, ctx),
+      tags: Array.from(new Set(["oppi-recurring-task-candidate", "system-scope", "skill-candidate", ...candidate.tags])),
+      layer: "semantic",
+      confidence: "observed",
+      source: "oppi:recurring-task-mining",
+      sourceSessionId: sessionSourceId(ctx),
+    });
+    saved += 1;
+  }
+  return saved;
+}
+
 function shouldUseModelDistiller(config: MemoryConfig): boolean {
   const explicit = process.env.OPPI_MEMORY_DISTILL_AI?.trim().toLowerCase();
   if (explicit === "1" || explicit === "true" || explicit === "yes") return true;
@@ -796,7 +989,7 @@ async function buildModelTurnSummary(messages: readonly AgentMessageLike[], ctx:
   if (!user || !assistant) return undefined;
 
   const prompt = [
-    MEMORY_DISTILLER_PROMPT,
+    `${MEMORY_DISTILLER_PROMPT}${promptVariantAppend("memory-distiller-user-prompt.md")}`,
     "",
     "Turn input:",
     JSON.stringify({ user, assistant }, null, 2),
@@ -829,9 +1022,10 @@ async function buildModelTurnSummary(messages: readonly AgentMessageLike[], ctx:
   const parsed = parseJsonObject(raw);
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return undefined;
   const distilled = parsed as DistilledTurnMemory;
-  if (distilled.remember === false) return { kind: "skip" };
+  const recurringCandidates = recurringTaskCandidates(distilled.recurringTasks ?? distilled.recurringTaskCandidates);
+  if (distilled.remember === false) return { kind: "skip", recurringCandidates };
   const content = distilledTurnContent(distilled);
-  return content ? { kind: "memory", content, tags: distillerTags(distilled) } : undefined;
+  return content ? { kind: "memory", content, tags: distillerTags(distilled), recurringCandidates } : undefined;
 }
 
 type MemoryMaintenanceEntry = {
@@ -847,6 +1041,17 @@ type MemoryMaintenanceEntry = {
   created_at?: string;
   updated_at?: string;
   strength?: number;
+  retrievalStrength?: number;
+  retrieval_strength?: number;
+  retrievalCount?: number;
+  retrieval_count?: number;
+  useCount?: number;
+  use_count?: number;
+  lastRetrievedAt?: string;
+  last_retrieved_at?: string;
+  retrieved_at?: string;
+  lastUsedAt?: string;
+  last_used_at?: string;
   superseded_by?: string | null;
   parents?: string[];
 };
@@ -891,6 +1096,7 @@ type MemoryMaintenanceApplyResult = {
   deleted: string[];
   skippedPinned: string[];
   skippedVerified: string[];
+  skippedRetrieval: string[];
   consolidateResult?: unknown;
 };
 
@@ -909,6 +1115,7 @@ type DreamStageResult = {
   deleted: string[];
   skippedPinned: string[];
   skippedVerified: string[];
+  skippedRetrieval: string[];
   notes: string[];
 };
 
@@ -964,10 +1171,12 @@ Age-aware policy:
 - Middle-aged memories should keep decisions, changed areas, and gotchas; compress tool logs and step-by-step chatter.
 - Older memories should keep architecture intent, product decisions, user preferences, recurring gotchas, release state, and roadmap context; drop low-level code churn unless it still explains current architecture.
 - If two memories conflict about the same subsystem, prefer newer/current facts, but preserve the older fact only if it explains historical context.
+- Retrieval telemetry is a relevance signal: repeated or recent retrieval/use should protect or bias a memory even when it is old.
 
 Hard safety rules:
 - Pinned/starred records are protected: never put them in delete, and only cite them as sourceIds when the source should remain.
 - Never delete verified memories unless they are sourceIds of a better verified consolidation you create in this response.
+- Never delete retrieval-strengthened memories unless they are sourceIds of a better consolidation you create in this response.
 - Auto-delete only obvious duplicates, noise, stale inferred summaries, or memories fully superseded by your consolidation.
 - Do not invent facts. If uncertain, keep.
 
@@ -991,10 +1200,12 @@ Goal:
 - when two memories describe the same system and conflict, newer memories win unless the older memory captures important historical rationale
 - produce a small set of durable verified semantic consolidations that preserve architecture decisions, product direction, user preferences, release state, recurring gotchas, and current roadmap
 - remove older implementation details once they are no longer needed, especially repeated file lists, tool logs, and stale turn/session summaries
+- use retrieval telemetry as a keep/bias signal so repeated-use memories are not pruned as stale noise
 
 Hard safety rules:
 - Pinned/starred records are protected: never put them in delete.
 - Never delete verified memories unless they are sourceIds of a better verified consolidation you create in this response.
+- Never delete retrieval-strengthened memories unless they are sourceIds of a better consolidation you create in this response.
 - Do not delete merely because a memory is old. Delete because it is superseded, duplicated, noisy, or replaced.
 - Newer facts win over older facts for the same subsystem.
 - Do not invent facts. If uncertain, keep.
@@ -1104,6 +1315,63 @@ function memoryCreatedMs(entry: MemoryMaintenanceEntry): number {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+function numericEntryField(entry: MemoryMaintenanceEntry, keys: readonly (keyof MemoryMaintenanceEntry)[]): number | undefined {
+  for (const key of keys) {
+    const value = entry[key];
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+  }
+  return undefined;
+}
+
+function dateEntryField(entry: MemoryMaintenanceEntry, keys: readonly (keyof MemoryMaintenanceEntry)[]): string | undefined {
+  for (const key of keys) {
+    const value = entry[key];
+    if (typeof value === "string" && value.trim()) return value;
+  }
+  return undefined;
+}
+
+function retrievalUseCount(entry: MemoryMaintenanceEntry): number {
+  return Math.max(0, numericEntryField(entry, ["retrievalCount", "retrieval_count", "useCount", "use_count"]) ?? 0);
+}
+
+function retrievalStrength(entry: MemoryMaintenanceEntry): number {
+  return Math.max(0, numericEntryField(entry, ["retrievalStrength", "retrieval_strength", "strength"]) ?? 0);
+}
+
+function retrievalLastUsed(entry: MemoryMaintenanceEntry): string | undefined {
+  return dateEntryField(entry, ["lastRetrievedAt", "last_retrieved_at", "retrieved_at", "lastUsedAt", "last_used_at", "updated_at"]);
+}
+
+function retrievalLastUsedMs(entry: MemoryMaintenanceEntry): number {
+  const raw = retrievalLastUsed(entry);
+  const parsed = raw ? Date.parse(raw) : NaN;
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function isRetrievalStrengthenedMemory(entry: MemoryMaintenanceEntry): boolean {
+  const count = retrievalUseCount(entry);
+  const strength = retrievalStrength(entry);
+  if (count >= 2) return true;
+  if (strength >= 0.65) return true;
+  const lastUsed = retrievalLastUsedMs(entry);
+  return count > 0 && lastUsed > 0 && Date.now() - lastUsed < 45 * 24 * 60 * 60 * 1_000;
+}
+
+function retrievalTelemetryRecord(entry: MemoryMaintenanceEntry): Record<string, unknown> | undefined {
+  const count = retrievalUseCount(entry);
+  const strength = retrievalStrength(entry);
+  const lastUsed = retrievalLastUsed(entry);
+  const protectedByUse = isRetrievalStrengthenedMemory(entry);
+  if (!count && !strength && !lastUsed && !protectedByUse) return undefined;
+  return {
+    count,
+    strength: Number(strength.toFixed(3)),
+    lastUsed: lastUsed?.slice(0, 10),
+    protected: protectedByUse,
+  };
+}
+
 function isProtectedMemory(entry: MemoryMaintenanceEntry): boolean {
   return Boolean(entry.pinned || entry.starred);
 }
@@ -1122,6 +1390,7 @@ function maintenanceRecord(entry: MemoryMaintenanceEntry, contentChars = MEMORY_
     strength: typeof entry.strength === "number" ? Number(entry.strength.toFixed(3)) : undefined,
     created: memoryCreated(entry)?.slice(0, 10),
     superseded: Boolean(entry.superseded_by),
+    retrieval: retrievalTelemetryRecord(entry),
     tags: stripProjectTags(entry.tags),
     content: memorySnippet(compactMaintenanceContent(entry.content), contentChars),
   };
@@ -1147,7 +1416,7 @@ function isObject(value: unknown): value is Record<string, unknown> {
 
 function sanitizedMaintenanceTags(value: unknown): string[] {
   return stringArray(value, 6, 40)
-    .map((tag) => tag.toLowerCase().replace(/[^a-z0-9:_-]+/g, "-").replace(/^-+|-+$/g, ""))
+    .map(sanitizeMemoryTag)
     .filter((tag) => tag.length >= 2 && !tag.startsWith("project:"));
 }
 
@@ -1235,7 +1504,7 @@ function normalizeMaintenancePlan(parsed: unknown, memories: readonly MemoryMain
   };
 }
 
-function memoryMaintenanceDeletionSet(plan: MemoryMaintenancePlan, memories: readonly MemoryMaintenanceEntry[]): { ids: string[]; skippedPinned: string[]; skippedVerified: string[] } {
+function memoryMaintenanceDeletionSet(plan: MemoryMaintenancePlan, memories: readonly MemoryMaintenanceEntry[]): { ids: string[]; skippedPinned: string[]; skippedVerified: string[]; skippedRetrieval: string[] } {
   const known = new Map(memories.map((entry) => [entry.id, entry]));
   const consolidatedSources = new Set<string>();
   const ids = new Set(plan.deleteIds);
@@ -1248,14 +1517,16 @@ function memoryMaintenanceDeletionSet(plan: MemoryMaintenancePlan, memories: rea
   const allowed: string[] = [];
   const skippedPinned: string[] = [];
   const skippedVerified: string[] = [];
+  const skippedRetrieval: string[] = [];
   for (const id of ids) {
     const entry = known.get(id);
     if (!entry) continue;
     if (isProtectedMemory(entry)) skippedPinned.push(id);
     else if (isVerifiedMemory(entry) && !consolidatedSources.has(id)) skippedVerified.push(id);
+    else if (isRetrievalStrengthenedMemory(entry) && !consolidatedSources.has(id)) skippedRetrieval.push(id);
     else allowed.push(id);
   }
-  return { ids: allowed, skippedPinned, skippedVerified };
+  return { ids: allowed, skippedPinned, skippedVerified, skippedRetrieval };
 }
 
 async function buildMaintenancePlanWithCandidates(input: {
@@ -1343,7 +1614,7 @@ async function buildMaintenancePlanWithModel(ctx: ExtensionContext, config: Memo
     ctx,
     memories,
     candidates,
-    systemPrompt: MEMORY_MAINTENANCE_PROMPT,
+    systemPrompt: `${MEMORY_MAINTENANCE_PROMPT}${promptVariantAppend("memory-maintenance-system.md")}`,
     maxPromptChars: MEMORY_MAINTENANCE_MAX_PROMPT_CHARS,
     maxOutputTokens: MEMORY_MAINTENANCE_MAX_OUTPUT_TOKENS,
   });
@@ -1356,7 +1627,7 @@ async function buildDeepMaintenancePlanWithModel(ctx: ExtensionContext, config: 
     ctx,
     memories,
     candidates,
-    systemPrompt: MEMORY_DEEP_MAINTENANCE_PROMPT,
+    systemPrompt: `${MEMORY_DEEP_MAINTENANCE_PROMPT}${promptVariantAppend("memory-deep-maintenance-system.md")}`,
     maxPromptChars: MEMORY_DEEP_MAINTENANCE_MAX_PROMPT_CHARS,
     maxOutputTokens: MEMORY_DEEP_MAINTENANCE_MAX_OUTPUT_TOKENS,
     contentChars: 1_800,
@@ -1395,7 +1666,7 @@ async function applyMemoryMaintenancePlan(backend: HoppiBackend, project: HoppiP
 
   let consolidateResult: unknown;
   if (backend.consolidate) consolidateResult = await backend.consolidate({ project, dryRun: false, budget: 1_500 });
-  return { created, deleted, skippedPinned: deletion.skippedPinned, skippedVerified: deletion.skippedVerified, consolidateResult };
+  return { created, deleted, skippedPinned: deletion.skippedPinned, skippedVerified: deletion.skippedVerified, skippedRetrieval: deletion.skippedRetrieval, consolidateResult };
 }
 
 function numericResult(value: unknown, key: string): number | undefined {
@@ -1420,8 +1691,8 @@ function formatMaintenanceSummary(input: {
     `Model used: ${input.modelLabel} (${input.modelReason})`,
     `Scanned: ${input.scanned}${input.total > input.scanned ? ` of ${input.total} (limit ${input.limit})` : ""}`,
     input.dryRun
-      ? `Planned: create ${input.plan.consolidate.length}, delete ${plannedDeleteIds.length}${deletion.skippedVerified.length ? `, verified skipped ${deletion.skippedVerified.length}` : ""}`
-      : `Applied: created ${input.apply?.created.length ?? 0}, deleted ${input.apply?.deleted.length ?? 0}, protected skipped ${input.apply?.skippedPinned.length ?? 0}${input.apply?.skippedVerified.length ? `, verified skipped ${input.apply.skippedVerified.length}` : ""}`,
+      ? `Planned: create ${input.plan.consolidate.length}, delete ${plannedDeleteIds.length}${deletion.skippedVerified.length ? `, verified skipped ${deletion.skippedVerified.length}` : ""}${deletion.skippedRetrieval.length ? `, retrieval skipped ${deletion.skippedRetrieval.length}` : ""}`
+      : `Applied: created ${input.apply?.created.length ?? 0}, deleted ${input.apply?.deleted.length ?? 0}, protected skipped ${input.apply?.skippedPinned.length ?? 0}${input.apply?.skippedVerified.length ? `, verified skipped ${input.apply.skippedVerified.length}` : ""}${input.apply?.skippedRetrieval.length ? `, retrieval skipped ${input.apply.skippedRetrieval.length}` : ""}`,
   ];
 
   const semanticCreated = numericResult(input.apply?.consolidateResult, "semanticCreated");
@@ -1514,7 +1785,7 @@ async function runMemoryMaintenance(ctx: ExtensionCommandContext, args: string |
     if (!parsed.yes) {
       const accepted = await ctx.ui.confirm(
         "Apply memory maintenance?",
-        `Model: ${planResult.modelLabel}\nCreate ${planResult.plan.consolidate.length} consolidated memories and delete/replace ${plannedDelete.ids.length} memories. Protected skipped: ${plannedDelete.skippedPinned.length}. Verified skipped: ${plannedDelete.skippedVerified.length}.`,
+        `Model: ${planResult.modelLabel}\nCreate ${planResult.plan.consolidate.length} consolidated memories and delete/replace ${plannedDelete.ids.length} memories. Protected skipped: ${plannedDelete.skippedPinned.length}. Verified skipped: ${plannedDelete.skippedVerified.length}. Retrieval-strengthened skipped: ${plannedDelete.skippedRetrieval.length}.`,
       );
       if (!accepted) {
         publishStatus(ctx, "mem:on");
@@ -1544,7 +1815,7 @@ async function runMemoryMaintenance(ctx: ExtensionCommandContext, args: string |
 }
 
 function emptyDreamStageResult(): DreamStageResult {
-  return { created: [], deleted: [], skippedPinned: [], skippedVerified: [], notes: [] };
+  return { created: [], deleted: [], skippedPinned: [], skippedVerified: [], skippedRetrieval: [], notes: [] };
 }
 
 function dreamStatePath(): string {
@@ -1606,7 +1877,7 @@ function duplicateFingerprint(entry: MemoryMaintenanceEntry): string | undefined
 }
 
 function isObviousNoiseMemory(entry: MemoryMaintenanceEntry): boolean {
-  if (isProtectedMemory(entry) || isVerifiedMemory(entry)) return false;
+  if (isProtectedMemory(entry) || isVerifiedMemory(entry) || isRetrievalStrengthenedMemory(entry)) return false;
   const text = compactMaintenanceContent(entry.content).toLowerCase();
   if (text.length <= 320 && /\b(cd|cwd|current working directory|working directory)\b/.test(text) && !/changed|implemented|decision|published|fixed|added|removed/.test(text)) return true;
   if (text.length <= 260 && /^\[?tool[:\]]/.test(text)) return true;
@@ -1622,6 +1893,9 @@ function dreamMemoryScore(entry: MemoryMaintenanceEntry): number {
   if (entry.source === "oppi:memory-maintenance") score += 200;
   if (entry.confidence === "observed") score += 40;
   if (entry.confidence === "inferred") score -= 40;
+  score += Math.min(400, retrievalUseCount(entry) * 80);
+  score += Math.min(300, retrievalStrength(entry) * 300);
+  score += Math.min(120, retrievalLastUsedMs(entry) / 20_000_000_000);
   score += Math.min(200, compactMaintenanceContent(entry.content).length / 20);
   score += Math.min(200, memoryCreatedMs(entry) / 10_000_000_000);
   return score;
@@ -1643,6 +1917,10 @@ async function runDreamStage1Duplicates(backend: HoppiBackend, memories: readonl
     }
     if (isVerifiedMemory(entry) && !verifiedKeeper) {
       result.skippedVerified.push(entry.id);
+      return;
+    }
+    if (isRetrievalStrengthenedMemory(entry) && !verifiedKeeper) {
+      result.skippedRetrieval.push(entry.id);
       return;
     }
     await backend.forget!(entry.id);
@@ -1685,6 +1963,7 @@ function stageFromMaintenance(planResult: MaintenancePlanResult, applied: Memory
     deleted: applied.deleted,
     skippedPinned: applied.skippedPinned,
     skippedVerified: applied.skippedVerified,
+    skippedRetrieval: applied.skippedRetrieval,
     notes: planResult.plan.notes,
     modelLabel: planResult.modelLabel,
     modelReason: planResult.modelReason,
@@ -1693,8 +1972,8 @@ function stageFromMaintenance(planResult: MaintenancePlanResult, applied: Memory
 
 function formatDreamStageLine(label: string, stage: DreamStageResult & { modelLabel?: string; modelReason?: string }): string {
   const model = stage.modelLabel ? ` · ${stage.modelLabel}` : "";
-  const skipped = stage.skippedPinned.length || stage.skippedVerified.length
-    ? ` · skipped protected ${stage.skippedPinned.length}, verified ${stage.skippedVerified.length}`
+  const skipped = stage.skippedPinned.length || stage.skippedVerified.length || stage.skippedRetrieval.length
+    ? ` · skipped protected ${stage.skippedPinned.length}, verified ${stage.skippedVerified.length}, retrieval ${stage.skippedRetrieval.length}`
     : "";
   return `${label}: created ${stage.created.length}, deleted ${stage.deleted.length}${skipped}${model}`;
 }
@@ -1834,20 +2113,26 @@ class HoppiMemoryWorker {
     this.enqueue(ctx, async (backend) => {
       if (!backend.remember) return;
       const distilled = await buildModelTurnSummary(messages, ctx, config).catch(() => undefined);
-      if (distilled?.kind === "skip") return;
-      const summary = distilled?.kind === "memory" ? distilled.content : fallbackSummary;
-      if (!summary) return;
-      this.lastTurnSummary = summary;
-      await backend.remember({
-        project: projectRef(ctx),
-        content: summary,
-        tags: ["oppi-turn-summary", "agent_end", ...(distilled?.kind === "memory" ? distilled.tags : [])],
-        layer: "buffer",
-        confidence: "observed",
-        source: "oppi:agent_end",
-        sourceSessionId: sessionSourceId(ctx),
-      });
-      this.markDirty(ctx);
+      const recurringCandidates = distilled?.recurringCandidates ?? [];
+      const shouldSaveProjectSummary = distilled?.kind !== "skip";
+      if (shouldSaveProjectSummary) {
+        const summary = distilled?.kind === "memory" ? distilled.content : fallbackSummary;
+        if (summary) {
+          this.lastTurnSummary = summary;
+          await backend.remember({
+            project: projectRef(ctx),
+            content: summary,
+            tags: ["oppi-turn-summary", "agent_end", ...(distilled?.kind === "memory" ? distilled.tags : [])],
+            layer: "buffer",
+            confidence: "observed",
+            source: "oppi:agent_end",
+            sourceSessionId: sessionSourceId(ctx),
+          });
+          this.markDirty(ctx);
+        }
+      }
+      const recurringSaved = await rememberRecurringTaskCandidates(backend, ctx, messages, recurringCandidates);
+      if (recurringSaved > 0) publishStatus(ctx, "mem:recurring");
     });
   }
 
@@ -1987,6 +2272,11 @@ function nextValue<T extends string | number>(values: readonly T[], current: T):
   return values[(index + 1) % values.length] ?? values[0]!;
 }
 
+function parseSettingsList(value: string | undefined): string[] | undefined {
+  if (value === undefined) return undefined;
+  return [...new Set(value.split(",").map((item) => item.trim()).filter(Boolean))];
+}
+
 const ANSI_PATTERN = /\x1B\[[0-?]*[ -/]*[@-~]/g;
 
 function isZeroWidthCodePoint(code: number): boolean {
@@ -2028,11 +2318,14 @@ class OppiSettingsComponent implements Component {
 
   constructor(
     private readonly theme: Theme,
+    private readonly cwd: string,
     initialTab: number,
     private readonly getMemoryConfig: () => MemoryConfig,
     private readonly saveMemoryConfig: (config: MemoryConfig) => void,
     private readonly getAskUserConfig: () => AskUserConfig,
     private readonly saveAskUserConfig: (config: AskUserConfig) => void,
+    private readonly getPiSettingsConfig: () => PiSettingsConfig,
+    private readonly savePiSettingsConfig: (config: PiSettingsConfig) => void,
     private readonly getFooterConfig: () => FooterConfig,
     private readonly saveFooterConfig: (config: FooterConfig) => void,
     private readonly getCompactConfig: () => OppiCompactConfig,
@@ -2119,8 +2412,8 @@ class OppiSettingsComponent implements Component {
   private rows(): SettingRow[] {
     if (this.tab === 0) {
       return [
-        { label: "Settings command", value: "/settings:oppi", description: "Stage 1 uses this namespaced command because Pi owns the built-in /settings command." },
-        { label: "Future wrapper", value: "/settings", description: "The OPPi wrapper should route /settings to this unified surface and embed/delegate Pi native settings." },
+        { label: "Settings command", value: "/settings:oppi", description: "Unified OPPi settings, including OPPi controls and the integrated Pi tab." },
+        { label: "Builtin /settings", value: "Pi-owned", description: "Pi still hard-codes /settings before extensions; native OPPi TUI work should route it here." },
         { label: "Memory shortcut", value: "/memory", description: "Opens Hoppi dashboard; CLI keeps only core toggles and Hoppi owns detailed settings." },
         {
           label: "Question timeout",
@@ -2134,6 +2427,138 @@ class OppiSettingsComponent implements Component {
     }
 
     if (this.tab === 1) {
+      const config = this.getPiSettingsConfig();
+      return [
+        {
+          label: "Auto-compact",
+          value: bool(config.autoCompact),
+          description: "Pi's built-in automatic context compaction switch.",
+          cycle: () => this.updatePiSettings({ ...config, autoCompact: !config.autoCompact }),
+        },
+        {
+          label: "Steering mode",
+          value: config.steeringMode,
+          description: "Enter while streaming: deliver all queued steering messages or one at a time.",
+          cycle: () => this.updatePiSettings({ ...config, steeringMode: nextValue(["all", "one-at-a-time"] as const, config.steeringMode) }),
+        },
+        {
+          label: "Follow-up mode",
+          value: config.followUpMode,
+          description: "Alt+Enter follow-ups: deliver all queued messages or one at a time.",
+          cycle: () => this.updatePiSettings({ ...config, followUpMode: nextValue(["all", "one-at-a-time"] as const, config.followUpMode) }),
+        },
+        {
+          label: "Transport",
+          value: config.transport,
+          description: "Preferred provider transport when a provider supports multiple options.",
+          cycle: () => this.updatePiSettings({ ...config, transport: nextValue(TRANSPORT_VALUES, config.transport) }),
+        },
+        {
+          label: "Default thinking",
+          value: config.defaultThinkingLevel,
+          description: "Default reasoning level for thinking-capable models.",
+          cycle: () => this.updatePiSettings({ ...config, defaultThinkingLevel: nextValue(THINKING_LEVEL_VALUES, config.defaultThinkingLevel) }),
+        },
+        {
+          label: "Hide thinking",
+          value: bool(config.hideThinkingBlock),
+          description: "Hide model thinking blocks in assistant responses.",
+          cycle: () => this.updatePiSettings({ ...config, hideThinkingBlock: !config.hideThinkingBlock }),
+        },
+        {
+          label: "Show images",
+          value: bool(config.showImages),
+          description: "Render supported images inline in capable terminals.",
+          cycle: () => this.updatePiSettings({ ...config, showImages: !config.showImages }),
+        },
+        {
+          label: "Image width",
+          value: `${config.imageWidthCells}`,
+          description: "Preferred inline image width in terminal cells.",
+          cycle: () => this.updatePiSettings({ ...config, imageWidthCells: nextValue(IMAGE_WIDTH_VALUES, config.imageWidthCells as 60 | 80 | 120) }),
+        },
+        {
+          label: "Auto-resize images",
+          value: bool(config.autoResizeImages),
+          description: "Resize large images before sending them to model providers.",
+          cycle: () => this.updatePiSettings({ ...config, autoResizeImages: !config.autoResizeImages }),
+        },
+        {
+          label: "Block images",
+          value: bool(config.blockImages),
+          description: "Prevent images from being sent to model providers.",
+          cycle: () => this.updatePiSettings({ ...config, blockImages: !config.blockImages }),
+        },
+        {
+          label: "Skill commands",
+          value: bool(config.enableSkillCommands),
+          description: "Register skills as slash commands.",
+          cycle: () => this.updatePiSettings({ ...config, enableSkillCommands: !config.enableSkillCommands }),
+        },
+        {
+          label: "Quiet startup",
+          value: bool(config.quietStartup),
+          description: "Reduce verbose startup output.",
+          cycle: () => this.updatePiSettings({ ...config, quietStartup: !config.quietStartup }),
+        },
+        {
+          label: "Collapse changelog",
+          value: bool(config.collapseChangelog),
+          description: "Show condensed changelog output after updates.",
+          cycle: () => this.updatePiSettings({ ...config, collapseChangelog: !config.collapseChangelog }),
+        },
+        {
+          label: "Install telemetry",
+          value: bool(config.enableInstallTelemetry),
+          description: "Send Pi's anonymous install/update telemetry ping.",
+          cycle: () => this.updatePiSettings({ ...config, enableInstallTelemetry: !config.enableInstallTelemetry }),
+        },
+        {
+          label: "Double Escape",
+          value: config.doubleEscapeAction,
+          description: "Action when pressing Escape twice with an empty editor.",
+          cycle: () => this.updatePiSettings({ ...config, doubleEscapeAction: nextValue(DOUBLE_ESCAPE_VALUES, config.doubleEscapeAction) }),
+        },
+        {
+          label: "Tree filter",
+          value: config.treeFilterMode,
+          description: "Default filter when opening the session tree.",
+          cycle: () => this.updatePiSettings({ ...config, treeFilterMode: nextValue(TREE_FILTER_VALUES, config.treeFilterMode) }),
+        },
+        {
+          label: "Hardware cursor",
+          value: bool(config.showHardwareCursor),
+          description: "Show the terminal cursor while positioning it for IME support.",
+          cycle: () => this.updatePiSettings({ ...config, showHardwareCursor: !config.showHardwareCursor }),
+        },
+        {
+          label: "Editor padding",
+          value: `${config.editorPaddingX}`,
+          description: "Horizontal input editor padding.",
+          cycle: () => this.updatePiSettings({ ...config, editorPaddingX: nextValue(EDITOR_PADDING_VALUES, config.editorPaddingX as 0 | 1 | 2 | 3) }),
+        },
+        {
+          label: "Autocomplete items",
+          value: `${config.autocompleteMaxVisible}`,
+          description: "Maximum visible items in autocomplete dropdowns.",
+          cycle: () => this.updatePiSettings({ ...config, autocompleteMaxVisible: nextValue(AUTOCOMPLETE_VISIBLE_VALUES, config.autocompleteMaxVisible as 3 | 5 | 7 | 10 | 15 | 20) }),
+        },
+        {
+          label: "Clear on shrink",
+          value: bool(config.clearOnShrink),
+          description: "Clear empty rows when content shrinks; may reduce stale terminal artifacts.",
+          cycle: () => this.updatePiSettings({ ...config, clearOnShrink: !config.clearOnShrink }),
+        },
+        {
+          label: "Terminal progress",
+          value: bool(config.showTerminalProgress),
+          description: "Show OSC 9;4 progress indicators in compatible terminal tabs.",
+          cycle: () => this.updatePiSettings({ ...config, showTerminalProgress: !config.showTerminalProgress }),
+        },
+      ];
+    }
+
+    if (this.tab === 2) {
       const config = this.getFooterConfig();
       return [
         {
@@ -2181,7 +2606,7 @@ class OppiSettingsComponent implements Component {
       ];
     }
 
-    if (this.tab === 2) {
+    if (this.tab === 3) {
       const config = this.getMemoryConfig();
       return [
         {
@@ -2248,7 +2673,7 @@ class OppiSettingsComponent implements Component {
       ];
     }
 
-    if (this.tab === 3) {
+    if (this.tab === 4) {
       const config = this.getCompactConfig();
       return [
         {
@@ -2278,8 +2703,9 @@ class OppiSettingsComponent implements Component {
       ];
     }
 
-    if (this.tab === 4) {
+    if (this.tab === 5) {
       const config = this.getPermissionConfig();
+      const sandbox = effectiveSandboxConfig(config, this.cwd);
       const timeout = `${Math.round(config.reviewTimeoutMs / 1000)}s`;
       const timeoutValues = PERMISSION_TIMEOUT_SECONDS.map(String);
       return [
@@ -2300,6 +2726,42 @@ class OppiSettingsComponent implements Component {
           value: config.reviewerModel || "auto",
           description: "Model used by the isolated OPPi Guardian reviewer. Use /permissions reviewer-model provider/model for exact control.",
           action: "permission-reviewer-model",
+        },
+        {
+          label: "Sandbox internet",
+          value: bool(sandbox.allowInternet),
+          description: "Allow sandboxed commands to use general internet/network access.",
+          cycle: () => this.updatePermission({ ...config, sandbox: { ...config.sandbox, allowInternet: !sandbox.allowInternet } }),
+        },
+        {
+          label: "Sandbox SSH",
+          value: bool(sandbox.allowSsh),
+          description: "Allow SSH/scp/sftp-style remote access separately from general internet access.",
+          cycle: () => this.updatePermission({ ...config, sandbox: { ...config.sandbox, allowSsh: !sandbox.allowSsh } }),
+        },
+        {
+          label: "Sandbox project roots",
+          value: sandbox.projectRoots.join(", "),
+          description: "Default project folders. Read/write roots fall back to these when unset.",
+          action: "permission-sandbox-project",
+        },
+        {
+          label: "Sandbox read roots",
+          value: sandbox.readableRoots.join(", "),
+          description: "Folders sandboxed tools may read. Can include explicit outside-project read-only roots.",
+          action: "permission-sandbox-read",
+        },
+        {
+          label: "Sandbox write roots",
+          value: sandbox.writableRoots.join(", "),
+          description: "Folders sandboxed tools may write. Keep this narrow; defaults to project roots.",
+          action: "permission-sandbox-write",
+        },
+        {
+          label: "Protected patterns",
+          value: sandbox.protectedPatterns.join(", ") || "default",
+          description: "Extra secret/protected path patterns blocked even when roots allow the path.",
+          action: "permission-sandbox-protected",
         },
         { label: "Review history", value: "open", description: "Show recent auto-review decisions and cached approvals.", action: "permission-history" },
         { label: "Clear session allowances", value: "clear", description: "Reset manual allowances, auto-review cache, and denial circuit breakers.", action: "permission-clear" },
@@ -2325,6 +2787,10 @@ class OppiSettingsComponent implements Component {
 
   private updateAskUser(config: AskUserConfig): void {
     this.saveAskUserConfig(config);
+  }
+
+  private updatePiSettings(config: PiSettingsConfig): void {
+    this.savePiSettingsConfig(config);
   }
 
   private updateFooter(config: FooterConfig): void {
@@ -2376,11 +2842,12 @@ class OppiSettingsComponent implements Component {
 
 function initialSettingsTab(args: string | undefined): number {
   const normalized = (args ?? "").trim().toLowerCase();
-  if (normalized.startsWith("footer") || normalized.startsWith("bottom") || normalized.startsWith("status")) return 1;
-  if (normalized.startsWith("memory")) return 2;
-  if (normalized.startsWith("compact") || normalized.startsWith("idle")) return 3;
-  if (normalized.startsWith("permission") || normalized.startsWith("perm")) return 4;
-  if (normalized.startsWith("theme")) return 5;
+  if (normalized.startsWith("pi") || normalized.startsWith("native") || normalized.startsWith("underlying")) return 1;
+  if (normalized.startsWith("footer") || normalized.startsWith("bottom") || normalized.startsWith("status")) return 2;
+  if (normalized.startsWith("memory")) return 3;
+  if (normalized.startsWith("compact") || normalized.startsWith("idle")) return 4;
+  if (normalized.startsWith("permission") || normalized.startsWith("perm") || normalized.startsWith("sandbox")) return 5;
+  if (normalized.startsWith("theme")) return 6;
   return 0;
 }
 
@@ -2390,6 +2857,7 @@ async function showSettings(pi: ExtensionAPI, ctx: ExtensionCommandContext, args
     const action = await ctx.ui.custom<SettingsAction | undefined>((tui, theme, _kb, done) => {
       const component = new OppiSettingsComponent(
         theme,
+        ctx.cwd,
         initialTab,
         () => readMemoryConfig(ctx.cwd),
         (config) => {
@@ -2400,6 +2868,13 @@ async function showSettings(pi: ExtensionAPI, ctx: ExtensionCommandContext, args
         (config) => {
           writeGlobalAskUserConfig(config);
           tui.requestRender();
+        },
+        () => readPiSettingsConfig(ctx.cwd),
+        (config) => {
+          writePiSettingsConfig(ctx.cwd, config);
+          tui.setShowHardwareCursor(config.showHardwareCursor);
+          tui.setClearOnShrink(config.clearOnShrink);
+          tui.requestRender(true);
         },
         () => readFooterConfig(ctx.cwd),
         (config) => {
@@ -2457,6 +2932,36 @@ async function showSettings(pi: ExtensionAPI, ctx: ExtensionCommandContext, args
       }
     }
     if (action === "permission-status") ctx.ui.notify(permissionStatusText(readPermissionConfig(ctx.cwd), ctx), "info");
+    if (action === "permission-sandbox-project" || action === "permission-sandbox-read" || action === "permission-sandbox-write" || action === "permission-sandbox-protected") {
+      const config = readPermissionConfig(ctx.cwd);
+      const sandbox = effectiveSandboxConfig(config, ctx.cwd);
+      const current = action === "permission-sandbox-project"
+        ? sandbox.projectRoots
+        : action === "permission-sandbox-read"
+          ? sandbox.readableRoots
+          : action === "permission-sandbox-write"
+            ? sandbox.writableRoots
+            : sandbox.protectedPatterns;
+      const label = action === "permission-sandbox-project"
+        ? "Sandbox project roots"
+        : action === "permission-sandbox-read"
+          ? "Sandbox readable roots"
+          : action === "permission-sandbox-write"
+            ? "Sandbox writable roots"
+            : "Sandbox protected patterns";
+      const value = await ctx.ui.input(`${label} (comma-separated)`, current.join(", "));
+      const parsed = parseSettingsList(value);
+      if (parsed !== undefined) {
+        const nextSandbox = { ...config.sandbox };
+        if (action === "permission-sandbox-project") nextSandbox.projectRoots = parsed;
+        if (action === "permission-sandbox-read") nextSandbox.readableRoots = parsed;
+        if (action === "permission-sandbox-write") nextSandbox.writableRoots = parsed;
+        if (action === "permission-sandbox-protected") nextSandbox.protectedPatterns = parsed;
+        const next = { ...config, sandbox: nextSandbox };
+        writeGlobalPermissionConfig(next);
+        ctx.ui.notify(`Sandbox updated: ${sandboxStatusSummary(readPermissionConfig(ctx.cwd), ctx.cwd)}`, "info");
+      }
+    }
     if (action === "theme-preview") {
       const selected = await openThemePreview(ctx);
       if (selected) {
@@ -2688,8 +3193,8 @@ export default function memoryExtension(pi: ExtensionAPI) {
   });
 
   pi.registerCommand("settings:oppi", {
-    description: "Open unified OPPi settings (General, Memory, Compaction, Permissions, Theme).",
-    getArgumentCompletions: (prefix: string) => ["general", "memory", "compaction", "permissions", "theme"]
+    description: "Open unified OPPi settings, including Pi and sandbox controls.",
+    getArgumentCompletions: (prefix: string) => ["general", "pi", "footer", "memory", "compaction", "permissions", "sandbox", "theme"]
       .filter((value) => value.startsWith(prefix.toLowerCase()))
       .map((value) => ({ value, label: value })),
     handler: async (args, ctx) => showSettings(pi, ctx, args),

@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated": "2026-04-29",
+  "updated": "2026-05-10",
   "repositories": [
     {
       "id": "pi-mono",
@@ -36,7 +36,7 @@
       "path": ".reference/codex",
       "license": "Apache-2.0",
       "use": "Review prompt behavior, coding-agent UX, provider/rate-limit references",
-      "shallowCloneCommit": "4f1d5f00f0175e257ddc4a47746453edecb27017"
+      "shallowCloneCommit": "789b7e39dc4128de99796a484ff4d7a02252a9d1"
     },
     {
       "id": "caveman",

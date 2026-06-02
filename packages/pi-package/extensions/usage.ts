@@ -45,10 +45,21 @@ type UsageSnapshot = {
   planType?: string;
   source: "openai-codex" | "local" | "headers" | "unknown";
   fetchedAt: number;
+  session: SessionUsage;
   fiveHour: UsageWindow;
   weekly: UsageWindow;
   additionalWindows?: UsageWindow[];
   notes: string[];
+};
+
+type SessionUsage = {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  totalTokens: number;
+  cost: number;
+  turns: number;
 };
 
 type UsageReport = {
@@ -90,7 +101,7 @@ type OppiSettingsFile = Record<string, any> & {
 };
 
 type OpenAIRateLimitWindow = {
-  usedPercent: number;
+  usedPercent: number | null;
   windowMinutes?: number;
   resetsAt?: number;
 };
@@ -224,9 +235,11 @@ function modelKey(ctx: ExtensionContext): string {
   return modelKeyFor(ctx.model as ModelLike | undefined);
 }
 
-function providerFamily(provider: string | undefined): "openai-codex" | "openai" | "anthropic" | "other" {
+function providerFamily(provider: string | undefined): "openai-codex" | "openai" | "anthropic" | "copilot" | "other" {
   if (!provider) return "other";
   if (provider === "openai-codex") return "openai-codex";
+  if (provider === "github-copilot" || provider.includes("copilot")) return "copilot";
+  if (provider === "meridian") return "anthropic";
   if (provider.includes("openai")) return "openai";
   if (provider === "anthropic" || provider.includes("anthropic")) return "anthropic";
   return "other";
@@ -234,6 +247,8 @@ function providerFamily(provider: string | undefined): "openai-codex" | "openai"
 
 function usageGroupKey(model: ModelLike | undefined): string {
   if (!model) return "unknown";
+  if (model.provider === "github-copilot" || model.provider.includes("copilot")) return "github-copilot";
+  if (model.provider === "meridian") return "meridian";
   const family = providerFamily(model.provider);
   if (family === "openai-codex") return "openai-codex";
   if (family === "anthropic") return "anthropic";
@@ -301,21 +316,28 @@ function formatReset(resetsAt: number | undefined, compact = false): string {
   return `${day} ${time}`;
 }
 
-function bar(percent: number | null, width: number, theme: Theme): string {
+function bar(percent: number | null, width: number, theme: Theme, polarity: "used" | "remaining" = "used"): string {
   const empty = "░".repeat(width);
   if (percent === null) return theme.fg("dim", empty);
   const filled = Math.max(0, Math.min(width, Math.round((percent / 100) * width)));
-  const color = percent >= 90 ? "error" : percent >= 70 ? "warning" : "success";
+  const color = polarity === "remaining"
+    ? percent <= 10 ? "error" : percent <= 30 ? "warning" : "success"
+    : percent >= 90 ? "error" : percent >= 70 ? "warning" : "success";
   return theme.fg(color, "█".repeat(filled)) + theme.fg("dim", "░".repeat(width - filled));
+}
+
+function remainingPercent(window: UsageWindow): number | null {
+  return window.usedPercent === null ? null : clampPercent(100 - window.usedPercent);
 }
 
 function footerLimitWindow(window: UsageWindow, theme: Theme, width = 7, labelOverride?: string): string {
   const originalLabel = displayWindowLabel(window.label);
   const label = labelOverride ?? originalLabel;
-  const pct = window.usedPercent === null ? "?" : `${Math.round(window.usedPercent)}%`;
+  const remaining = remainingPercent(window);
+  const pct = remaining === null ? "?" : `${Math.round(remaining)}% left`;
   const left = formatTimeLeft(window.resetsAt, originalLabel === "5h" || label === "session");
   const leftPart = left ? `${theme.fg("dim", `${left} left`)} ` : "";
-  return `${theme.fg("muted", label)} ${leftPart}${bar(window.usedPercent, width, theme)} ${theme.fg("dim", pct)}`;
+  return `${theme.fg("muted", label)} ${leftPart}${bar(remaining, width, theme, "remaining")} ${theme.fg("dim", pct)}`;
 }
 
 function footerContextWindow(window: UsageWindow, theme: Theme, width = 7): string {
@@ -324,6 +346,28 @@ function footerContextWindow(window: UsageWindow, theme: Theme, width = 7): stri
     ? `${formatTokens(window.usedTokens) || "?"}/${formatTokens(window.limitTokens)}`
     : formatTokens(window.usedTokens) || "?";
   return `${theme.fg("muted", "ctx")} ${theme.fg("dim", tokens)} ${bar(window.usedPercent, width, theme)} ${theme.fg("dim", pct)}`;
+}
+
+function sessionUsageParts(session: SessionUsage, auth: UsageSnapshot["auth"], theme: Theme, includeTurns: boolean): string[] {
+  const parts: string[] = [];
+  if (session.input) parts.push(`↑${formatTokens(session.input)}`);
+  if (session.output) parts.push(`↓${formatTokens(session.output)}`);
+  if (session.cacheRead) parts.push(`R${formatTokens(session.cacheRead)}`);
+  if (session.cacheWrite) parts.push(`W${formatTokens(session.cacheWrite)}`);
+  if (session.cost || auth === "subscription") {
+    parts.push(`$${session.cost.toFixed(3)}${auth === "subscription" ? " (sub)" : ""}`);
+  }
+  if (includeTurns && session.turns) parts.push(theme.fg("dim", `${session.turns} turn${session.turns === 1 ? "" : "s"}`));
+  return parts;
+}
+
+function footerSessionUsage(snapshot: UsageSnapshot, theme: Theme): string {
+  const text = sessionUsageParts(snapshot.session, snapshot.auth, theme, false).join(" ") || "no provider tokens";
+  return `${theme.fg("muted", "session")} ${theme.fg("dim", text)}`;
+}
+
+function hasProviderLimitWindow(window: UsageWindow): boolean {
+  return window.source === "live" || window.source === "headers" || window.usedPercent !== null;
 }
 
 function contextWindow(ctx: ExtensionContext): UsageWindow {
@@ -361,6 +405,47 @@ function totalUsageTokens(usage: any): number {
       (Number(usage.cacheWrite ?? 0) || 0);
 }
 
+function usageCost(usage: any): number {
+  const cost = Number(usage?.cost?.total ?? usage?.cost ?? 0);
+  return Number.isFinite(cost) ? cost : 0;
+}
+
+function usageMatchesModel(message: any, model: ModelLike | undefined): boolean {
+  if (model?.provider && message.provider && message.provider !== model.provider) return false;
+  if (model?.id && message.model && message.model !== model.id) return false;
+  return true;
+}
+
+function collectSessionUsage(ctx: ExtensionContext, model: ModelLike | undefined): SessionUsage {
+  const session: SessionUsage = {
+    input: 0,
+    output: 0,
+    cacheRead: 0,
+    cacheWrite: 0,
+    totalTokens: 0,
+    cost: 0,
+    turns: 0,
+  };
+
+  for (const entry of ctx.sessionManager.getEntries()) {
+    if (entry.type !== "message") continue;
+    const message: any = entry.message;
+    if (message.role !== "assistant" || !usageMatchesModel(message, model)) continue;
+    const usage = message.usage;
+    if (!usage) continue;
+
+    session.input += Number(usage.input ?? 0) || 0;
+    session.output += Number(usage.output ?? 0) || 0;
+    session.cacheRead += Number(usage.cacheRead ?? 0) || 0;
+    session.cacheWrite += Number(usage.cacheWrite ?? 0) || 0;
+    session.totalTokens += totalUsageTokens(usage);
+    session.cost += usageCost(usage);
+    session.turns += 1;
+  }
+
+  return session;
+}
+
 function collectLocalTokens(ctx: ExtensionContext, model: ModelLike | undefined, windowMs: number): { usedTokens: number; resetAt?: number } {
   const now = Date.now();
   const cutoff = now - windowMs;
@@ -371,8 +456,7 @@ function collectLocalTokens(ctx: ExtensionContext, model: ModelLike | undefined,
     if (entry.type !== "message") continue;
     const message: any = entry.message;
     if (message.role !== "assistant") continue;
-    if (model?.provider && message.provider && message.provider !== model.provider) continue;
-    if (model?.id && message.model && message.model !== model.id) continue;
+    if (!usageMatchesModel(message, model)) continue;
 
     const timestamp = typeof message.timestamp === "number" ? message.timestamp : Date.parse(entry.timestamp);
     if (!timestamp || timestamp < cutoff) continue;
@@ -425,6 +509,7 @@ function localSnapshot(ctx: ExtensionContext, model: ModelLike | undefined = ctx
     auth: authKindFor(ctx, model),
     source: "local",
     fetchedAt: Date.now(),
+    session: collectSessionUsage(ctx, model),
     fiveHour: localWindow(ctx, model, "5h", FIVE_HOURS_MS, "5h"),
     weekly: localWindow(ctx, model, "7d", SEVEN_DAYS_MS, "weekly"),
     notes,
@@ -458,13 +543,18 @@ function normalizeBaseUrl(value: string | undefined): string {
 
 function parseOpenAIWindow(raw: any): OpenAIRateLimitWindow | undefined {
   if (!raw || typeof raw !== "object") return undefined;
-  const usedPercent = Number(raw.used_percent);
   const seconds = Number(raw.limit_window_seconds);
+  const usedPercent = Number(raw.used_percent);
   const resetAt = Number(raw.reset_at);
+  const resetAfterSeconds = Number(raw.reset_after_seconds);
   return {
-    usedPercent: Number.isFinite(usedPercent) ? usedPercent : 0,
+    usedPercent: Number.isFinite(usedPercent) ? clampPercent(usedPercent) : null,
     windowMinutes: Number.isFinite(seconds) && seconds > 0 ? seconds / 60 : undefined,
-    resetsAt: Number.isFinite(resetAt) && resetAt > 0 ? resetAt : undefined,
+    resetsAt: Number.isFinite(resetAt) && resetAt > 0
+      ? resetAt
+      : Number.isFinite(resetAfterSeconds) && resetAfterSeconds >= 0
+        ? Math.floor(Date.now() / 1_000 + resetAfterSeconds)
+        : undefined,
   };
 }
 
@@ -512,27 +602,26 @@ function chooseOpenAISnapshot(snapshots: OpenAIRateLimitSnapshot[], modelId: str
 
 function windowsFromOpenAISnapshot(snapshot: OpenAIRateLimitSnapshot): Pick<UsageSnapshot, "fiveHour" | "weekly"> {
   const windows = [snapshot.primary, snapshot.secondary].filter((window): window is OpenAIRateLimitWindow => Boolean(window));
-  const short =
+  const fiveHour =
     windows.find((window) => Math.abs((window.windowMinutes ?? 0) - 300) <= 5) ??
     windows.slice().sort((a, b) => (a.windowMinutes ?? Infinity) - (b.windowMinutes ?? Infinity))[0];
-  const weekly =
-    windows.find((window) => Math.abs((window.windowMinutes ?? 0) - 10_080) <= 30) ??
-    windows.slice().sort((a, b) => (b.windowMinutes ?? 0) - (a.windowMinutes ?? 0))[0];
+  const weekly = windows.find((window) => window !== fiveHour && Math.abs((window.windowMinutes ?? 0) - 10_080) <= 30) ??
+    windows.filter((window) => window !== fiveHour).sort((a, b) => (b.windowMinutes ?? 0) - (a.windowMinutes ?? 0))[0];
 
   return {
     fiveHour: {
-      label: formatWindowLabel(short?.windowMinutes, "5h"),
-      usedPercent: clampPercent(short?.usedPercent),
-      windowMinutes: short?.windowMinutes,
-      resetsAt: short?.resetsAt,
-      source: "live",
+      label: formatWindowLabel(fiveHour?.windowMinutes, "5h"),
+      usedPercent: clampPercent(fiveHour?.usedPercent),
+      windowMinutes: fiveHour?.windowMinutes,
+      resetsAt: fiveHour?.resetsAt,
+      source: fiveHour ? "live" : "unknown",
     },
     weekly: {
       label: formatWindowLabel(weekly?.windowMinutes, "7d"),
       usedPercent: clampPercent(weekly?.usedPercent),
       windowMinutes: weekly?.windowMinutes,
       resetsAt: weekly?.resetsAt,
-      source: "live",
+      source: weekly ? "live" : "unknown",
     },
   };
 }
@@ -582,6 +671,7 @@ async function fetchOpenAICodexUsage(ctx: ExtensionContext, model: ModelLike): P
       planType: selected.planType,
       source: "openai-codex",
       fetchedAt: Date.now(),
+      session: collectSessionUsage(ctx, model),
       ...windows,
       notes: [
         `Live ChatGPT Codex usage from ${url.replace(base, "")}`,
@@ -622,28 +712,24 @@ function parseResetHeader(value: string | undefined): number | undefined {
 
 function parseHeaderLimit(provider: string, headers: Record<string, string>): HeaderLimit | undefined {
   const lower = Object.fromEntries(Object.entries(headers).map(([key, value]) => [key.toLowerCase(), value]));
-  if (providerFamily(provider) === "anthropic") {
-    const limit = Number(lower["anthropic-ratelimit-tokens-limit"] ?? lower["anthropic-ratelimit-requests-limit"]);
-    const remaining = Number(lower["anthropic-ratelimit-tokens-remaining"] ?? lower["anthropic-ratelimit-requests-remaining"]);
-    if (Number.isFinite(limit) && limit > 0 && Number.isFinite(remaining)) {
-      return {
-        usedPercent: clampPercent(((limit - remaining) / limit) * 100) ?? 0,
-        resetsAt: parseResetHeader(lower["anthropic-ratelimit-tokens-reset"] ?? lower["anthropic-ratelimit-requests-reset"]),
-        label: "API",
-      };
-    }
+  const anthropicLimit = Number(lower["anthropic-ratelimit-tokens-limit"] ?? lower["anthropic-ratelimit-requests-limit"]);
+  const anthropicRemaining = Number(lower["anthropic-ratelimit-tokens-remaining"] ?? lower["anthropic-ratelimit-requests-remaining"]);
+  if (Number.isFinite(anthropicLimit) && anthropicLimit > 0 && Number.isFinite(anthropicRemaining)) {
+    return {
+      usedPercent: clampPercent(((anthropicLimit - anthropicRemaining) / anthropicLimit) * 100) ?? 0,
+      resetsAt: parseResetHeader(lower["anthropic-ratelimit-tokens-reset"] ?? lower["anthropic-ratelimit-requests-reset"]),
+      label: "API",
+    };
   }
 
-  if (providerFamily(provider) === "openai") {
-    const limit = Number(lower["x-ratelimit-limit-tokens"] ?? lower["x-ratelimit-limit-requests"]);
-    const remaining = Number(lower["x-ratelimit-remaining-tokens"] ?? lower["x-ratelimit-remaining-requests"]);
-    if (Number.isFinite(limit) && limit > 0 && Number.isFinite(remaining)) {
-      return {
-        usedPercent: clampPercent(((limit - remaining) / limit) * 100) ?? 0,
-        resetsAt: parseResetHeader(lower["x-ratelimit-reset-tokens"] ?? lower["x-ratelimit-reset-requests"]),
-        label: "API",
-      };
-    }
+  const limit = Number(lower["x-ratelimit-limit-tokens"] ?? lower["x-ratelimit-limit-requests"]);
+  const remaining = Number(lower["x-ratelimit-remaining-tokens"] ?? lower["x-ratelimit-remaining-requests"]);
+  if (Number.isFinite(limit) && limit > 0 && Number.isFinite(remaining)) {
+    return {
+      usedPercent: clampPercent(((limit - remaining) / limit) * 100) ?? 0,
+      resetsAt: parseResetHeader(lower["x-ratelimit-reset-tokens"] ?? lower["x-ratelimit-reset-requests"]),
+      label: "API",
+    };
   }
 
   return undefined;
@@ -679,10 +765,8 @@ function preferRepresentative(ctx: ExtensionContext, candidate: ModelLike, exist
 }
 
 function shouldShowInUsage(model: ModelLike | undefined): boolean {
-  // Claude's claude.ai usage endpoint is web-protected and unreliable from Pi.
-  // If users want Claude subscription access, OPPi integrates through Meridian;
-  // Anthropic/Meridian Claude usage is intentionally omitted from /usage and footer bars.
-  return providerFamily(model?.provider) !== "anthropic" && model?.provider !== "meridian";
+  if (!model?.provider || !model.id) return false;
+  return ["openai-codex", "openai", "anthropic", "copilot"].includes(providerFamily(model.provider)) || model.provider === "meridian";
 }
 
 function connectedUsageModels(ctx: ExtensionContext): ModelLike[] {
@@ -704,8 +788,10 @@ function connectedUsageModels(ctx: ExtensionContext): ModelLike[] {
     if (isSameModel(model, current)) return -10;
     const group = usageGroupKey(model);
     if (group === "openai-codex") return 0;
-    if (group === "anthropic") return 1;
+    if (group === "github-copilot") return 1;
     if (group === "openai") return 2;
+    if (group === "anthropic") return 3;
+    if (group === "meridian") return 4;
     return 10;
   };
 
@@ -734,7 +820,7 @@ async function refreshUsageForModel(ctx: ExtensionContext, model: ModelLike | un
     }
   }
 
-  const fallback = localSnapshot(ctx, model, ["Live subscription windows are not exposed for this provider yet; showing local rolling usage."]);
+  const fallback = localSnapshot(ctx, model, ["Pi-style session usage plus latest provider rate-limit headers when available."]);
   remoteUsageCache.set(key, fallback);
   requestRender?.();
   return fallback;
@@ -889,10 +975,23 @@ function keybindingHintsLine(theme: Theme, width: number, footerData?: any): str
 function usageFooterParts(snapshot: UsageSnapshot | undefined, theme: Theme, width: number, display: FooterUsageDisplay): string[] {
   if (!snapshot || display === "off") return [];
   const parts: string[] = [];
-  if (display === "session-weekly" || display === "session") parts.push(footerLimitWindow(snapshot.fiveHour, theme, width, "session"));
-  if (display === "session-weekly" || display === "weekly") parts.push(footerLimitWindow(snapshot.weekly, theme, width, "weekly"));
+  if (display === "session-weekly" || display === "session") {
+    parts.push(hasProviderLimitWindow(snapshot.fiveHour) ? footerLimitWindow(snapshot.fiveHour, theme, width) : footerSessionUsage(snapshot, theme));
+  }
+  if ((display === "session-weekly" || display === "weekly") && hasProviderLimitWindow(snapshot.weekly)) {
+    parts.push(footerLimitWindow(snapshot.weekly, theme, width));
+  }
   return parts;
 }
+
+export const __testUsageMath = {
+  currentUsageReport,
+  openAISnapshotsFromPayload,
+  parseHeaderLimit,
+  usageFooterParts,
+  usageLines,
+  windowsFromOpenAISnapshot,
+};
 
 function footerStatsLine(pi: ExtensionAPI, ctx: ExtensionContext, theme: Theme, width: number, footerData: any | undefined, config: FooterConfig): string {
   const report = currentUsageReport(ctx);
@@ -1007,7 +1106,10 @@ function installFooterAfterSessionHandlers(pi: ExtensionAPI, ctx: ExtensionConte
 }
 
 function usageWindowLine(window: UsageWindow, theme: Theme): string {
-  const pct = window.usedPercent === null ? "unknown" : `${window.usedPercent.toFixed(1)}% used`;
+  const remaining = remainingPercent(window);
+  const pct = window.usedPercent === null || remaining === null
+    ? "remaining unknown"
+    : `${remaining.toFixed(1)}% remaining (${window.usedPercent.toFixed(1)}% used)`;
   const left = formatTimeLeft(window.resetsAt, displayWindowLabel(window.label) === "5h");
   const reset = formatReset(window.resetsAt);
   const tokens = window.limitTokens
@@ -1017,7 +1119,12 @@ function usageWindowLine(window: UsageWindow, theme: Theme): string {
       : "";
   const note = window.note ? theme.fg("dim", ` • ${window.note}`) : "";
   const resetText = left ? ` • ${left} left${reset ? ` (resets ${reset})` : ""}` : reset ? ` • resets ${reset}` : "";
-  return `${window.label.padEnd(12)} ${bar(window.usedPercent, 20, theme)}  ${pct}${resetText}${tokens}${note}`;
+  return `${window.label.padEnd(12)} ${bar(remaining, 20, theme, "remaining")}  ${pct}${resetText}${tokens}${note}`;
+}
+
+function sessionUsageLine(snapshot: UsageSnapshot, theme: Theme): string {
+  const parts = sessionUsageParts(snapshot.session, snapshot.auth, theme, true);
+  return `${"Session".padEnd(12)} ${parts.length ? parts.join(" ") : theme.fg("dim", "no provider tokens observed")}`;
 }
 
 function snapshotHeader(snapshot: UsageSnapshot, activeKey: string, theme: Theme): string {
@@ -1034,6 +1141,7 @@ function usageLines(ctx: ExtensionContext, report: UsageReport, theme: Theme): s
   for (const [index, snapshot] of report.snapshots.entries()) {
     if (index > 0) lines.push("");
     lines.push(snapshotHeader(snapshot, report.active.key, theme));
+    lines.push(sessionUsageLine(snapshot, theme));
     lines.push(usageWindowLine(snapshot.fiveHour, theme));
     lines.push(usageWindowLine(snapshot.weekly, theme));
 
@@ -1058,14 +1166,18 @@ function usageLines(ctx: ExtensionContext, report: UsageReport, theme: Theme): s
   }
 
   lines.push("");
-  lines.push(theme.fg("dim", "Enter/Esc closes • /usage refreshes connected non-Claude providers"));
+  lines.push(theme.fg("dim", "Enter/Esc closes • /usage refreshes connected providers"));
   return lines;
 }
 
 async function showUsage(ctx: ExtensionCommandContext, report: UsageReport): Promise<void> {
   if (!ctx.hasUI) {
     const summary = report.snapshots
-      .map((snapshot) => `${snapshot.provider}/${snapshot.modelId}: ${snapshot.fiveHour.label} ${snapshot.fiveHour.usedPercent ?? "?"}% • ${snapshot.weekly.label} ${snapshot.weekly.usedPercent ?? "?"}%`)
+      .map((snapshot) => {
+        const fiveHour = remainingPercent(snapshot.fiveHour);
+        const weekly = remainingPercent(snapshot.weekly);
+        return `${snapshot.provider}/${snapshot.modelId}: ${snapshot.fiveHour.label} ${fiveHour === null ? "?" : Math.round(fiveHour)}% left • ${snapshot.weekly.label} ${weekly === null ? "?" : Math.round(weekly)}% left`;
+      })
       .join(" | ");
     ctx.ui.notify(summary, "info");
     return;

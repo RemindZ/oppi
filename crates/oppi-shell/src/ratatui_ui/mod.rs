@@ -6,7 +6,6 @@ mod model;
 mod snapshots;
 #[cfg(test)]
 mod terminal;
-#[cfg(test)]
 mod theme;
 #[cfg(test)]
 mod widgets;
@@ -26,10 +25,10 @@ use unicode_width::UnicodeWidthStr;
 struct RatatuiTerminalGuard;
 
 impl RatatuiTerminalGuard {
-    fn enter() -> Result<Self, String> {
+    fn enter(show_hardware_cursor: bool) -> Result<Self, String> {
         crossterm::terminal::enable_raw_mode()
             .map_err(|error| format!("enable ratatui terminal mode: {error}"))?;
-        print!("\x1b[?25l");
+        print!("{}", terminal_cursor_setup_sequence(show_hardware_cursor));
         io::stdout()
             .flush()
             .map_err(|error| format!("flush ratatui terminal setup: {error}"))?;
@@ -70,9 +69,9 @@ const TRANSCRIPT_GUTTER_WIDTH: usize = 2;
 const TRANSCRIPT_LABEL_WIDTH: usize = 8;
 const TRANSCRIPT_PREFIX_WIDTH: usize = TRANSCRIPT_GUTTER_WIDTH + 1 + TRANSCRIPT_LABEL_WIDTH + 1;
 const SPINNER_FRAMES: [&str; 4] = ["◐", "◓", "◑", "◒"];
-const FOOTER_SESSION_BAR: &str = "▮▮▮▯▯";
-const FOOTER_WEEK_BAR: &str = "▮▯▯▯▯";
-const FOOTER_CONTEXT_BAR: &str = "▮▮▯▯▯";
+const FOOTER_BAR_WIDTH: usize = 5;
+const FOOTER_FILLED_BAR: char = '▮';
+const FOOTER_EMPTY_BAR: char = '▯';
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum RatatuiFrameMode {
@@ -161,6 +160,64 @@ impl RatatuiThemeTokens {
             "dark" => Self::dark(),
             _ => Self::dark(),
         }
+    }
+
+    fn from_pi_theme_values(
+        colors: &serde_json::Value,
+        export: Option<&serde_json::Value>,
+        fallback: theme::ThemeVariant,
+    ) -> Result<Self, String> {
+        let base = match fallback {
+            theme::ThemeVariant::Dark => Self::dark(),
+            theme::ThemeVariant::Light => Self::light(),
+            theme::ThemeVariant::Plain => Self::plain(),
+        };
+        let bg_value = export
+            .and_then(|value| value.get("pageBg"))
+            .or_else(|| colors.get("userMessageBg"))
+            .ok_or_else(|| "theme is missing export.pageBg or userMessageBg".to_string())?;
+        Ok(Self {
+            accent: pi_theme_color(colors, "accent", base.accent)?,
+            accent_soft: pi_theme_color_any(
+                colors,
+                &["borderAccent", "customMessageLabel"],
+                base.accent_soft,
+            )?,
+            accent_dim: pi_theme_color(colors, "border", base.accent_dim)?,
+            fg: pi_theme_color(colors, "text", base.fg)?,
+            fg_muted: pi_theme_color(colors, "muted", base.fg_muted)?,
+            fg_dim: pi_theme_color(colors, "dim", base.fg_dim)?,
+            bg: pi_color_value(bg_value, base.bg, "export.pageBg")?,
+            border_muted: pi_theme_color(colors, "borderMuted", base.border_muted)?,
+            yellow: pi_theme_color(colors, "warning", base.yellow)?,
+            green: pi_theme_color(colors, "success", base.green)?,
+            red: pi_theme_color(colors, "error", base.red)?,
+            blue: pi_theme_color(colors, "mdLink", base.blue)?,
+            orange: pi_theme_color(colors, "bashMode", base.orange)?,
+            purple: pi_theme_color(colors, "syntaxNumber", base.purple)?,
+            bg_selected: pi_theme_color(colors, "selectedBg", base.bg_selected)?,
+            bg_user_msg: pi_theme_color(colors, "userMessageBg", base.bg_user_msg)?,
+            bg_custom_msg: pi_theme_color(colors, "customMessageBg", base.bg_custom_msg)?,
+            bg_tool_pending: pi_theme_color(colors, "toolPendingBg", base.bg_tool_pending)?,
+            bg_tool_success: pi_theme_color(colors, "toolSuccessBg", base.bg_tool_success)?,
+            bg_tool_error: pi_theme_color(colors, "toolErrorBg", base.bg_tool_error)?,
+            bg_perm_review: pi_theme_color_optional(
+                colors,
+                "permissionAutoReviewingBg",
+                base.bg_perm_review,
+            )?,
+            bg_perm_approved: pi_theme_color_optional(
+                colors,
+                "permissionAutoApprovedBg",
+                base.bg_perm_approved,
+            )?,
+            bg_perm_denied: pi_theme_color_optional(
+                colors,
+                "permissionAutoDeniedBg",
+                base.bg_perm_denied,
+            )?,
+            plain: false,
+        })
     }
 
     fn dark() -> Self {
@@ -267,8 +324,106 @@ impl RatatuiThemeTokens {
     }
 }
 
+fn ratatui_theme_tokens_for_shell(
+    theme_name: &str,
+    loaded_theme: Option<&LoadedShellTheme>,
+) -> RatatuiThemeTokens {
+    if let Some(loaded) = loaded_theme {
+        return RatatuiThemeTokens::from_pi_theme_values(
+            &loaded.colors,
+            loaded.export.as_ref(),
+            fallback_variant_for_theme_name(theme_name),
+        )
+        .unwrap_or_else(|_| RatatuiThemeTokens::for_name(theme_name));
+    }
+    RatatuiThemeTokens::for_name(theme_name)
+}
+
+fn fallback_variant_for_theme_name(theme_name: &str) -> theme::ThemeVariant {
+    match theme_name {
+        "light" => theme::ThemeVariant::Light,
+        "plain" => theme::ThemeVariant::Plain,
+        _ => theme::ThemeVariant::Dark,
+    }
+}
+
 const fn rgb(r: u8, g: u8, b: u8) -> Color {
     Color::Rgb(r, g, b)
+}
+
+fn pi_theme_color(
+    colors: &serde_json::Value,
+    token: &str,
+    fallback: Color,
+) -> Result<Color, String> {
+    let value = colors
+        .get(token)
+        .ok_or_else(|| format!("theme is missing color token `{token}`"))?;
+    pi_color_value(value, fallback, token)
+}
+
+fn pi_theme_color_optional(
+    colors: &serde_json::Value,
+    token: &str,
+    fallback: Color,
+) -> Result<Color, String> {
+    match colors.get(token) {
+        Some(value) => pi_color_value(value, fallback, token),
+        None => Ok(fallback),
+    }
+}
+
+fn pi_theme_color_any(
+    colors: &serde_json::Value,
+    tokens: &[&str],
+    fallback: Color,
+) -> Result<Color, String> {
+    for token in tokens {
+        if let Some(value) = colors.get(*token) {
+            return pi_color_value(value, fallback, token);
+        }
+    }
+    Err(format!(
+        "theme is missing color token `{}`",
+        tokens.join("` or `")
+    ))
+}
+
+fn pi_color_value(
+    value: &serde_json::Value,
+    fallback: Color,
+    token: &str,
+) -> Result<Color, String> {
+    if let Some(number) = value.as_u64() {
+        if number <= 255 {
+            return Ok(Color::Indexed(number as u8));
+        }
+        return Err(format!(
+            "theme color `{token}` index {number} is outside 0-255"
+        ));
+    }
+    let Some(raw) = value.as_str() else {
+        return Err(format!("theme color `{token}` is not representable"));
+    };
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Ok(fallback);
+    }
+    let Some(hex) = trimmed.strip_prefix('#') else {
+        return Err(format!(
+            "theme color `{token}` must be resolved before mapping"
+        ));
+    };
+    if hex.len() != 6 || !hex.chars().all(|ch| ch.is_ascii_hexdigit()) {
+        return Err(format!("theme color `{token}` is not a 6-digit hex value"));
+    }
+    let red = u8::from_str_radix(&hex[0..2], 16)
+        .map_err(|_| format!("theme color `{token}` has invalid red channel"))?;
+    let green = u8::from_str_radix(&hex[2..4], 16)
+        .map_err(|_| format!("theme color `{token}` has invalid green channel"))?;
+    let blue = u8::from_str_radix(&hex[4..6], 16)
+        .map_err(|_| format!("theme color `{token}` has invalid blue channel"))?;
+    Ok(rgb(red, green, blue))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -288,13 +443,16 @@ pub(super) struct RatatuiViewModel {
     pub dock_label: String,
     pub editor_placeholder: String,
     pub editor_is_placeholder: bool,
+    pub editor_padding_x: usize,
     pub footer_left: String,
     pub footer_hotkeys: String,
     pub slash_items: Vec<SlashPaletteItem>,
+    pub slash_max_visible: usize,
     pub slash_selected: usize,
     pub overlay_title: String,
     pub overlay_items: Vec<RatatuiOverlayItem>,
     pub settings_selected: usize,
+    pub settings_filter: String,
     pub question_selected: usize,
     pub pending_answers: Vec<String>,
     pub approval_items: Vec<String>,
@@ -469,7 +627,8 @@ fn ratatui_view_model_for_editor(
         .selected_model
         .as_deref()
         .or(current_provider_model(provider))
-        .unwrap_or("mock-scripted")
+        .map(display_model_id)
+        .unwrap_or(MOCK_MODEL_DISPLAY_LABEL)
         .to_string();
     let transcript = live_transcript_rows(session);
     // Live rendering must not synthesize design-fixture rows. Empty sessions stay
@@ -493,7 +652,7 @@ fn ratatui_view_model_for_editor(
         .iter()
         .filter(|todo| !matches!(todo.status.as_str(), "completed" | "cancelled"))
         .count();
-    let queued = session.follow_up_queue.len();
+    let queued = session.follow_up_queue.len() + session.steering_queue.len();
     let status = if session.has_pending_pause() {
         "waiting"
     } else if session.is_turn_running() {
@@ -501,13 +660,22 @@ fn ratatui_view_model_for_editor(
     } else {
         "ready"
     };
+    let slash_max_visible = normalize_autocomplete_max_visible(session.autocomplete_max_visible)
+        .unwrap_or(DEFAULT_AUTOCOMPLETE_MAX_VISIBLE);
     let slash =
         slash_palette_for_buffer_with_session(editor_buffer, slash_selected, session, provider)
-            .map(|palette| palette.items.into_iter().take(7).collect::<Vec<_>>())
+            .map(|palette| {
+                palette
+                    .items
+                    .into_iter()
+                    .take(slash_max_visible)
+                    .collect::<Vec<_>>()
+            })
             .unwrap_or_default();
+    let footer_left = format_ratatui_footer_left(session, provider, status, &model, todos, queued);
 
     RatatuiViewModel {
-        provider: provider_name(provider).to_string(),
+        provider: display_provider_id(provider).to_string(),
         model,
         permission: permission_label(session.permission_mode).to_string(),
         status: status.to_string(),
@@ -516,7 +684,7 @@ fn ratatui_view_model_for_editor(
         todo_completed,
         todo_total,
         spinner_index: 0,
-        theme: RatatuiThemeTokens::for_name(&session.theme),
+        theme: ratatui_theme_tokens_for_shell(&session.theme, session.loaded_theme.as_ref()),
         transcript_metadata: live_transcript_metadata(session),
         transcript,
         dock_label: if session.has_pending_pause() {
@@ -539,23 +707,18 @@ fn ratatui_view_model_for_editor(
             editor_buffer.to_string()
         },
         editor_is_placeholder: editor_buffer.is_empty(),
-        footer_left: format!(
-            "{} · {} · perm {} · todos {} · queued {} · {}",
-            status,
-            provider_name(provider),
-            permission_label(session.permission_mode),
-            todos,
-            queued,
-            session.goal_status_label()
-        ),
+        editor_padding_x: session.editor_padding_x,
+        footer_left,
         footer_hotkeys:
             "Alt+Enter follow-up  Ctrl+Enter steer  Shift+Enter newline  / commands  Alt+K help"
                 .to_string(),
         slash_items: slash,
+        slash_max_visible,
         slash_selected,
         overlay_title: "settings".to_string(),
-        overlay_items: settings_overlay_items_for_session(session),
+        overlay_items: settings_overlay_items_for_session(session, provider),
         settings_selected: 1,
+        settings_filter: String::new(),
         question_selected: 0,
         pending_answers: pending_question_answers(session),
         approval_items: approval_dock_items(session),
@@ -567,6 +730,44 @@ fn ratatui_view_model_for_editor(
         suggestion: suggestion_model(session),
         tool_digest_items: tool_digest_items(session),
     }
+}
+
+fn format_ratatui_footer_left(
+    session: &ShellSession,
+    provider: &ProviderConfig,
+    status: &str,
+    model: &str,
+    todos: usize,
+    queued: usize,
+) -> String {
+    let settings = &session.footer_settings;
+    let mut parts = vec![status.to_string(), "footer configured".to_string()];
+    if settings.show_path {
+        parts.push(format!("workspace {}", session.cwd));
+    }
+    if settings.show_model {
+        parts.push(format!("model {}/{}", display_provider_id(provider), model));
+    }
+    if settings.show_permission {
+        parts.push(format!(
+            "perm {}",
+            permission_label(session.permission_mode)
+        ));
+    }
+    let usage = session.usage_state.session_footer_label();
+    let weekly = session.usage_state.weekly_footer_label();
+    let context = session.usage_state.context_footer_label();
+    let usage_line = format_usage_footer_line(settings, &usage, weekly.as_deref(), &context);
+    if usage_line != "off" {
+        parts.extend(usage_line.split(" · ").map(str::to_string));
+    }
+    if settings.show_memory {
+        parts.push(format!("memory {}", session.memory_footer_label()));
+    }
+    parts.push(format!("todos {todos}"));
+    parts.push(format!("queued {queued}"));
+    parts.push(session.goal_status_label());
+    parts.join(" · ")
 }
 
 fn live_transcript_rows(session: &ShellSession) -> Vec<RatatuiTranscriptRow> {
@@ -943,7 +1144,7 @@ pub(super) fn ratatui_interactive_loop(
     session: &mut ShellSession,
     provider: &mut ProviderConfig,
 ) -> Result<(), String> {
-    let guard = RatatuiTerminalGuard::enter()?;
+    let guard = RatatuiTerminalGuard::enter(session.show_hardware_cursor)?;
     session.terminal_ui_active = true;
     let stdout = io::stdout();
     let backend = CrosstermBackend::<Stdout>::new(stdout);
@@ -952,6 +1153,7 @@ pub(super) fn ratatui_interactive_loop(
         .clear()
         .map_err(|error| format!("clear ratatui terminal: {error}"))?;
     let mut state = tui::NativeTuiState::default();
+    session.refresh_native_usage(provider, false);
     let mut running = true;
     while running {
         state.spinner_index = state.spinner_index.wrapping_add(1);
@@ -966,12 +1168,19 @@ pub(super) fn ratatui_interactive_loop(
             ratatui_view_model_for_editor(session, provider, &editor_buffer, state.slash_selected);
         view.spinner_index = state.spinner_index;
         view.question_selected = state.question_selected;
-        if !state.footer_hotkeys_visible {
+        if let Some(preview_theme) = state.theme_preview_name() {
+            view.theme = ratatui_theme_tokens_for_shell(
+                &preview_theme,
+                session.theme_preview_cache.get(&preview_theme),
+            );
+        }
+        if !state.footer_hotkeys_visible || !session.footer_settings.show_help_bar {
             view.footer_hotkeys.clear();
         }
         if let Some(overlay) = state.overlay_view(session, provider) {
             view.overlay_title = overlay.title;
             view.settings_selected = overlay.selected;
+            view.settings_filter = overlay.query;
             view.overlay_items = overlay
                 .items
                 .into_iter()
@@ -1002,6 +1211,12 @@ pub(super) fn ratatui_interactive_loop(
                         );
                         view.spinner_index = state.spinner_index;
                         view.question_selected = state.question_selected;
+                        if let Some(preview_theme) = state.theme_preview_name() {
+                            view.theme = ratatui_theme_tokens_for_shell(
+                                &preview_theme,
+                                session.theme_preview_cache.get(&preview_theme),
+                            );
+                        }
                         terminal
                             .draw(|frame| render_ratatui_frame(frame, frame.area(), &view, mode))
                             .map_err(|error| {
@@ -1020,11 +1235,14 @@ pub(super) fn ratatui_interactive_loop(
 
         if let Some(outcome) = session.poll_turn_events_silent()? {
             if matches!(outcome, TurnOutcome::Completed) {
+                session.refresh_native_usage(provider, false);
                 session.start_next_queued_or_goal_continuation(provider, false)?;
             }
         } else if !session.is_turn_running() && !session.has_pending_pause() {
             session.start_next_queued_or_goal_continuation(provider, false)?;
         }
+        session.maybe_run_hoppi_background_sync(false)?;
+        session.maybe_offer_compaction(provider, false)?;
     }
     let visible_exit_requested = session
         .ui
@@ -1312,7 +1530,7 @@ fn transcript_rows_for_mode(
             kind: RatatuiRowKind::Info,
             label: "info".to_string(),
             body:
-                "overlay anchored above editor — ←/→ tabs · ↑/↓ settings · Enter open · Esc close"
+                "overlay anchored above editor — ←/→ sections · ↑/↓ settings · Type to search · Enter open · Esc close"
                     .to_string(),
         }],
         _ => view.transcript.clone(),
@@ -1488,6 +1706,7 @@ fn render_editor(
     let lines = editor_lines(
         &view.editor_placeholder,
         inner_width,
+        view.editor_padding_x,
         view.theme,
         view.editor_is_placeholder,
     );
@@ -1498,12 +1717,16 @@ fn render_editor(
 fn editor_lines(
     buffer: &str,
     width: usize,
+    padding_x: usize,
     tokens: RatatuiThemeTokens,
     is_placeholder: bool,
 ) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
+    let padding_x = padding_x.min(width.saturating_sub(3));
+    let padding = " ".repeat(padding_x);
+    let wrap_width = width.saturating_sub(2 + padding_x).max(1);
     for (line_index, raw_line) in buffer.lines().enumerate() {
-        let wrapped = wrap_plain(raw_line, width.saturating_sub(2).max(1));
+        let wrapped = wrap_plain(raw_line, wrap_width);
         for (wrap_index, chunk) in wrapped.into_iter().enumerate() {
             let prefix = if line_index == 0 && wrap_index == 0 {
                 "› "
@@ -1511,29 +1734,35 @@ fn editor_lines(
                 "  "
             };
             if is_placeholder && line_index == 0 && wrap_index == 0 {
-                lines.push(Line::from(vec![
-                    Span::styled(prefix, Style::new().fg(tokens.fg_dim)),
-                    Span::styled("█", Style::new().fg(tokens.fg)),
-                    Span::styled(chunk, Style::new().fg(tokens.fg_dim)),
-                ]));
+                let mut spans = vec![Span::styled(prefix, Style::new().fg(tokens.fg_dim))];
+                if !padding.is_empty() {
+                    spans.push(Span::styled(padding.clone(), Style::new().fg(tokens.fg)));
+                }
+                spans.push(Span::styled("█", Style::new().fg(tokens.fg)));
+                spans.push(Span::styled(chunk, Style::new().fg(tokens.fg_dim)));
+                lines.push(Line::from(spans));
             } else {
-                lines.push(Line::from(vec![
-                    Span::styled(prefix, Style::new().fg(tokens.fg_dim)),
-                    Span::styled(chunk, Style::new().fg(tokens.fg_dim)),
-                    Span::styled("█", Style::new().fg(tokens.fg)),
-                ]));
+                let mut spans = vec![Span::styled(prefix, Style::new().fg(tokens.fg_dim))];
+                if !padding.is_empty() {
+                    spans.push(Span::styled(padding.clone(), Style::new().fg(tokens.fg)));
+                }
+                spans.push(Span::styled(chunk, Style::new().fg(tokens.fg)));
+                spans.push(Span::styled("█", Style::new().fg(tokens.fg)));
+                lines.push(Line::from(spans));
             }
         }
     }
     if lines.is_empty() {
-        lines.push(Line::from(vec![
-            Span::styled("› ", Style::new().fg(tokens.fg_dim)),
-            Span::styled("█", Style::new().fg(tokens.fg)),
-            Span::styled(
-                "Ask, build, or type / for commands…",
-                Style::new().fg(tokens.fg_dim),
-            ),
-        ]));
+        let mut spans = vec![Span::styled("› ", Style::new().fg(tokens.fg_dim))];
+        if !padding.is_empty() {
+            spans.push(Span::styled(padding, Style::new().fg(tokens.fg)));
+        }
+        spans.push(Span::styled("█", Style::new().fg(tokens.fg)));
+        spans.push(Span::styled(
+            "Ask, build, or type / for commands…",
+            Style::new().fg(tokens.fg_dim),
+        ));
+        lines.push(Line::from(spans));
     }
     lines
 }
@@ -1568,6 +1797,18 @@ fn footer_status_spans(view: &RatatuiViewModel, width: u16) -> Vec<Span<'static>
         _ => tokens.green,
     };
     let (todos, queued) = footer_counts(&view.footer_left);
+    let configured = view.footer_left.contains("footer configured");
+    let usage = footer_named_part(&view.footer_left, "usage")
+        .or_else(|| (!configured).then(|| "session 0".to_string()));
+    let weekly = footer_named_part(&view.footer_left, "week");
+    let context = footer_named_part(&view.footer_left, "ctx")
+        .or_else(|| (!configured).then(|| "pending".to_string()));
+    let model = footer_named_part(&view.footer_left, "model")
+        .or_else(|| (!configured).then(|| view.model.clone()));
+    let permission = footer_named_part(&view.footer_left, "perm")
+        .or_else(|| (!configured).then(|| view.permission.clone()));
+    let memory = footer_named_part(&view.footer_left, "memory");
+    let workspace = footer_named_part(&view.footer_left, "workspace");
     let mut spans = vec![
         Span::styled(status_dot, Style::new().fg(status_color)),
         Span::styled(format!(" {status}"), Style::new().fg(status_color)),
@@ -1576,69 +1817,75 @@ fn footer_status_spans(view: &RatatuiViewModel, width: u16) -> Vec<Span<'static>
         Span::styled(" hide help", Style::new().fg(tokens.fg_muted)),
     ];
 
-    if width >= 56 {
+    if width >= 56
+        && let Some(usage) = usage.as_ref()
+    {
         try_push_footer_group(
             &mut spans,
             vec![
                 footer_separator(tokens),
-                Span::styled("sess ", Style::new().fg(tokens.fg_dim)),
-                Span::styled("3k", Style::new().fg(tokens.fg)),
-                Span::styled(" 1% ", Style::new().fg(tokens.fg_muted)),
-                Span::styled(FOOTER_SESSION_BAR, Style::new().fg(tokens.green)),
+                Span::styled("usage ", Style::new().fg(tokens.fg_dim)),
+                Span::styled(usage.clone(), Style::new().fg(tokens.fg_muted)),
+                Span::raw(" "),
+                footer_bar_span(footer_used_percent(&usage), tokens.green),
             ],
             max_width,
         );
     }
-    if width >= 132 {
+    if width >= 128
+        && let Some(weekly) = weekly
+    {
         try_push_footer_group(
             &mut spans,
             vec![
                 footer_separator(tokens),
-                Span::styled("wk ", Style::new().fg(tokens.fg_dim)),
-                Span::styled("7M", Style::new().fg(tokens.fg)),
-                Span::styled(" 1% ", Style::new().fg(tokens.fg_muted)),
-                Span::styled(FOOTER_WEEK_BAR, Style::new().fg(tokens.blue)),
+                Span::styled("week ", Style::new().fg(tokens.fg_dim)),
+                Span::styled(weekly.clone(), Style::new().fg(tokens.fg_muted)),
+                Span::raw(" "),
+                footer_bar_span(footer_used_percent(&weekly), tokens.blue),
             ],
             max_width,
         );
     }
-    if width >= 100 {
+    if width >= 100
+        && let Some(model) = model.as_ref()
+    {
         try_push_footer_group(
             &mut spans,
             vec![
                 footer_separator(tokens),
                 Span::styled("model ", Style::new().fg(tokens.fg_dim)),
                 Span::styled(
-                    truncate_plain(&view.model, 18),
+                    truncate_plain(model, 24),
                     Style::new().fg(tokens.accent_soft),
                 ),
             ],
             max_width,
         );
     }
-    if width >= 80 {
+    if width >= 80
+        && let Some(permission) = permission.as_ref()
+    {
         try_push_footer_group(
             &mut spans,
             vec![
                 footer_separator(tokens),
                 Span::styled("perm ".to_string(), Style::new().fg(tokens.fg_dim)),
-                Span::styled(
-                    view.permission.clone(),
-                    permission_style(&view.permission, tokens),
-                ),
+                Span::styled(permission.clone(), permission_style(permission, tokens)),
             ],
             max_width,
         );
     }
     if width >= 70
+        && let Some(context) = context.as_ref()
         && !try_push_footer_group(
             &mut spans,
             vec![
                 footer_separator(tokens),
                 Span::styled("ctx ", Style::new().fg(tokens.fg_dim)),
-                Span::styled("100k/272k", Style::new().fg(tokens.fg)),
-                Span::styled(" 37% ", Style::new().fg(tokens.fg_muted)),
-                Span::styled(FOOTER_CONTEXT_BAR, Style::new().fg(tokens.purple)),
+                Span::styled(context.clone(), Style::new().fg(tokens.fg_muted)),
+                Span::raw(" "),
+                footer_bar_span(footer_used_percent(&context), tokens.purple),
             ],
             max_width,
         )
@@ -1648,8 +1895,38 @@ fn footer_status_spans(view: &RatatuiViewModel, width: u16) -> Vec<Span<'static>
             vec![
                 footer_separator(tokens),
                 Span::styled("ctx ", Style::new().fg(tokens.fg_dim)),
-                Span::styled("37% ", Style::new().fg(tokens.fg_muted)),
-                Span::styled(FOOTER_CONTEXT_BAR, Style::new().fg(tokens.purple)),
+                Span::styled(context.clone(), Style::new().fg(tokens.fg_muted)),
+                Span::raw(" "),
+                footer_bar_span(None, tokens.purple),
+            ],
+            max_width,
+        );
+    }
+    if width >= 108
+        && let Some(memory) = memory.as_ref()
+    {
+        try_push_footer_group(
+            &mut spans,
+            vec![
+                footer_separator(tokens),
+                Span::styled("memory ", Style::new().fg(tokens.fg_dim)),
+                Span::styled(truncate_plain(memory, 18), Style::new().fg(tokens.fg_muted)),
+            ],
+            max_width,
+        );
+    }
+    if width >= 132
+        && let Some(workspace) = workspace.as_ref()
+    {
+        try_push_footer_group(
+            &mut spans,
+            vec![
+                footer_separator(tokens),
+                Span::styled("path ", Style::new().fg(tokens.fg_dim)),
+                Span::styled(
+                    truncate_plain(workspace, 28),
+                    Style::new().fg(tokens.fg_muted),
+                ),
             ],
             max_width,
         );
@@ -1679,6 +1956,35 @@ fn footer_status_spans(view: &RatatuiViewModel, width: u16) -> Vec<Span<'static>
         }
     }
     spans
+}
+
+fn footer_used_percent(text: &str) -> Option<u8> {
+    let percent = text.split_whitespace().find_map(|part| {
+        part.strip_suffix('%')
+            .and_then(|value| value.parse::<u8>().ok())
+            .map(|value| value.min(100))
+    })?;
+    if text.split_whitespace().any(|part| part == "left") {
+        Some(100_u8.saturating_sub(percent))
+    } else {
+        Some(percent)
+    }
+}
+
+fn footer_bar_span(percent: Option<u8>, color: Color) -> Span<'static> {
+    let filled = percent
+        .map(|percent| ((percent as usize * FOOTER_BAR_WIDTH) + 50) / 100)
+        .unwrap_or(0)
+        .min(FOOTER_BAR_WIDTH);
+    let empty = FOOTER_BAR_WIDTH.saturating_sub(filled);
+    Span::styled(
+        format!(
+            "{}{}",
+            FOOTER_FILLED_BAR.to_string().repeat(filled),
+            FOOTER_EMPTY_BAR.to_string().repeat(empty)
+        ),
+        Style::new().fg(color),
+    )
 }
 
 fn try_push_footer_group(
@@ -1728,6 +2034,14 @@ fn footer_counts(text: &str) -> (usize, usize) {
     (todos, queued)
 }
 
+fn footer_named_part(text: &str, name: &str) -> Option<String> {
+    text.split(" · ").find_map(|part| {
+        let part = part.trim();
+        let value = part.strip_prefix(name)?.trim_start();
+        (!value.is_empty()).then(|| value.to_string())
+    })
+}
+
 fn permission_style(permission: &str, tokens: RatatuiThemeTokens) -> Style {
     let fg = match permission {
         "read-only" => tokens.blue,
@@ -1751,8 +2065,17 @@ fn render_slash_overlay(
     editor_area: Rect,
     view: &RatatuiViewModel,
 ) {
-    let items = view.slash_items.iter().take(7).cloned().collect::<Vec<_>>();
-    let rows = items.len().min(7) as u16;
+    let max_visible = view
+        .slash_max_visible
+        .max(1)
+        .min(MAX_AUTOCOMPLETE_MAX_VISIBLE);
+    let items = view
+        .slash_items
+        .iter()
+        .take(max_visible)
+        .cloned()
+        .collect::<Vec<_>>();
+    let rows = items.len().min(max_visible) as u16;
     let height = rows.saturating_add(2).max(3);
     let popup = Rect {
         x: editor_area.x,
@@ -1776,7 +2099,7 @@ fn render_slash_overlay(
     } else {
         items
             .iter()
-            .take(7)
+            .take(max_visible)
             .enumerate()
             .map(|(index, item)| {
                 let selected = index == view.slash_selected;
@@ -1831,7 +2154,7 @@ fn slash_essential_items(view: &RatatuiViewModel) -> Vec<SlashPaletteItem> {
         ("/sessions", "resume or inspect sessions"),
         ("/background", "show background tasks"),
         ("/todos", "show active todos"),
-        ("/effort", "model-aware thinking slider"),
+        ("/effort", "default thinking slider"),
         ("/exit", "restore terminal and exit"),
     ];
     let mut ordered = Vec::new();
@@ -1886,6 +2209,10 @@ fn slash_key_action_name(key: &str) -> SlashKeyAction {
 
 fn render_settings_overlay(frame: &mut ratatui::Frame<'_>, anchor: Rect, view: &RatatuiViewModel) {
     let width = anchor.width;
+    if let Some(query) = settings_filter_query(view) {
+        render_filtered_settings_overlay(frame, anchor, view, query);
+        return;
+    }
     let root_sections = settings_root_overlay_sections(&view.overlay_items);
     let selected = view
         .settings_selected
@@ -1894,20 +2221,13 @@ fn render_settings_overlay(frame: &mut ratatui::Frame<'_>, anchor: Rect, view: &
         .iter()
         .find(|section| section.indices.contains(&selected))
         .or_else(|| root_sections.first());
-    let tab_line_count = if root_sections.len() > 1 {
-        settings_horizontal_tab_line_count(&root_sections, width.saturating_sub(2))
-    } else {
-        0
-    };
+    let max_section_items = root_sections
+        .iter()
+        .map(|section| section.indices.len() as u16)
+        .max()
+        .unwrap_or(view.overlay_items.len() as u16);
     let desired_height = if root_sections.len() > 1 {
-        active_section
-            .map(|section| {
-                (section.indices.len() as u16)
-                    .saturating_mul(2)
-                    .saturating_add(tab_line_count)
-                    .saturating_add(7)
-            })
-            .unwrap_or_else(|| view.overlay_items.len() as u16 + 4)
+        max_section_items.saturating_mul(2).saturating_add(8)
     } else {
         active_section
             .map(|section| (section.indices.len() as u16).saturating_mul(2) + 7)
@@ -1932,16 +2252,15 @@ fn render_settings_overlay(frame: &mut ratatui::Frame<'_>, anchor: Rect, view: &
     if root_sections.len() > 1 {
         let active_section = active_section.expect("root settings section exists");
         let content_width = inner.width.max(20);
-        lines.extend(settings_horizontal_tab_lines(
+        lines.push(settings_section_bar_line(
             view,
             &root_sections,
-            &active_section.name,
-            inner.width,
+            active_section.name.as_str(),
+            content_width,
         ));
-        lines.push(Line::from(""));
         let mut content_lines = Vec::<Line<'_>>::new();
         content_lines.push(Line::from(Span::styled(
-            "←/→ tabs  ↑/↓ settings  Enter/Space open  Esc close",
+            "←/→ sections  ↑/↓ settings  Type to search  Enter/Space open  Esc close",
             Style::new().fg(view.theme.fg_dim),
         )));
         content_lines.push(Line::from(""));
@@ -1993,6 +2312,98 @@ fn render_settings_overlay(frame: &mut ratatui::Frame<'_>, anchor: Rect, view: &
     frame.render_widget(Paragraph::new(lines), inner);
 }
 
+fn render_filtered_settings_overlay(
+    frame: &mut ratatui::Frame<'_>,
+    anchor: Rect,
+    view: &RatatuiViewModel,
+    query: &str,
+) {
+    let width = anchor.width;
+    let matching_indices = filtered_settings_overlay_indices(&view.overlay_items, query);
+    let row_count = matching_indices.len().max(1).min(8) as u16;
+    let desired_height = row_count.saturating_mul(2).saturating_add(8);
+    let height = overlay_height(anchor.y, desired_height);
+    let popup = Rect {
+        x: anchor.x,
+        y: anchor.y.saturating_sub(height),
+        width,
+        height,
+    };
+    let block = Block::default()
+        .title(format!(" {} ", view.overlay_title))
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::new().fg(view.theme.accent));
+    let inner = block.inner(popup);
+    frame.render_widget(Clear, popup);
+    frame.render_widget(block, popup);
+
+    let content_width = inner.width.max(20);
+    let mut lines = Vec::<Line<'_>>::new();
+    lines.push(Line::from(Span::styled(
+        truncate_plain(&format!("filter: {query}"), content_width as usize),
+        Style::new().fg(view.theme.accent),
+    )));
+    lines.push(Line::from(Span::styled(
+        "Type to search  Backspace edit  ↑/↓ results  Enter/Space open  Esc close",
+        Style::new().fg(view.theme.fg_dim),
+    )));
+    lines.push(Line::from(""));
+
+    if matching_indices.is_empty() {
+        lines.push(Line::from(Span::styled(
+            truncate_plain(
+                &format!("No settings match \"{query}\""),
+                content_width as usize,
+            ),
+            Style::new().fg(view.theme.fg_dim),
+        )));
+    } else {
+        let selected = view
+            .settings_selected
+            .min(view.overlay_items.len().saturating_sub(1));
+        let selected_position = matching_indices
+            .iter()
+            .position(|index| *index == selected)
+            .unwrap_or(0);
+        let max_rows = (inner.height.saturating_sub(6) as usize / 2)
+            .max(1)
+            .min(matching_indices.len());
+        let start = selected_position.saturating_add(1).saturating_sub(max_rows);
+        let end = (start + max_rows).min(matching_indices.len());
+        for index in &matching_indices[start..end] {
+            let item = &view.overlay_items[*index];
+            let selected = *index == selected;
+            lines.push(settings_overlay_search_item_line(
+                view,
+                item,
+                selected,
+                content_width,
+            ));
+            lines.push(settings_overlay_detail_line(
+                view,
+                item,
+                selected,
+                content_width,
+            ));
+        }
+    }
+
+    lines.push(Line::from(""));
+    let summary = format!(
+        "{} · {}/{} settings · filter: {}",
+        view.overlay_title,
+        matching_indices.len(),
+        view.overlay_items.len(),
+        query
+    );
+    lines.push(Line::from(Span::styled(
+        truncate_plain(&summary, content_width as usize),
+        Style::new().fg(view.theme.fg_dim),
+    )));
+    frame.render_widget(Paragraph::new(lines), inner);
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct SettingsOverlaySection {
     name: String,
@@ -2001,76 +2412,34 @@ struct SettingsOverlaySection {
 
 fn settings_section_display_label(section: &str) -> String {
     match section {
-        "General" => "⚙️ General".to_string(),
-        "Pi" => "🧩 Pi".to_string(),
-        "AI" => "🤖 AI".to_string(),
-        "Account" => "🔑 Account".to_string(),
-        "Permissions" | "Safety" => "🔐 Permissions".to_string(),
-        "Theme" | "Appearance" => "🎨 Theme".to_string(),
-        "Footer" => "🧭 Footer".to_string(),
-        "Compaction" => "🗜️ Compaction".to_string(),
-        "Memory" => "🧠 Memory".to_string(),
-        "Workspace" => "🗂️ Workspace".to_string(),
+        "Safety" => "Permissions".to_string(),
+        "Appearance" => "Theme".to_string(),
         other => other.to_string(),
     }
 }
 
-fn settings_horizontal_tab_line_count(sections: &[SettingsOverlaySection], width: u16) -> u16 {
-    if sections.is_empty() {
-        return 0;
-    }
-    let width = usize::from(width.max(1));
-    let mut lines = 1;
-    let mut used = 0usize;
-    for section in sections {
-        let label = format!(" {} ", settings_section_display_label(&section.name));
-        let segment_width = terminal_cell_width(&label);
-        let separator_width = usize::from(used > 0) * 2;
-        if used > 0 && used + separator_width + segment_width > width {
-            lines += 1;
-            used = segment_width;
-        } else {
-            used += separator_width + segment_width;
-        }
-    }
-    lines
-}
-
-fn settings_horizontal_tab_lines<'a>(
+fn settings_section_bar_line<'a>(
     view: &RatatuiViewModel,
     sections: &[SettingsOverlaySection],
     active_section: &str,
     width: u16,
-) -> Vec<Line<'a>> {
-    let width = usize::from(width.max(1));
-    let mut lines = Vec::<Line<'a>>::new();
-    let mut spans = Vec::<Span<'a>>::new();
-    let mut used = 0usize;
-    for section in sections {
-        let active = section.name == active_section;
-        let label = format!(" {} ", settings_section_display_label(&section.name));
-        let segment_width = terminal_cell_width(&label);
-        let separator_width = usize::from(!spans.is_empty()) * 2;
-        if !spans.is_empty() && used + separator_width + segment_width > width {
-            lines.push(Line::from(std::mem::take(&mut spans)));
-            used = 0;
-        }
-        if !spans.is_empty() {
-            spans.push(Span::raw("  "));
-            used += 2;
-        }
-        let style = if active {
-            view.theme.selected_style().fg(view.theme.accent)
-        } else {
-            Style::new().fg(view.theme.fg_muted)
-        };
-        spans.push(Span::styled(label, style));
-        used += segment_width;
-    }
-    if !spans.is_empty() {
-        lines.push(Line::from(spans));
-    }
-    lines
+) -> Line<'a> {
+    let bar = sections
+        .iter()
+        .map(|section| {
+            let label = settings_section_display_label(&section.name);
+            if section.name == active_section {
+                format!("[{label}]")
+            } else {
+                label
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("  ");
+    Line::from(Span::styled(
+        truncate_plain(&bar, width as usize),
+        Style::new().fg(view.theme.accent),
+    ))
 }
 
 fn settings_root_overlay_sections(items: &[RatatuiOverlayItem]) -> Vec<SettingsOverlaySection> {
@@ -2092,11 +2461,59 @@ fn settings_root_overlay_sections(items: &[RatatuiOverlayItem]) -> Vec<SettingsO
     sections
 }
 
+fn settings_filter_query(view: &RatatuiViewModel) -> Option<&str> {
+    let query = view.settings_filter.trim();
+    (!query.is_empty()).then_some(query)
+}
+
+fn filtered_settings_overlay_indices(items: &[RatatuiOverlayItem], query: &str) -> Vec<usize> {
+    let query = query.trim().to_ascii_lowercase();
+    items
+        .iter()
+        .enumerate()
+        .filter_map(|(index, item)| {
+            settings_overlay_item_matches_query(item, &query).then_some(index)
+        })
+        .collect()
+}
+
+fn settings_overlay_item_matches_query(item: &RatatuiOverlayItem, query: &str) -> bool {
+    if query.is_empty() {
+        return true;
+    }
+    let haystack = format!("{} {} {}", item.label, item.value, item.detail).to_ascii_lowercase();
+    query.split_whitespace().all(|term| haystack.contains(term))
+}
+
 fn settings_overlay_item_line<'a>(
     view: &RatatuiViewModel,
     item: &'a RatatuiOverlayItem,
     selected: bool,
     width: u16,
+) -> Line<'a> {
+    let label = item
+        .label
+        .split_once(" › ")
+        .map(|(_, label)| label)
+        .unwrap_or(item.label.as_str());
+    settings_overlay_item_line_with_label(view, item, selected, width, label)
+}
+
+fn settings_overlay_search_item_line<'a>(
+    view: &RatatuiViewModel,
+    item: &'a RatatuiOverlayItem,
+    selected: bool,
+    width: u16,
+) -> Line<'a> {
+    settings_overlay_item_line_with_label(view, item, selected, width, item.label.as_str())
+}
+
+fn settings_overlay_item_line_with_label<'a>(
+    view: &RatatuiViewModel,
+    item: &'a RatatuiOverlayItem,
+    selected: bool,
+    width: u16,
+    label: &str,
 ) -> Line<'a> {
     let marker_style = if selected {
         view.theme.selected_style().fg(view.theme.accent)
@@ -2113,11 +2530,6 @@ fn settings_overlay_item_line<'a>(
     } else {
         Style::new().fg(view.theme.fg_muted)
     };
-    let label = item
-        .label
-        .split_once(" › ")
-        .map(|(_, label)| label)
-        .unwrap_or(item.label.as_str());
     let value_width = width
         .saturating_sub(6)
         .saturating_sub(label.chars().count() as u16) as usize;
@@ -2191,23 +2603,371 @@ fn default_settings_overlay_items() -> Vec<RatatuiOverlayItem> {
         .collect()
 }
 
-fn settings_overlay_items_for_session(session: &ShellSession) -> Vec<RatatuiOverlayItem> {
+fn settings_overlay_items_for_session(
+    session: &ShellSession,
+    provider: &ProviderConfig,
+) -> Vec<RatatuiOverlayItem> {
     let mut items = default_settings_overlay_items();
-    if let Some(item) = items
-        .iter_mut()
-        .find(|item| item.label == "General › Goal mode")
-    {
-        item.value = session.goal_status_label();
-    }
+    set_settings_overlay_value(
+        &mut items,
+        "General › Goal mode",
+        session.goal_status_label(),
+    );
+    set_settings_overlay_value(
+        &mut items,
+        "General › Sessions",
+        truncate_plain(&session.thread_id, 18),
+    );
+    set_settings_overlay_value(
+        &mut items,
+        "General › Question timeout",
+        format_ask_user_timeout_label(session.ask_user_settings.timeout_ms),
+    );
+    set_settings_overlay_value(
+        &mut items,
+        "Pi › Main model",
+        session
+            .selected_model
+            .as_deref()
+            .or(current_provider_model(provider))
+            .map(display_model_id)
+            .unwrap_or("none")
+            .to_string(),
+    );
+    set_settings_overlay_value(
+        &mut items,
+        "Pi › Default thinking",
+        current_effort_level_for_provider(provider)
+            .as_str()
+            .to_string(),
+    );
+    set_settings_overlay_value(
+        &mut items,
+        "Pi › Scoped models",
+        if session.scoped_model_ids.is_empty() {
+            "all".to_string()
+        } else {
+            format!("{} patterns", session.scoped_model_ids.len())
+        },
+    );
+    set_settings_overlay_value(
+        &mut items,
+        "Pi › Provider",
+        display_provider_id(provider).to_string(),
+    );
+    set_settings_overlay_value(
+        &mut items,
+        "Pi › MCP",
+        session
+            .mcp_summary
+            .clone()
+            .unwrap_or_else(|| "unchecked".to_string()),
+    );
+    set_settings_overlay_value(
+        &mut items,
+        "Pi › Follow-up mode",
+        session.follow_up_mode.as_str().to_string(),
+    );
+    set_settings_overlay_value(
+        &mut items,
+        "Pi › Steering mode",
+        session.steering_mode.as_str().to_string(),
+    );
+    set_settings_overlay_value(
+        &mut items,
+        "Pi › Quiet startup",
+        enabled_label(session.quiet_startup).to_string(),
+    );
+    set_settings_overlay_value(
+        &mut items,
+        "Pi › Double escape",
+        session.double_escape_action.as_str().to_string(),
+    );
+    set_settings_overlay_value(
+        &mut items,
+        "Pi › Tree filter",
+        session.tree_filter_mode.as_str().to_string(),
+    );
+    set_settings_overlay_value(
+        &mut items,
+        "Pi › Skill commands",
+        enabled_label(session.enable_skill_commands).to_string(),
+    );
+    set_settings_overlay_value(
+        &mut items,
+        "Pi › Autocomplete items",
+        session.autocomplete_max_visible.to_string(),
+    );
+    set_settings_overlay_value(
+        &mut items,
+        "Pi › Hardware cursor",
+        enabled_label(session.show_hardware_cursor).to_string(),
+    );
+    set_settings_overlay_value(
+        &mut items,
+        "Pi › Editor padding",
+        session.editor_padding_x.to_string(),
+    );
+    set_settings_overlay_value(
+        &mut items,
+        "Pi › Terminal progress",
+        enabled_label(session.show_terminal_progress).to_string(),
+    );
+    set_settings_overlay_value(
+        &mut items,
+        "Pi › Clear on shrink",
+        enabled_label(session.terminal_clear_on_shrink).to_string(),
+    );
+    set_settings_overlay_value(
+        &mut items,
+        "Pi › Show images",
+        image_visibility_label(session.image_settings.show_images).to_string(),
+    );
+    set_settings_overlay_value(
+        &mut items,
+        "Pi › Image width",
+        session.image_settings.image_width_cells.to_string(),
+    );
+    set_settings_overlay_value(
+        &mut items,
+        "Pi › Auto-resize images",
+        enabled_label(session.image_settings.auto_resize_images).to_string(),
+    );
+    set_settings_overlay_value(
+        &mut items,
+        "Pi › Block images",
+        image_block_label(session.image_settings.block_images).to_string(),
+    );
+    set_settings_overlay_value(
+        &mut items,
+        "Memory › Enabled",
+        enabled_label(session.memory_settings.enabled).to_string(),
+    );
+    set_settings_overlay_value(
+        &mut items,
+        "Memory › Backend package",
+        HOPPI_PACKAGE_NAME.to_string(),
+    );
+    set_settings_overlay_value(
+        &mut items,
+        "Memory › Agent model",
+        session.memory_settings.agent_model.clone(),
+    );
+    set_settings_overlay_value(
+        &mut items,
+        "Memory › Deep dream model",
+        session.memory_settings.deep_model.clone(),
+    );
+    set_settings_overlay_value(
+        &mut items,
+        "Memory › Startup recall",
+        enabled_label(session.memory_settings.startup_recall).to_string(),
+    );
+    set_settings_overlay_value(
+        &mut items,
+        "Memory › Task-start recall",
+        enabled_label(session.memory_settings.task_start_recall).to_string(),
+    );
+    set_settings_overlay_value(
+        &mut items,
+        "Memory › Turn summaries",
+        enabled_label(session.memory_settings.turn_summaries).to_string(),
+    );
+    set_settings_overlay_value(
+        &mut items,
+        "Memory › Idle dream mode",
+        enabled_label(session.memory_settings.idle_consolidation).to_string(),
+    );
+    set_settings_overlay_value(
+        &mut items,
+        "Memory › First-start install offer",
+        session.memory_settings.hoppi_install_offer.clone(),
+    );
+    set_settings_overlay_value(
+        &mut items,
+        "Memory › Sync",
+        enabled_label(session.memory_settings.sync_enabled).to_string(),
+    );
+    set_settings_overlay_value(&mut items, "Memory › Sync now", "manual".to_string());
+    set_settings_overlay_value(&mut items, "Memory › Pull now", "manual".to_string());
+    set_settings_overlay_value(&mut items, "Memory › Push now", "manual".to_string());
+    set_settings_overlay_value(
+        &mut items,
+        "Memory › Sync repo",
+        optional_memory_setting_label(session.memory_settings.sync_repo_path.as_deref()),
+    );
+    set_settings_overlay_value(
+        &mut items,
+        "Memory › Sync remote",
+        optional_memory_setting_label(session.memory_settings.sync_repo_url.as_deref()),
+    );
+    set_settings_overlay_value(
+        &mut items,
+        "Memory › Sync startup pull",
+        enabled_label(session.memory_settings.sync_pull_on_startup).to_string(),
+    );
+    set_settings_overlay_value(
+        &mut items,
+        "Memory › Sync exit push",
+        enabled_label(session.memory_settings.sync_push_on_exit).to_string(),
+    );
+    set_settings_overlay_value(
+        &mut items,
+        "Memory › Sync background",
+        session.memory_settings.sync_background.clone(),
+    );
+    set_settings_overlay_value(
+        &mut items,
+        "Memory › Sync encryption",
+        format!(
+            "{}/{}",
+            session.memory_settings.sync_encryption, session.memory_settings.sync_passphrase_source
+        ),
+    );
+    set_settings_overlay_value(
+        &mut items,
+        "Memory › Sync passphrase env",
+        session.memory_settings.sync_passphrase_env.clone(),
+    );
+    set_settings_overlay_value(
+        &mut items,
+        "Memory › Sync passphrase file",
+        optional_memory_setting_label(session.memory_settings.sync_passphrase_file.as_deref()),
+    );
+    set_settings_overlay_value(
+        &mut items,
+        "Memory › Sync conflict mode",
+        session.memory_settings.sync_conflict_mode.clone(),
+    );
+    set_settings_overlay_value(
+        &mut items,
+        "Permissions › Mode",
+        permission_label(session.permission_mode).to_string(),
+    );
+    set_settings_overlay_value(
+        &mut items,
+        "Permissions › Auto-review timeout",
+        format_review_timeout_label(session.permission_review_settings.timeout_ms),
+    );
+    set_settings_overlay_value(
+        &mut items,
+        "Permissions › Reviewer model",
+        session
+            .permission_review_settings
+            .reviewer_model
+            .clone()
+            .unwrap_or_else(|| "auto".to_string()),
+    );
+    set_settings_overlay_value(
+        &mut items,
+        "Permissions › Sandbox internet",
+        sandbox_flag_label(session.permission_sandbox_settings.allow_internet).to_string(),
+    );
+    set_settings_overlay_value(
+        &mut items,
+        "Permissions › Sandbox SSH",
+        sandbox_flag_label(session.permission_sandbox_settings.allow_ssh).to_string(),
+    );
+    set_settings_overlay_value(
+        &mut items,
+        "Permissions › Project roots",
+        format_sandbox_roots_label(
+            &session.permission_sandbox_settings.project_roots,
+            "default",
+        ),
+    );
+    set_settings_overlay_value(
+        &mut items,
+        "Permissions › Readable roots",
+        format_sandbox_roots_label(
+            &session.permission_sandbox_settings.readable_roots,
+            "project roots",
+        ),
+    );
+    set_settings_overlay_value(
+        &mut items,
+        "Permissions › Writable roots",
+        format_sandbox_roots_label(
+            &session.permission_sandbox_settings.writable_roots,
+            "project roots",
+        ),
+    );
+    set_settings_overlay_value(
+        &mut items,
+        "Permissions › Protected patterns",
+        format_protected_patterns_label(&session.permission_sandbox_settings.protected_patterns),
+    );
+    set_settings_overlay_value(
+        &mut items,
+        "Footer › Workspace path",
+        footer_visibility_label(session.footer_settings.show_path).to_string(),
+    );
+    set_settings_overlay_value(
+        &mut items,
+        "Footer › Hotkey help",
+        footer_visibility_label(session.footer_settings.show_help_bar).to_string(),
+    );
+    set_settings_overlay_value(
+        &mut items,
+        "Footer › Usage display",
+        session.footer_settings.usage_display.label().to_string(),
+    );
+    set_settings_overlay_value(
+        &mut items,
+        "Footer › Model chip",
+        footer_visibility_label(session.footer_settings.show_model).to_string(),
+    );
+    set_settings_overlay_value(
+        &mut items,
+        "Footer › Permission chip",
+        footer_visibility_label(session.footer_settings.show_permission).to_string(),
+    );
+    set_settings_overlay_value(
+        &mut items,
+        "Footer › Memory chip",
+        footer_visibility_label(session.footer_settings.show_memory).to_string(),
+    );
+    set_settings_overlay_value(
+        &mut items,
+        "Footer › Context chip",
+        footer_visibility_label(session.footer_settings.show_context).to_string(),
+    );
+    set_settings_overlay_value(
+        &mut items,
+        "Compaction › Idle compaction",
+        compaction_enabled_label(session.compact_settings.idle_enabled).to_string(),
+    );
+    set_settings_overlay_value(
+        &mut items,
+        "Compaction › Idle time",
+        format_compaction_minutes_label(session.compact_settings.idle_minutes),
+    );
+    set_settings_overlay_value(
+        &mut items,
+        "Compaction › Idle context threshold",
+        format_compaction_threshold_label(session.compact_settings.idle_threshold_percent),
+    );
+    set_settings_overlay_value(
+        &mut items,
+        "Compaction › Smart compact threshold",
+        format_compaction_threshold_label(session.compact_settings.smart_threshold_percent),
+    );
+    set_settings_overlay_value(&mut items, "Theme › OPPi theme", session.theme.clone());
     items
+}
+
+fn set_settings_overlay_value(items: &mut [RatatuiOverlayItem], label: &str, value: String) {
+    if let Some(item) = items.iter_mut().find(|item| item.label == label) {
+        item.value = value;
+    }
 }
 
 fn settings_overlay_items() -> Vec<OverlayItem> {
     vec![
         OverlayItem {
-            label: "General › Status shortcuts",
+            label: "General › Status & usage",
             value: "/usage",
-            detail: "Usage/status, keybindings, and debug surfaces",
+            detail: "Usage/status, footer, and debug surfaces",
         },
         OverlayItem {
             label: "General › Goal mode",
@@ -2220,14 +2980,19 @@ fn settings_overlay_items() -> Vec<OverlayItem> {
             detail: "Browse and resume prior sessions",
         },
         OverlayItem {
+            label: "General › Question timeout",
+            value: "5m",
+            detail: "ask_user timeout before recommended/default answers",
+        },
+        OverlayItem {
             label: "Pi › Main model",
-            value: "gpt-5-codex",
+            value: "gpt-5.5",
             detail: "Select the default model for OPPi turns",
         },
         OverlayItem {
-            label: "Pi › Effort",
+            label: "Pi › Default thinking",
             value: "auto",
-            detail: "Model-aware thinking slider for the main model",
+            detail: "Pi defaultThinkingLevel for the main model",
         },
         OverlayItem {
             label: "Pi › Scoped models",
@@ -2250,19 +3015,274 @@ fn settings_overlay_items() -> Vec<OverlayItem> {
             detail: "Subscription and API authentication",
         },
         OverlayItem {
-            label: "Footer › Status bar",
-            value: "live",
-            detail: "Footer help, usage, todos, model, permission, and memory chips",
+            label: "Pi › MCP",
+            value: "unchecked",
+            detail: "Broker status, tools, and diagnostics",
+        },
+        OverlayItem {
+            label: "Pi › Follow-up mode",
+            value: "all",
+            detail: "Alt+Enter queue delivery mode",
+        },
+        OverlayItem {
+            label: "Pi › Steering mode",
+            value: "all",
+            detail: "Ctrl+Enter active-turn delivery mode",
+        },
+        OverlayItem {
+            label: "Pi › Quiet startup",
+            value: "disabled",
+            detail: "Suppress the non-critical ready banner",
+        },
+        OverlayItem {
+            label: "Pi › Double escape",
+            value: "tree",
+            detail: "Action for empty-editor double Escape",
+        },
+        OverlayItem {
+            label: "Pi › Tree filter",
+            value: "default",
+            detail: "Default entries and sessions filter",
+        },
+        OverlayItem {
+            label: "Pi › Skill commands",
+            value: "enabled",
+            detail: "Register skills as /skill:name commands",
+        },
+        OverlayItem {
+            label: "Pi › Autocomplete items",
+            value: "5",
+            detail: "Maximum visible command suggestions",
+        },
+        OverlayItem {
+            label: "Pi › Hardware cursor",
+            value: "disabled",
+            detail: "Keep the terminal cursor visible for IME support",
+        },
+        OverlayItem {
+            label: "Pi › Editor padding",
+            value: "0",
+            detail: "Horizontal input padding",
+        },
+        OverlayItem {
+            label: "Pi › Terminal progress",
+            value: "disabled",
+            detail: "Show OSC 9;4 progress indicators",
+        },
+        OverlayItem {
+            label: "Pi › Clear on shrink",
+            value: "disabled",
+            detail: "Clear stale terminal rows after shrink",
+        },
+        OverlayItem {
+            label: "Pi › Collapse changelog",
+            value: "stable Pi",
+            detail: "Stable Pi update UI only; no native toggle",
+        },
+        OverlayItem {
+            label: "Pi › Install telemetry",
+            value: "stable Pi",
+            detail: "Stable Pi install/update ping only; no native toggle",
+        },
+        OverlayItem {
+            label: "Pi › Show images",
+            value: "shown",
+            detail: "Render supported images inline in capable terminals",
+        },
+        OverlayItem {
+            label: "Pi › Image width",
+            value: "80",
+            detail: "Preferred inline image width in terminal cells",
+        },
+        OverlayItem {
+            label: "Pi › Auto-resize images",
+            value: "enabled",
+            detail: "Resize large images before providers",
+        },
+        OverlayItem {
+            label: "Pi › Block images",
+            value: "allowed",
+            detail: "Prevent images from being sent to providers",
+        },
+        OverlayItem {
+            label: "Pi › Preview capability",
+            value: "detect",
+            detail: "Show terminal image preview support",
+        },
+        OverlayItem {
+            label: "Footer › Workspace path",
+            value: "shown",
+            detail: "Show current project path in the footer area",
+        },
+        OverlayItem {
+            label: "Footer › Hotkey help",
+            value: "shown",
+            detail: "Show the Alt+K help row below the footer",
+        },
+        OverlayItem {
+            label: "Footer › Usage display",
+            value: "session + weekly",
+            detail: "Session and weekly usage chip visibility",
+        },
+        OverlayItem {
+            label: "Footer › Model chip",
+            value: "shown",
+            detail: "Show active provider/model in footer",
+        },
+        OverlayItem {
+            label: "Footer › Permission chip",
+            value: "shown",
+            detail: "Show active permission mode in footer",
+        },
+        OverlayItem {
+            label: "Footer › Memory chip",
+            value: "shown",
+            detail: "Show memory status in footer",
+        },
+        OverlayItem {
+            label: "Footer › Context chip",
+            value: "shown",
+            detail: "Show context usage in footer",
         },
         OverlayItem {
             label: "Memory › Hoppi",
-            value: "client-hosted",
+            value: "runtime-backed",
             detail: "Recall, dashboard, and maintenance",
         },
         OverlayItem {
-            label: "Compaction › Context handoff",
+            label: "Memory › Enabled",
+            value: "enabled",
+            detail: "Enable runtime-backed Hoppi memory recall/write behavior",
+        },
+        OverlayItem {
+            label: "Memory › Backend package",
+            value: HOPPI_PACKAGE_NAME,
+            detail: "Install or update Hoppi backend",
+        },
+        OverlayItem {
+            label: "Memory › Agent model",
+            value: "auto",
+            detail: "Memory distillation model preference",
+        },
+        OverlayItem {
+            label: "Memory › Deep dream model",
+            value: "auto",
+            detail: "Deep memory reconciliation model",
+        },
+        OverlayItem {
+            label: "Memory › Startup recall",
+            value: "enabled",
+            detail: "Inject startup memory context",
+        },
+        OverlayItem {
+            label: "Memory › Task-start recall",
+            value: "enabled",
+            detail: "Recall relevant memories at task start",
+        },
+        OverlayItem {
+            label: "Memory › Turn summaries",
+            value: "enabled",
+            detail: "Save bounded turn summaries",
+        },
+        OverlayItem {
+            label: "Memory › Idle dream mode",
+            value: "enabled",
+            detail: "Consolidate dirty memory while idle",
+        },
+        OverlayItem {
+            label: "Memory › First-start install offer",
+            value: "ask",
+            detail: "Ask once before installing Hoppi",
+        },
+        OverlayItem {
+            label: "Memory › Sync",
+            value: "disabled",
+            detail: "Enable opt-in Hoppi sync",
+        },
+        OverlayItem {
+            label: "Memory › Sync now",
             value: "manual",
-            detail: "Manual memory compaction and maintenance shortcuts",
+            detail: "Run pull and push now",
+        },
+        OverlayItem {
+            label: "Memory › Pull now",
+            value: "manual",
+            detail: "Pull shared memory now",
+        },
+        OverlayItem {
+            label: "Memory › Push now",
+            value: "manual",
+            detail: "Push shared memory now",
+        },
+        OverlayItem {
+            label: "Memory › Sync repo",
+            value: "not configured",
+            detail: "Local Hoppi sync repository path",
+        },
+        OverlayItem {
+            label: "Memory › Sync remote",
+            value: "not configured",
+            detail: "Git remote URL for shared memory",
+        },
+        OverlayItem {
+            label: "Memory › Sync startup pull",
+            value: "enabled",
+            detail: "Pull shared memory when native OPPi starts",
+        },
+        OverlayItem {
+            label: "Memory › Sync exit push",
+            value: "enabled",
+            detail: "Push shared memory when native OPPi exits",
+        },
+        OverlayItem {
+            label: "Memory › Sync background",
+            value: "off",
+            detail: "Background sync interval",
+        },
+        OverlayItem {
+            label: "Memory › Sync encryption",
+            value: "none/env",
+            detail: "Sync encryption source",
+        },
+        OverlayItem {
+            label: "Memory › Sync passphrase env",
+            value: DEFAULT_SYNC_PASSPHRASE_ENV,
+            detail: "Environment variable for sync passphrase",
+        },
+        OverlayItem {
+            label: "Memory › Sync passphrase file",
+            value: "not configured",
+            detail: "File path for sync passphrase",
+        },
+        OverlayItem {
+            label: "Memory › Sync conflict mode",
+            value: "keep-both",
+            detail: "Sync conflict handling",
+        },
+        OverlayItem {
+            label: "Compaction › Idle compaction",
+            value: "enabled",
+            detail: "Compact after idle time and context threshold",
+        },
+        OverlayItem {
+            label: "Compaction › Idle time",
+            value: "5m",
+            detail: "Minutes idle before automatic compaction",
+        },
+        OverlayItem {
+            label: "Compaction › Idle context threshold",
+            value: "70%",
+            detail: "Context usage required for idle compaction",
+        },
+        OverlayItem {
+            label: "Compaction › Smart compact threshold",
+            value: "65%",
+            detail: "Todo checkpoint context threshold",
+        },
+        OverlayItem {
+            label: "Compaction › Compact now",
+            value: "handoff",
+            detail: "Create a todo-aware memory handoff now",
         },
         OverlayItem {
             label: "Permissions › Mode",
@@ -2270,11 +3290,138 @@ fn settings_overlay_items() -> Vec<OverlayItem> {
             detail: "Read/write/network approval policy",
         },
         OverlayItem {
+            label: "Permissions › Auto-review timeout",
+            value: "45s",
+            detail: "Guardian reviewer timeout before fail-closed",
+        },
+        OverlayItem {
+            label: "Permissions › Reviewer model",
+            value: "auto",
+            detail: "Non-Meridian reviewer model or auto",
+        },
+        OverlayItem {
+            label: "Permissions › Sandbox validation",
+            value: "check",
+            detail: "Preview effective roots and path issues",
+        },
+        OverlayItem {
+            label: "Permissions › Use workspace roots",
+            value: "current",
+            detail: "Set project/read/write roots to the current workspace",
+        },
+        OverlayItem {
+            label: "Permissions › Reset sandbox roots",
+            value: "default",
+            detail: "Restore project/read/write root fallback behavior",
+        },
+        OverlayItem {
+            label: "Permissions › Browse project root",
+            value: "picker",
+            detail: "Choose a project root from directories on disk",
+        },
+        OverlayItem {
+            label: "Permissions › Add project root",
+            value: "add",
+            detail: "Append a project root from directories on disk",
+        },
+        OverlayItem {
+            label: "Permissions › Remove project root",
+            value: "remove",
+            detail: "Remove a configured project root",
+        },
+        OverlayItem {
+            label: "Permissions › Browse readable root",
+            value: "picker",
+            detail: "Choose a readable root from directories on disk",
+        },
+        OverlayItem {
+            label: "Permissions › Add readable root",
+            value: "add",
+            detail: "Append a readable root from directories on disk",
+        },
+        OverlayItem {
+            label: "Permissions › Remove readable root",
+            value: "remove",
+            detail: "Remove a configured readable root",
+        },
+        OverlayItem {
+            label: "Permissions › Browse writable root",
+            value: "picker",
+            detail: "Choose a writable root from directories on disk",
+        },
+        OverlayItem {
+            label: "Permissions › Add writable root",
+            value: "add",
+            detail: "Append a writable root from directories on disk",
+        },
+        OverlayItem {
+            label: "Permissions › Remove writable root",
+            value: "remove",
+            detail: "Remove a configured writable root",
+        },
+        OverlayItem {
+            label: "Permissions › Sandbox internet",
+            value: "blocked",
+            detail: "Network access for sandboxed tools",
+        },
+        OverlayItem {
+            label: "Permissions › Sandbox SSH",
+            value: "blocked",
+            detail: "SSH/network access for sandboxed tools",
+        },
+        OverlayItem {
+            label: "Permissions › Project roots",
+            value: "default",
+            detail: "Default root set for sandbox read/write",
+        },
+        OverlayItem {
+            label: "Permissions › Readable roots",
+            value: "project roots",
+            detail: "Sandbox paths readable by tools",
+        },
+        OverlayItem {
+            label: "Permissions › Writable roots",
+            value: "project roots",
+            detail: "Sandbox paths writable by tools",
+        },
+        OverlayItem {
+            label: "Permissions › Protected patterns",
+            value: "default",
+            detail: "Extra sandbox protected path patterns",
+        },
+        OverlayItem {
             label: "Theme › OPPi theme",
             value: "oppi (dark)",
             detail: "Colors and terminal-safe rendering",
         },
+        OverlayItem {
+            label: "Theme › Preview picker",
+            value: "open",
+            detail: "Preview available themes before applying one",
+        },
     ]
+}
+
+fn sandbox_flag_label(allowed: bool) -> &'static str {
+    if allowed { "allowed" } else { "blocked" }
+}
+
+fn format_review_timeout_label(timeout_ms: u64) -> String {
+    if timeout_ms > 0 && timeout_ms % 1_000 == 0 {
+        format!("{}s", timeout_ms / 1_000)
+    } else {
+        format!("{timeout_ms}ms")
+    }
+}
+
+fn format_ask_user_timeout_label(timeout_ms: u64) -> String {
+    if timeout_ms == 0 {
+        "off".to_string()
+    } else if timeout_ms % 60_000 == 0 {
+        format!("{}m", timeout_ms / 60_000)
+    } else {
+        format!("{timeout_ms}ms")
+    }
 }
 
 #[cfg(test)]
@@ -2299,6 +3446,11 @@ fn theme_panel_items() -> Vec<OverlayItem> {
             label: "Plain",
             value: "plain",
             detail: "no-color safe mode",
+        },
+        OverlayItem {
+            label: "Preview picker",
+            value: "open",
+            detail: "preview available themes before applying",
         },
     ]
 }
@@ -2382,7 +3534,7 @@ fn memory_panel_items() -> Vec<OverlayItem> {
         OverlayItem {
             label: "Dashboard",
             value: "Hoppi",
-            detail: "open client-hosted memory controls",
+            detail: "open runtime-backed memory controls",
         },
         OverlayItem {
             label: "On/off",
@@ -2418,7 +3570,7 @@ fn model_role_picker_items() -> Vec<OverlayItem> {
     vec![
         OverlayItem {
             label: "executor",
-            value: "gpt-5-codex",
+            value: "gpt-5.5",
             detail: "current role model",
         },
         OverlayItem {
@@ -2829,7 +3981,7 @@ mod tests {
     fn sample_view() -> RatatuiViewModel {
         RatatuiViewModel {
             provider: "openai-codex".to_string(),
-            model: "gpt-5-codex".to_string(),
+            model: "gpt-5.5".to_string(),
             permission: "auto-review".to_string(),
             status: "ready".to_string(),
             thread_id: "thread-123456".to_string(),
@@ -2854,6 +4006,7 @@ mod tests {
             dock_label: "docks: idle".to_string(),
             editor_placeholder: "Ask, build, or type / for commands…".to_string(),
             editor_is_placeholder: true,
+            editor_padding_x: 0,
             footer_left: "ready · openai-codex · perm auto-review · todos 0 · queued 0".to_string(),
             footer_hotkeys: "Alt+Enter follow-up  Ctrl+Enter steer  / commands".to_string(),
             slash_items: vec![SlashPaletteItem {
@@ -2861,10 +4014,12 @@ mod tests {
                 insert: "/settings".to_string(),
                 detail: "open settings overlay".to_string(),
             }],
+            slash_max_visible: 7,
             slash_selected: 0,
             overlay_title: "settings".to_string(),
             overlay_items: default_settings_overlay_items(),
             settings_selected: 1,
+            settings_filter: String::new(),
             question_selected: 0,
             pending_answers: vec![
                 "1. probe at startup via DA1 response".to_string(),
@@ -3163,7 +4318,7 @@ mod tests {
             "│   /sessions    browse session history                                      │",
             "│   /background  send to background runner                                  │",
             "│   /todos       show task list                                              │",
-            "│   /effort      model-aware thinking slider                                 │",
+            "│   /effort      default thinking slider                                    │",
             "│   /exit        quit OPPi                                                   │",
             "╰────────────────────────────────────────────────────────────────────────────╯",
             "╭────────────────────────────────────────────────────────────────────────────╮",
@@ -3291,6 +4446,95 @@ mod tests {
     }
 
     #[test]
+    fn ratatui_theme_tokens_map_resolved_pi_theme_colors() {
+        let colors = serde_json::json!({
+            "accent": "#123abc",
+            "border": "#112233",
+            "borderAccent": "#456def",
+            "borderMuted": "#222222",
+            "text": "",
+            "muted": 242,
+            "dim": "#444444",
+            "warning": 220,
+            "success": "#00aa55",
+            "error": "#cc0033",
+            "mdLink": "#3377ff",
+            "bashMode": "#ff9900",
+            "syntaxNumber": "#b36bff",
+            "selectedBg": "#101820",
+            "userMessageBg": "#111111",
+            "customMessageBg": "#222222",
+            "toolPendingBg": "#333333",
+            "toolSuccessBg": "#003311",
+            "toolErrorBg": "#330011",
+            "permissionAutoReviewingBg": "#001133",
+            "permissionAutoApprovedBg": "#002200",
+            "permissionAutoDeniedBg": "#220000"
+        });
+        let export = serde_json::json!({ "pageBg": "#010203" });
+        let tokens = RatatuiThemeTokens::from_pi_theme_values(
+            &colors,
+            Some(&export),
+            theme::ThemeVariant::Dark,
+        )
+        .unwrap();
+        assert_eq!(tokens.accent, rgb(0x12, 0x3a, 0xbc));
+        assert_eq!(tokens.accent_soft, rgb(0x45, 0x6d, 0xef));
+        assert_eq!(tokens.accent_dim, rgb(0x11, 0x22, 0x33));
+        assert_eq!(tokens.fg, RatatuiThemeTokens::dark().fg);
+        assert_eq!(tokens.fg_muted, Color::Indexed(242));
+        assert_eq!(tokens.bg, rgb(0x01, 0x02, 0x03));
+        assert_eq!(tokens.yellow, Color::Indexed(220));
+        assert_eq!(tokens.green, rgb(0x00, 0xaa, 0x55));
+        assert_eq!(tokens.red, rgb(0xcc, 0x00, 0x33));
+        assert_eq!(tokens.blue, rgb(0x33, 0x77, 0xff));
+        assert_eq!(tokens.orange, rgb(0xff, 0x99, 0x00));
+        assert_eq!(tokens.purple, rgb(0xb3, 0x6b, 0xff));
+        assert_eq!(tokens.bg_perm_review, rgb(0x00, 0x11, 0x33));
+        assert_eq!(tokens.bg_perm_approved, rgb(0x00, 0x22, 0x00));
+        assert_eq!(tokens.bg_perm_denied, rgb(0x22, 0x00, 0x00));
+    }
+
+    #[test]
+    fn ratatui_theme_tokens_prefer_loaded_shell_theme() {
+        let loaded = LoadedShellTheme {
+            name: "solarized-pro".to_string(),
+            source: "plugin".to_string(),
+            colors: serde_json::json!({
+                "accent": "#123456",
+                "border": "#112233",
+                "borderAccent": "#456def",
+                "borderMuted": "#222222",
+                "text": "#ddeeff",
+                "muted": "#8899aa",
+                "dim": "#445566",
+                "warning": 220,
+                "success": "#00aa55",
+                "error": "#cc0033",
+                "mdLink": "#3377ff",
+                "bashMode": "#ff9900",
+                "syntaxNumber": "#b36bff",
+                "selectedBg": "#101820",
+                "userMessageBg": "#111111",
+                "customMessageBg": "#222222",
+                "toolPendingBg": "#333333",
+                "toolSuccessBg": "#003311",
+                "toolErrorBg": "#330011",
+                "permissionAutoReviewingBg": "#001133",
+                "permissionAutoApprovedBg": "#002200",
+                "permissionAutoDeniedBg": "#220000"
+            }),
+            export: Some(serde_json::json!({ "pageBg": "#010203" })),
+            line_tokens: plain_theme_tokens(),
+        };
+        let tokens = ratatui_theme_tokens_for_shell("light", Some(&loaded));
+
+        assert_eq!(tokens.accent, rgb(0x12, 0x34, 0x56));
+        assert_eq!(tokens.bg, rgb(0x01, 0x02, 0x03));
+        assert!(!tokens.plain);
+    }
+
+    #[test]
     fn ratatui_exact_fixture_preserves_requested_size() {
         let rendered =
             render_ratatui_exact_fixture(&sample_view(), 58, 22, RatatuiFrameMode::Idle).unwrap();
@@ -3308,7 +4552,7 @@ mod tests {
         running.spinner_index = 0;
         let rendered = render_ratatui_preview(&running, 90, 16, RatatuiFrameMode::Running).unwrap();
         assert!(rendered.contains(widgets::header::HEADER_VISUAL_CONTRACT.running_spinner));
-        assert!(rendered.contains("◐ OPPi · openai-codex/gpt-5-codex"));
+        assert!(rendered.contains("◐ OPPi · openai-codex/gpt-5.5"));
         assert!(rendered.contains("perms: auto-review"));
         assert!(rendered.contains("running"));
         assert!(!rendered.contains("implement ThemeTokens"));
@@ -3317,13 +4561,13 @@ mod tests {
         waiting.status = "waiting".to_string();
         let rendered =
             render_ratatui_preview(&waiting, 90, 16, RatatuiFrameMode::Question).unwrap();
-        assert!(rendered.contains("⏸ OPPi · openai-codex/gpt-5-codex"));
+        assert!(rendered.contains("⏸ OPPi · openai-codex/gpt-5.5"));
         let header_line = rendered.lines().next().unwrap_or_default();
         assert!(header_line.contains("waiting"));
 
         let rendered =
             render_ratatui_preview(&sample_view(), 56, 16, RatatuiFrameMode::Idle).unwrap();
-        assert!(rendered.contains("• OPPi · openai-codex/gpt-5-codex"));
+        assert!(rendered.contains("• OPPi · openai-codex/gpt-5.5"));
         assert!(rendered.contains("perms: auto-review"));
     }
 
@@ -3505,28 +4749,57 @@ mod tests {
     }
 
     #[test]
+    fn ratatui_slash_overlay_respects_pi_autocomplete_max_visible() {
+        let mut view = sample_view();
+        view.slash_max_visible = 10;
+        view.slash_items = (0..12)
+            .map(|index| SlashPaletteItem {
+                label: format!("/cmd{index:02}"),
+                insert: format!("/cmd{index:02}"),
+                detail: format!("command detail {index:02}"),
+            })
+            .collect();
+        view.slash_selected = 0;
+
+        let slash = render_ratatui_preview(&view, 100, 20, RatatuiFrameMode::Slash).unwrap();
+        assert!(
+            slash.contains("/cmd09"),
+            "expected tenth visible row: {slash}"
+        );
+        assert!(
+            !slash.contains("/cmd10"),
+            "expected eleventh row to remain hidden: {slash}"
+        );
+    }
+
+    #[test]
     fn ratatui_editor_footer_and_slash_contracts_render() {
         let mut view = sample_view();
         view.editor_placeholder =
             "first line\nsecond line wraps around the editor width".to_string();
-        let editor_lines = editor_lines(&view.editor_placeholder, 18, view.theme, false);
+        let editor_lines = editor_lines(&view.editor_placeholder, 18, 0, view.theme, false);
         assert!(editor_lines.len() >= 2);
+        assert_eq!(editor_lines[0].spans[1].content, "first line");
+        assert_eq!(editor_lines[0].spans[1].style.fg, Some(view.theme.fg));
         let running = render_ratatui_preview(&view, 90, 16, RatatuiFrameMode::Running).unwrap();
         assert!(running.contains("turn running"));
         assert!(running.contains("Ctrl+Enter steers"));
 
         view.footer_left =
-            "running · openai-codex · perm auto-review · todos 3 · queued 2".to_string();
+            "running · openai-codex · perm auto-review · usage 5h 84% left · week 47% left · ctx 8k · todos 3 · queued 2".to_string();
         let footer = footer_status_spans(&view, 120)
             .into_iter()
             .map(|span| span.content.to_string())
             .collect::<String>();
-        assert!(footer.contains("sess"));
-        assert!(!footer.contains("weekly"));
+        assert!(footer.contains("usage 5h 84% left"));
+        assert!(footer.contains("▮▯▯▯▯"));
+        assert!(!footer.contains("▮▮▮▮▯"));
+        assert!(!footer.contains("sess "));
+        assert!(!footer.contains("wk "));
         assert!(footer.contains("model"));
-        assert!(footer.contains("gpt-5-codex"));
+        assert!(footer.contains("gpt-5.5"));
         assert!(footer.contains("perm"));
-        assert!(footer.contains("ctx"));
+        assert!(footer.contains("ctx 8k"));
         assert!(footer.contains("todos 3"));
         assert!(terminal_cell_width(&footer) <= 120);
         view.status = "waiting".to_string();
@@ -3541,7 +4814,7 @@ mod tests {
             .into_iter()
             .map(|span| span.content.to_string())
             .collect::<String>();
-        assert!(wide_footer.contains("wk"));
+        assert!(!wide_footer.contains("wk "));
         assert!(terminal_cell_width(&wide_footer) <= 140);
         let wider_footer = footer_status_spans(&view, 160)
             .into_iter()
@@ -3553,7 +4826,7 @@ mod tests {
             .into_iter()
             .map(|span| span.content.to_string())
             .collect::<String>();
-        assert!(!collapsed.contains("weekly"));
+        assert!(!collapsed.contains("wk "));
 
         let essentials = slash_essential_items(&view)
             .into_iter()
@@ -3600,24 +4873,25 @@ mod tests {
         assert!(settings.contains("↑↓ select  Enter open  Space change  Esc close"));
         assert_eq!(
             settings_overlay_items()[0].label,
-            "General › Status shortcuts"
+            "General › Status & usage"
         );
-        assert_eq!(settings_overlay_items()[3].label, "Pi › Main model");
+        assert_eq!(settings_overlay_items()[4].label, "Pi › Main model");
         assert_eq!(theme_panel_items()[3].value, "plain");
         assert_eq!(permission_panel_items()[2].value, "auto-review");
         assert_eq!(provider_panel_items()[3].value, "Meridian");
         assert_eq!(login_panel_items()[0].label, "Subscription");
         assert_eq!(memory_panel_items()[0].value, "Hoppi");
+        assert!(memory_panel_items()[0].detail.contains("runtime-backed"));
         assert_eq!(session_picker_items()[0].label, "current");
         assert_eq!(model_role_picker_items()[0].label, "executor");
         assert!(overlay_clears_and_adapts(Rect::new(0, 0, 90, 22)));
         assert!(!overlay_clears_and_adapts(Rect::new(0, 0, 39, 12)));
 
         let medium = render_ratatui_exact_fixture(&view, 78, 22, RatatuiFrameMode::Idle).unwrap();
-        assert!(medium.contains("• OPPi · openai-codex/gpt-5-codex"));
+        assert!(medium.contains("• OPPi · openai-codex/gpt-5.5"));
         assert!(medium.contains("perms: auto-review"));
         let narrow = render_ratatui_exact_fixture(&view, 58, 22, RatatuiFrameMode::Idle).unwrap();
-        assert!(narrow.contains("• OPPi · openai-codex/gpt-5-codex"));
+        assert!(narrow.contains("• OPPi · openai-codex/gpt-5.5"));
         assert!(narrow.contains("perms: auto-review"));
         let tiny = render_ratatui_exact_fixture(&view, 90, 14, RatatuiFrameMode::Running).unwrap();
         assert!(tiny.contains("turn running"));
@@ -3895,12 +5169,17 @@ mod tests {
         assert_eq!(editor.border_bottom_left, "╰");
         assert_eq!(editor.prompt_gutter, "› ");
         assert_eq!(editor.cursor, "█");
-        let typed_lines = editor_lines("hello", 20, RatatuiThemeTokens::plain(), false);
+        let typed_lines = editor_lines("hello", 20, 0, RatatuiThemeTokens::plain(), false);
         assert_eq!(typed_lines[0].spans[0].content, editor.prompt_gutter);
         assert_eq!(typed_lines[0].spans[2].content, editor.cursor);
+        let padded_lines = editor_lines("hello", 20, 2, RatatuiThemeTokens::plain(), false);
+        assert_eq!(padded_lines[0].spans[0].content, editor.prompt_gutter);
+        assert_eq!(padded_lines[0].spans[1].content, "  ");
+        assert_eq!(padded_lines[0].spans[3].content, editor.cursor);
         let placeholder_lines = editor_lines(
             "Ask, build, or type / for commands…",
             80,
+            0,
             RatatuiThemeTokens::plain(),
             true,
         );
@@ -3930,26 +5209,25 @@ mod tests {
         assert_eq!(footer.collapsed_height, FOOTER_COLLAPSED_HEIGHT);
         assert_eq!(footer.ready_dot, "•");
         assert_eq!(footer.running_dot, "●");
-        assert_eq!(footer.session_bar, FOOTER_SESSION_BAR);
-        assert_eq!(footer.week_bar, FOOTER_WEEK_BAR);
-        assert_eq!(footer.context_bar, FOOTER_CONTEXT_BAR);
         let mut footer_view = sample_view();
         footer_view.footer_left =
-            "ready · openai-codex · perm auto-review · todos 2 · queued 1".to_string();
+            "ready · openai-codex · perm auto-review · usage session 4k · ctx 2k · todos 2 · queued 1".to_string();
         let footer_text = footer_status_spans(&footer_view, 120)
             .into_iter()
             .map(|span| span.content.to_string())
             .collect::<String>();
-        assert!(footer_text.contains(&format!("sess 3k 1% {FOOTER_SESSION_BAR}")));
-        assert!(!footer_text.contains(FOOTER_WEEK_BAR));
-        assert!(footer_text.contains(&format!("ctx 100k/272k 37% {FOOTER_CONTEXT_BAR}")));
+        assert!(footer_text.contains("usage session 4k"));
+        assert!(footer_text.contains("▯▯▯▯▯"));
+        assert!(footer_text.contains("ctx 2k"));
+        assert!(!footer_text.contains("sess "));
+        assert!(!footer_text.contains("wk "));
         assert!(footer_text.contains("Alt+K"));
         assert!(footer_text.contains(footer.todos_prefix));
         let collapsed_footer = footer_status_spans(&sample_view(), 58)
             .into_iter()
             .map(|span| span.content.to_string())
             .collect::<String>();
-        assert!(!collapsed_footer.contains(FOOTER_WEEK_BAR));
+        assert!(!collapsed_footer.contains("wk "));
         assert_eq!(
             footer_hotkey_line("Alt+Enter follow-up  Ctrl+Enter steer  / commands"),
             "Alt+Enter follow-up  ·  Ctrl+Enter steer  ·  / commands"
@@ -3981,13 +5259,13 @@ mod tests {
         assert_eq!(overlay_width(120), 82);
         assert_eq!(overlay_width(52), 40);
         let items = settings_overlay_items();
-        assert_eq!(items[0].label, "General › Status shortcuts");
+        assert_eq!(items[0].label, "General › Status & usage");
         assert_eq!(
             items
                 .iter()
                 .filter(|item| item.label.starts_with("Pi ›"))
                 .count(),
-            6
+            25
         );
         assert_eq!(
             format!("{:<18}", items[1].value).chars().count(),
@@ -3997,8 +5275,41 @@ mod tests {
             render_ratatui_preview(&sample_view(), 90, 22, RatatuiFrameMode::Settings).unwrap();
         assert!(rendered.contains("settings"));
         assert!(rendered.contains("General"));
-        assert!(rendered.contains("Status shortcuts"));
+        assert!(rendered.contains("Status & usage"));
         assert!(rendered.contains("Usage/status"));
+    }
+
+    #[test]
+    fn settings_overlay_uses_stable_top_and_arrow_only_copy() {
+        let mut general = sample_view();
+        general.settings_selected = 1;
+        let mut pi = sample_view();
+        pi.settings_selected = 4;
+
+        let general_rendered =
+            render_ratatui_preview(&general, 120, 32, RatatuiFrameMode::Settings).unwrap();
+        let pi_rendered = render_ratatui_preview(&pi, 120, 32, RatatuiFrameMode::Settings).unwrap();
+
+        let general_top = general_rendered
+            .lines()
+            .position(|line| line.starts_with('╭') && line.contains(" settings "))
+            .expect("general settings top border");
+        let pi_top = pi_rendered
+            .lines()
+            .position(|line| line.starts_with('╭') && line.contains(" settings "))
+            .expect("pi settings top border");
+
+        assert_eq!(general_top, pi_top);
+        assert!(general_rendered.contains("Status & usage"));
+        assert!(!general_rendered.contains("Status shortcuts"));
+        assert!(general_rendered.contains("[General]  Pi"));
+        assert!(pi_rendered.contains("General  [Pi]"));
+        assert!(!general_rendered.contains("⚙️"));
+        assert!(!general_rendered.contains("🧩"));
+        assert!(
+            general_rendered
+                .contains("←/→ sections  ↑/↓ settings  Type to search  Enter/Space open")
+        );
     }
 
     #[test]
@@ -4204,18 +5515,18 @@ mod tests {
         let settings = frames::design_frame_fixture_content(model::DesignFrameKind::Settings);
         assert_eq!(settings.title, "oppi-native · /settings");
         assert_eq!(settings.meta, Some("overlay"));
-        assert!(settings.transcript[0].body.contains("←/→ tabs"));
+        assert!(settings.transcript[0].body.contains("←/→ sections"));
         let overlay = settings.overlay.as_ref().expect("settings overlay fixture");
         assert_eq!(overlay.title, "settings");
         assert_eq!(
             overlay.help,
-            "←/→ tabs · ↑/↓ settings · Enter open · Esc close"
+            "←/→ sections · ↑/↓ settings · Type to search · Enter open · Esc close"
         );
         assert_eq!(overlay.selected, 1);
         assert_eq!(overlay.items.len(), 14);
         assert!(overlay.items[1].current);
         assert_eq!(overlay.items[1].label, "General › Goal mode");
-        assert_eq!(overlay.items[10].value, "client-hosted");
+        assert_eq!(overlay.items[10].value, "runtime-backed");
 
         let narrow_meta = frames::design_frame_fixture(model::DesignFrameKind::Narrow);
         let narrow = frames::design_frame_fixture_content(model::DesignFrameKind::Narrow);
@@ -4329,36 +5640,111 @@ mod tests {
             render_ratatui_preview(&sample_view(), 90, 22, RatatuiFrameMode::Settings).unwrap();
         assert!(settings.contains("settings"));
         assert!(settings.contains("General"));
-        assert!(settings.contains("Status shortcuts"));
+        assert!(settings.contains("Status & usage"));
     }
 
     #[test]
-    fn ratatui_settings_overlay_uses_horizontal_top_tabs() {
+    fn ratatui_settings_overlay_uses_horizontal_section_bar() {
         let settings =
             render_ratatui_preview(&sample_view(), 120, 24, RatatuiFrameMode::Settings).unwrap();
-        let tab_line = settings
+        let section_bar = settings
             .lines()
-            .find(|line| {
-                line.contains("General")
-                    && line.contains("Pi")
-                    && line.contains("Footer")
-                    && line.contains("Memory")
-            })
-            .expect("settings groups should render as one horizontal tab row");
-        assert!(
-            tab_line.find("General") < tab_line.find("Pi")
-                && tab_line.find("Pi") < tab_line.find("Footer")
-                && tab_line.find("Footer") < tab_line.find("Memory")
-        );
-        assert!(
-            !settings
-                .lines()
-                .any(|line| line.contains("General") && line.contains(" │ ")),
-            "settings root tabs should not render as a vertical left rail"
-        );
+            .find(|line| line.contains("[General]") && line.contains("Pi"))
+            .expect("settings groups should render a visible horizontal section bar");
+        assert!(section_bar.contains("Footer"));
+        assert!(section_bar.contains("Memory"));
+        assert!(!settings.contains("⚙️"));
+        assert!(!settings.contains("🧩"));
         let roomy_settings =
             render_ratatui_preview(&sample_view(), 120, 32, RatatuiFrameMode::Settings).unwrap();
-        assert!(roomy_settings.contains("settings · 14 settings · active: ⚙️  General"));
+        assert!(roomy_settings.contains("settings · 87 settings · active: General"));
+        assert!(default_settings_overlay_items().iter().any(|item| {
+            item.label == "Pi › Quiet startup"
+                && item.value == "disabled"
+                && item.detail == "Suppress the non-critical ready banner"
+        }));
+        assert!(default_settings_overlay_items().iter().any(|item| {
+            item.label == "Pi › Double escape"
+                && item.value == "tree"
+                && item.detail == "Action for empty-editor double Escape"
+        }));
+        assert!(default_settings_overlay_items().iter().any(|item| {
+            item.label == "Pi › Tree filter"
+                && item.value == "default"
+                && item.detail == "Default entries and sessions filter"
+        }));
+        assert!(default_settings_overlay_items().iter().any(|item| {
+            item.label == "Pi › Skill commands"
+                && item.value == "enabled"
+                && item.detail == "Register skills as /skill:name commands"
+        }));
+        assert!(default_settings_overlay_items().iter().any(|item| {
+            item.label == "Pi › Autocomplete items"
+                && item.value == "5"
+                && item.detail == "Maximum visible command suggestions"
+        }));
+        assert!(default_settings_overlay_items().iter().any(|item| {
+            item.label == "Pi › Hardware cursor"
+                && item.value == "disabled"
+                && item.detail == "Keep the terminal cursor visible for IME support"
+        }));
+        assert!(default_settings_overlay_items().iter().any(|item| {
+            item.label == "Pi › Editor padding"
+                && item.value == "0"
+                && item.detail == "Horizontal input padding"
+        }));
+        assert!(default_settings_overlay_items().iter().any(|item| {
+            item.label == "Pi › Terminal progress"
+                && item.value == "disabled"
+                && item.detail == "Show OSC 9;4 progress indicators"
+        }));
+        assert!(default_settings_overlay_items().iter().any(|item| {
+            item.label == "Pi › Clear on shrink"
+                && item.value == "disabled"
+                && item.detail == "Clear stale terminal rows after shrink"
+        }));
+        assert!(default_settings_overlay_items().iter().any(|item| {
+            item.label == "Pi › Collapse changelog"
+                && item.value == "stable Pi"
+                && item.detail == "Stable Pi update UI only; no native toggle"
+        }));
+        assert!(default_settings_overlay_items().iter().any(|item| {
+            item.label == "Pi › Install telemetry"
+                && item.value == "stable Pi"
+                && item.detail == "Stable Pi install/update ping only; no native toggle"
+        }));
+    }
+
+    #[test]
+    fn ratatui_settings_overlay_filters_rows_by_search_query() {
+        let mut view = sample_view();
+        view.settings_filter = "image".to_string();
+        view.settings_selected = view
+            .overlay_items
+            .iter()
+            .position(|item| item.label == "Pi › Show images")
+            .expect("image settings row");
+
+        let rendered = render_ratatui_preview(&view, 120, 32, RatatuiFrameMode::Settings).unwrap();
+
+        assert!(rendered.contains("filter: image"));
+        assert!(rendered.contains("Show images"));
+        assert!(rendered.contains("Image width"));
+        assert!(rendered.contains("Preview capability"));
+        assert!(rendered.contains("Type to search"));
+        assert!(!rendered.contains("Status & usage"));
+        assert!(!rendered.contains("Main model"));
+    }
+
+    #[test]
+    fn ratatui_settings_overlay_filter_empty_state_is_visible() {
+        let mut view = sample_view();
+        view.settings_filter = "zzzz-nope".to_string();
+
+        let rendered = render_ratatui_preview(&view, 100, 24, RatatuiFrameMode::Settings).unwrap();
+
+        assert!(rendered.contains("filter: zzzz-nope"));
+        assert!(rendered.contains("No settings match"));
     }
 
     #[test]
@@ -4369,6 +5755,404 @@ mod tests {
             item.label == "General › Goal mode"
                 && item.value == "none"
                 && item.detail == "Track and continue one thread objective"
+        }));
+    }
+
+    #[test]
+    fn settings_overlay_exposes_question_timeout() {
+        let items = default_settings_overlay_items();
+
+        assert!(items.iter().any(|item| {
+            item.label == "General › Question timeout"
+                && item.value == "5m"
+                && item.detail.contains("ask_user timeout")
+        }));
+    }
+
+    #[test]
+    fn settings_overlay_exposes_mcp_status_row() {
+        let items = default_settings_overlay_items();
+
+        assert!(items.iter().any(|item| {
+            item.label == "Pi › MCP"
+                && item.value == "unchecked"
+                && item.detail == "Broker status, tools, and diagnostics"
+        }));
+    }
+
+    #[test]
+    fn settings_overlay_exposes_follow_up_mode() {
+        let items = default_settings_overlay_items();
+
+        assert!(items.iter().any(|item| {
+            item.label == "Pi › Follow-up mode"
+                && item.value == "all"
+                && item.detail == "Alt+Enter queue delivery mode"
+        }));
+    }
+
+    #[test]
+    fn settings_overlay_exposes_steering_mode() {
+        let items = default_settings_overlay_items();
+
+        assert!(items.iter().any(|item| {
+            item.label == "Pi › Steering mode"
+                && item.value == "all"
+                && item.detail == "Ctrl+Enter active-turn delivery mode"
+        }));
+    }
+
+    #[test]
+    fn settings_overlay_exposes_footer_visibility_controls() {
+        let items = default_settings_overlay_items();
+
+        for (label, value, detail) in [
+            (
+                "Footer › Workspace path",
+                "shown",
+                "Show current project path in the footer area",
+            ),
+            (
+                "Footer › Hotkey help",
+                "shown",
+                "Show the Alt+K help row below the footer",
+            ),
+            (
+                "Footer › Usage display",
+                "session + weekly",
+                "Session and weekly usage chip visibility",
+            ),
+            (
+                "Footer › Model chip",
+                "shown",
+                "Show active provider/model in footer",
+            ),
+            (
+                "Footer › Permission chip",
+                "shown",
+                "Show active permission mode in footer",
+            ),
+            (
+                "Footer › Memory chip",
+                "shown",
+                "Show memory status in footer",
+            ),
+            (
+                "Footer › Context chip",
+                "shown",
+                "Show context usage in footer",
+            ),
+        ] {
+            assert!(
+                items.iter().any(|item| {
+                    item.label == label && item.value == value && item.detail == detail
+                }),
+                "missing footer settings row {label}"
+            );
+        }
+    }
+
+    #[test]
+    fn settings_overlay_exposes_compaction_threshold_controls() {
+        let items = default_settings_overlay_items();
+
+        for (label, value, detail) in [
+            (
+                "Compaction › Idle compaction",
+                "enabled",
+                "Compact after idle time and context threshold",
+            ),
+            (
+                "Compaction › Idle time",
+                "5m",
+                "Minutes idle before automatic compaction",
+            ),
+            (
+                "Compaction › Idle context threshold",
+                "70%",
+                "Context usage required for idle compaction",
+            ),
+            (
+                "Compaction › Smart compact threshold",
+                "65%",
+                "Todo checkpoint context threshold",
+            ),
+        ] {
+            assert!(
+                items.iter().any(|item| {
+                    item.label == label && item.value == value && item.detail == detail
+                }),
+                "missing compaction settings row {label}"
+            );
+        }
+    }
+
+    #[test]
+    fn settings_overlay_exposes_theme_preview_picker() {
+        let items = default_settings_overlay_items();
+        let preview = items
+            .iter()
+            .find(|item| item.label == "Theme › Preview picker")
+            .expect("theme preview row");
+
+        assert_eq!(preview.value, "open");
+        assert!(preview.detail.to_ascii_lowercase().contains("preview"));
+    }
+
+    #[test]
+    fn settings_overlay_exposes_image_controls() {
+        let items = default_settings_overlay_items();
+        for (label, value, detail) in [
+            (
+                "Pi › Show images",
+                "shown",
+                "Render supported images inline",
+            ),
+            ("Pi › Image width", "80", "Preferred inline image width"),
+            (
+                "Pi › Auto-resize images",
+                "enabled",
+                "Resize large images before providers",
+            ),
+            (
+                "Pi › Block images",
+                "allowed",
+                "Prevent images from being sent",
+            ),
+            (
+                "Pi › Preview capability",
+                "detect",
+                "Show terminal image preview support",
+            ),
+        ] {
+            let item = items
+                .iter()
+                .find(|item| item.label == label)
+                .unwrap_or_else(|| panic!("missing image settings row {label}"));
+            assert_eq!(item.value, value);
+            assert!(
+                item.detail.to_ascii_lowercase().contains(
+                    &detail
+                        .split_whitespace()
+                        .next()
+                        .unwrap()
+                        .to_ascii_lowercase()
+                ),
+                "{label} detail should mention {detail}: {}",
+                item.detail
+            );
+        }
+    }
+
+    #[test]
+    fn settings_overlay_exposes_memory_behavior_controls() {
+        let items = default_settings_overlay_items();
+        for (label, value, detail) in [
+            ("Memory › Enabled", "enabled", "Enable Hoppi memory"),
+            ("Memory › Agent model", "auto", "Memory distillation model"),
+            (
+                "Memory › Deep dream model",
+                "auto",
+                "Deep memory reconciliation model",
+            ),
+            (
+                "Memory › Startup recall",
+                "enabled",
+                "Inject startup memory",
+            ),
+            (
+                "Memory › Task-start recall",
+                "enabled",
+                "Recall relevant memories",
+            ),
+            (
+                "Memory › Turn summaries",
+                "enabled",
+                "Save bounded turn summaries",
+            ),
+            (
+                "Memory › Idle dream mode",
+                "enabled",
+                "Consolidate dirty memory",
+            ),
+            (
+                "Memory › First-start install offer",
+                "ask",
+                "Ask once before installing Hoppi",
+            ),
+            (
+                "Memory › Backend package",
+                "@oppiai/hoppi-memory",
+                "Install or update Hoppi",
+            ),
+            ("Memory › Sync", "disabled", "Enable opt-in Hoppi sync"),
+            (
+                "Memory › Sync repo",
+                "not configured",
+                "Local Hoppi sync repository path",
+            ),
+            (
+                "Memory › Sync remote",
+                "not configured",
+                "Git remote URL for shared memory",
+            ),
+            (
+                "Memory › Sync startup pull",
+                "enabled",
+                "Pull shared memory",
+            ),
+            ("Memory › Sync exit push", "enabled", "Push shared memory"),
+            (
+                "Memory › Sync background",
+                "off",
+                "Background sync interval",
+            ),
+            (
+                "Memory › Sync encryption",
+                "none/env",
+                "Sync encryption source",
+            ),
+            (
+                "Memory › Sync passphrase env",
+                "OPPI_HOPPI_SYNC_PASSPHRASE",
+                "Environment variable",
+            ),
+            (
+                "Memory › Sync passphrase file",
+                "not configured",
+                "File path",
+            ),
+            (
+                "Memory › Sync conflict mode",
+                "keep-both",
+                "Sync conflict handling",
+            ),
+            ("Memory › Sync now", "manual", "Run pull and push"),
+            ("Memory › Pull now", "manual", "Pull shared memory"),
+            ("Memory › Push now", "manual", "Push shared memory"),
+        ] {
+            let item = items
+                .iter()
+                .find(|item| item.label == label)
+                .unwrap_or_else(|| panic!("missing memory settings row {label}"));
+            assert_eq!(item.value, value);
+            assert!(
+                item.detail.to_ascii_lowercase().contains(
+                    &detail
+                        .split_whitespace()
+                        .next()
+                        .unwrap()
+                        .to_ascii_lowercase()
+                ),
+                "{label} detail should mention {detail}: {}",
+                item.detail
+            );
+        }
+    }
+
+    #[test]
+    fn settings_overlay_exposes_guardian_review_controls() {
+        let items = default_settings_overlay_items();
+
+        assert!(items.iter().any(|item| {
+            item.label == "Permissions › Auto-review timeout"
+                && item.value == "45s"
+                && item.detail == "Guardian reviewer timeout before fail-closed"
+        }));
+        assert!(items.iter().any(|item| {
+            item.label == "Permissions › Reviewer model"
+                && item.value == "auto"
+                && item.detail == "Non-Meridian reviewer model or auto"
+        }));
+        assert!(items.iter().any(|item| {
+            item.label == "Permissions › Sandbox validation"
+                && item.value == "check"
+                && item.detail == "Preview effective roots and path issues"
+        }));
+        assert!(items.iter().any(|item| {
+            item.label == "Permissions › Use workspace roots"
+                && item.value == "current"
+                && item.detail == "Set project/read/write roots to the current workspace"
+        }));
+        assert!(items.iter().any(|item| {
+            item.label == "Permissions › Reset sandbox roots"
+                && item.value == "default"
+                && item.detail == "Restore project/read/write root fallback behavior"
+        }));
+        assert!(items.iter().any(|item| {
+            item.label == "Permissions › Browse project root"
+                && item.value == "picker"
+                && item.detail == "Choose a project root from directories on disk"
+        }));
+        assert!(items.iter().any(|item| {
+            item.label == "Permissions › Add project root"
+                && item.value == "add"
+                && item.detail == "Append a project root from directories on disk"
+        }));
+        assert!(items.iter().any(|item| {
+            item.label == "Permissions › Remove project root"
+                && item.value == "remove"
+                && item.detail == "Remove a configured project root"
+        }));
+        assert!(items.iter().any(|item| {
+            item.label == "Permissions › Browse readable root"
+                && item.value == "picker"
+                && item.detail == "Choose a readable root from directories on disk"
+        }));
+        assert!(items.iter().any(|item| {
+            item.label == "Permissions › Add readable root"
+                && item.value == "add"
+                && item.detail == "Append a readable root from directories on disk"
+        }));
+        assert!(items.iter().any(|item| {
+            item.label == "Permissions › Remove readable root"
+                && item.value == "remove"
+                && item.detail == "Remove a configured readable root"
+        }));
+        assert!(items.iter().any(|item| {
+            item.label == "Permissions › Browse writable root"
+                && item.value == "picker"
+                && item.detail == "Choose a writable root from directories on disk"
+        }));
+        assert!(items.iter().any(|item| {
+            item.label == "Permissions › Add writable root"
+                && item.value == "add"
+                && item.detail == "Append a writable root from directories on disk"
+        }));
+        assert!(items.iter().any(|item| {
+            item.label == "Permissions › Remove writable root"
+                && item.value == "remove"
+                && item.detail == "Remove a configured writable root"
+        }));
+        assert!(items.iter().any(|item| {
+            item.label == "Permissions › Protected patterns"
+                && item.value == "default"
+                && item.detail == "Extra sandbox protected path patterns"
+        }));
+        assert!(items.iter().any(|item| {
+            item.label == "Permissions › Sandbox internet"
+                && item.value == "blocked"
+                && item.detail == "Network access for sandboxed tools"
+        }));
+        assert!(items.iter().any(|item| {
+            item.label == "Permissions › Sandbox SSH"
+                && item.value == "blocked"
+                && item.detail == "SSH/network access for sandboxed tools"
+        }));
+        assert!(items.iter().any(|item| {
+            item.label == "Permissions › Project roots"
+                && item.value == "default"
+                && item.detail == "Default root set for sandbox read/write"
+        }));
+        assert!(items.iter().any(|item| {
+            item.label == "Permissions › Readable roots"
+                && item.value == "project roots"
+                && item.detail == "Sandbox paths readable by tools"
+        }));
+        assert!(items.iter().any(|item| {
+            item.label == "Permissions › Writable roots"
+                && item.value == "project roots"
+                && item.detail == "Sandbox paths writable by tools"
         }));
     }
 }

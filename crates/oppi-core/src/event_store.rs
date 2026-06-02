@@ -492,6 +492,7 @@ mod tests {
             id,
             thread_id: thread_id.to_string(),
             turn_id: None,
+            created_at_ms: id,
             kind: EventKind::ThreadStarted {
                 thread: Thread {
                     id: thread_id.to_string(),

@@ -191,6 +191,7 @@ mod tests {
             concurrency_safe: true,
             requires_approval: false,
             capabilities: vec!["filesystem".to_string()],
+            ..Default::default()
         });
         assert_eq!(
             registry.get(Some("functions"), "read").unwrap().description,
@@ -204,6 +205,7 @@ mod tests {
             concurrency_safe: true,
             requires_approval: false,
             capabilities: vec!["filesystem".to_string()],
+            ..Default::default()
         });
         assert!(previous.is_some());
         assert_eq!(registry.list().len(), 1);

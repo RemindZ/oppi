@@ -2,7 +2,7 @@
 # Width/height are encoded in each section name. Lines are trim-end normalized.
 
 -- FRAME_03_TOOLS_ARTIFACT_DENIAL_120X32 --
-• OPPi · openai-codex/gpt-5-codex · perms: auto-review · ready                                             thread-123456
+• OPPi · openai-codex/gpt-5.5 · perms: auto-review · ready                                                 thread-123456
 │  write    ✓ write crates/oppi-shell/src/tui.rs · 11ms · +148 / −62
 │  diff     + const SUPPORTS_SYNC: bool = detect_sync_caps();
             - if !sync_supported() { write_unsynchronized(out)?; }
@@ -32,11 +32,11 @@
 ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │› █Ask, build, or type / for commands…                                                                                │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
-• ready · Alt+K hide help · sess 3k 1% ▮▮▮▯▯ · model gpt-5-codex · perm auto-review · ctx 100k/272k 37% ▮▮▯▯▯ · todos 3
+• ready · Alt+K hide help · usage session 0 ▯▯▯▯▯ · model gpt-5.5 · perm auto-review · ctx pending ▯▯▯▯▯ · todos 3
 Alt+Enter follow-up  ·  Ctrl+Enter steer  ·  / commands
 
 -- FRAME_04_ASK_USER_120X32 --
-⏸ OPPi · openai-codex/gpt-5-codex · perms: auto-review · waiting                                           thread-123456
+⏸ OPPi · openai-codex/gpt-5.5 · perms: auto-review · waiting                                               thread-123456
 ▍  oppi     I can wire CSI 2026 detection three ways. Which do you want?
 
 
@@ -66,11 +66,11 @@ Alt+Enter follow-up  ·  Ctrl+Enter steer  ·  / commands
 ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │› █press Enter to confirm selection                                                                                   │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
-• waiting · Alt+K hide help · sess 3k 1% ▮▮▮▯▯ · model gpt-5-codex · perm auto-review · ctx 100k/272k 37% ▮▮▯▯▯
+• waiting · Alt+K hide help · usage session 0 ▯▯▯▯▯ · model gpt-5.5 · perm auto-review · ctx pending ▯▯▯▯▯ · todos 2
 Alt+Enter follow-up  ·  Ctrl+Enter steer  ·  / commands
 
 -- FRAME_05_BACKGROUND_120X32 --
-• OPPi · openai-codex/gpt-5-codex · perms: auto-review · ready                                             thread-123456
+• OPPi · openai-codex/gpt-5.5 · perms: auto-review · ready                                                 thread-123456
 │  backgro… 3 background tasks active — Ctrl+Alt+T opens the background sheet
 
 
@@ -100,11 +100,11 @@ Alt+Enter follow-up  ·  Ctrl+Enter steer  ·  / commands
 ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │› █Ask, build, or type / for commands…                                                                                │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
-• ready · Alt+K hide help · sess 3k 1% ▮▮▮▯▯ · model gpt-5-codex · perm auto-review · ctx 100k/272k 37% ▮▮▯▯▯ · todos 1
+• ready · Alt+K hide help · usage session 0 ▯▯▯▯▯ · model gpt-5.5 · perm auto-review · ctx pending ▯▯▯▯▯ · todos 1
 Alt+Enter follow-up  ·  Ctrl+Enter steer  ·  / commands
 
 -- FRAME_06_TODOS_120X32 --
-• OPPi · openai-codex/gpt-5-codex · perms: auto-review · ready                                             thread-123456
+• OPPi · openai-codex/gpt-5.5 · perms: auto-review · ready                                                 thread-123456
 │  info     5 todos · active work visible
 
 
@@ -134,11 +134,11 @@ Alt+Enter follow-up  ·  Ctrl+Enter steer  ·  / commands
 ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │› █Ask, build, or type / for commands…                                                                                │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
-• ready · Alt+K hide help · sess 3k 1% ▮▮▮▯▯ · model gpt-5-codex · perm auto-review · ctx 100k/272k 37% ▮▮▯▯▯ · todos 5
+• ready · Alt+K hide help · usage session 0 ▯▯▯▯▯ · model gpt-5.5 · perm auto-review · ctx pending ▯▯▯▯▯ · todos 5
 Alt+Enter follow-up  ·  Ctrl+Enter steer  ·  / commands
 
 -- FRAME_07_SLASH_120X32 --
-• OPPi · openai-codex/gpt-5-codex · perms: auto-review · ready                                             thread-123456
+• OPPi · openai-codex/gpt-5.5 · perms: auto-review · ready                                                 thread-123456
 │  hint     type below — palette unfolds upward from the input · ↑/↓ select · Tab inserts · Enter submits
 
 
@@ -168,45 +168,45 @@ Alt+Enter follow-up  ·  Ctrl+Enter steer  ·  / commands
 ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │› /█                                                                                                                  │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
-• ready · Alt+K hide help · sess 3k 1% ▮▮▮▯▯ · model gpt-5-codex · perm auto-review · ctx 100k/272k 37% ▮▮▯▯▯
+• ready · Alt+K hide help · usage session 0 ▯▯▯▯▯ · model gpt-5.5 · perm auto-review · ctx pending ▯▯▯▯▯
 Alt+Enter follow-up  ·  Ctrl+Enter steer  ·  / commands
 
 -- FRAME_08_SETTINGS_120X32 --
-• OPPi · openai-codex/gpt-5-codex · perms: auto-review · ready                                             thread-123456
-│  info     overlay anchored above editor — ←/→ tabs · ↑/↓ settings · Enter open · Esc close
-
-
-
-
-
-
-
-
-
+• OPPi · openai-codex/gpt-5.5 · perms: auto-review · ready                                                 thread-123456
+│  info     overlay anchored above editor — ←/→ sections · ↑/↓ settings · Type to search · Enter open · Esc close
 
 
 ╭ settings ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│ ⚙️  General    🧩  Pi    🧭  Footer    🧠  Memory    🗜️  Compaction    🔐  Permissions    🎨  Theme                         │
+│[General]  Pi  Footer  Memory  Compaction  Permissions  Theme                                                         │
+│←/→ sections  ↑/↓ settings  Type to search  Enter/Space open  Esc close                                               │
 │                                                                                                                      │
-│←/→ tabs  ↑/↓ settings  Enter/Space open  Esc close                                                                   │
-│                                                                                                                      │
-│  Status shortcuts — /usage                                                                                           │
-│    Usage/status, keybindings, and debug surfaces                                                                     │
+│  Status & usage — /usage                                                                                             │
+│    Usage/status, footer, and debug surfaces                                                                          │
 │› Goal mode — none                                                                                                    │
 │    Track and continue one thread objective                                                                           │
 │  Sessions — current                                                                                                  │
 │    Browse and resume prior sessions                                                                                  │
+│  Question timeout — 5m                                                                                               │
+│    ask_user timeout before recommended/default answers                                                               │
 │                                                                                                                      │
-│settings · 14 settings · active: ⚙️  General                                                                           │
+│settings · 87 settings · active: General                                                                              │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │› █Ask, build, or type / for commands…                                                                                │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
-• ready · Alt+K hide help · sess 3k 1% ▮▮▮▯▯ · model gpt-5-codex · perm auto-review · ctx 100k/272k 37% ▮▮▯▯▯
+• ready · Alt+K hide help · usage session 0 ▯▯▯▯▯ · model gpt-5.5 · perm auto-review · ctx pending ▯▯▯▯▯
 Alt+Enter follow-up  ·  Ctrl+Enter steer  ·  / commands
 
 -- FRAME_09_NARROW_58X22 --
-• OPPi · openai-codex/gpt-5-codex
+• OPPi · openai-codex/gpt-5.5
 perms: auto-review · ready
 ▍  you      tighten narrow header
 ▍  oppi     Plan
@@ -227,10 +227,10 @@ perms: auto-review · ready
 ╭────────────────────────────────────────────────────────╮
 │› █…                                                    │
 ╰────────────────────────────────────────────────────────╯
-• ready · Alt+K hide help · sess 3k 1% ▮▮▮▯▯
+• ready · Alt+K hide help · usage session 0 ▯▯▯▯▯
 
 -- FRAME_10_TINY_90X14 --
-◑ OPPi · openai-codex/gpt-5-codex · perms: auto-review · running
+◑ OPPi · openai-codex/gpt-5.5 · perms: auto-review · running
 
 
 
@@ -243,4 +243,4 @@ perms: auto-review · ready
 ╭ turn running · Enter queues follow-up · Ctrl+Enter steers · Esc interrupts ────────────╮
 │› █…                                                                                    │
 ╰────────────────────────────────────────────────────────────────────────────────────────╯
-● running · Alt+K hide help · sess 3k 1% ▮▮▮▯▯ · perm auto-review · ctx 37% ▮▮▯▯▯
+● running · Alt+K hide help · usage session 0 ▯▯▯▯▯ · perm auto-review · ctx pending ▯▯▯▯▯

@@ -17,7 +17,7 @@ Optional Rust-first preview, installed side by side without taking over `oppi`:
 ```bash
 npm install -g @oppiai/native
 oppi-native doctor
-oppi-native smoke --mock --json
+oppi-native smoke --json
 ```
 
 Source install for local development:

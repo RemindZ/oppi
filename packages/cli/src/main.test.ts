@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { chmodSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
-import { buildPiArgs, checkForUpdateNotice, coerceRuntimeLoopMode, collectDoctorDiagnostics, compareVersions, generatedWindowsSandboxPassword, isMain, parseOppiArgs, resolveAgentDir, resolveOppiServerBin } from "./main.js";
+import { buildPiArgs, checkForUpdateNotice, coerceRuntimeLoopMode, collectDoctorDiagnostics, compareVersions, defaultRuntimeWorkerModelForProvider, generatedWindowsSandboxPassword, isMain, parseOppiArgs, resolveAgentDir, resolveOppiServerBin } from "./main.js";
 import { parseMarketplaceCommand, parsePluginCommand, resolveEnabledPluginSources } from "./plugins.js";
 
 function tempDir(name: string): string {
@@ -14,14 +14,28 @@ function tempDir(name: string): string {
 function createFakeRuntimeServer(root: string): string {
   const script = join(root, "fake-runtime-server.mjs");
   writeFileSync(script, `import { createInterface } from 'node:readline';
+import { readFileSync, writeFileSync } from 'node:fs';
 const rl = createInterface({ input: process.stdin });
 let nextTurn = 0;
 const events = [];
 let todoState = { todos: [], summary: '' };
+const memoryBackendRecordsPath = process.env.OPPI_FAKE_MEMORY_BACKEND_RECORDS || '';
 function send(id, result) { console.log(JSON.stringify({ jsonrpc: '2.0', id, result })); }
 function fail(id, code, message, data) { console.log(JSON.stringify({ jsonrpc: '2.0', id, error: { code, message, data } })); }
 function event(type, body = {}) { const { threadId, turnId, ...kindBody } = body; const value = { kind: { type, ...kindBody } }; if (threadId) value.threadId = threadId; if (turnId) value.turnId = turnId; events.push(value); return value; }
 function turn(req, status) { nextTurn += 1; return { id: 'turn-fake-' + nextTurn, threadId: req.params.threadId, status, phase: status === 'completed' ? 'await' : 'loop' }; }
+function recordMemoryBackend(value) {
+  if (!memoryBackendRecordsPath) return;
+  const current = JSON.parse(readFileSync(memoryBackendRecordsPath, 'utf8'));
+  current.push(value);
+  writeFileSync(memoryBackendRecordsPath, JSON.stringify(current, null, 2), 'utf8');
+}
+function memoryStatus() { return { enabled: true, backend: 'hoppi', scope: 'project', memoryCount: 2, pinnedCount: 1, queueDepth: 0 }; }
+function requireMemoryBackend(id) {
+  if (memoryBackendRecordsPath) return true;
+  fail(id, -32000, 'fake runtime memory backend unavailable', { code: 'memory_backend_unavailable' });
+  return false;
+}
 rl.on('line', async (line) => {
   const req = JSON.parse(line);
   const id = req.id;
@@ -87,6 +101,28 @@ rl.on('line', async (line) => {
     }
     case 'turn/interrupt': send(id, { events: [event('turnInterrupted', { turnId: req.params.turnId, reason: req.params.reason })] }); break;
     case 'memory/set': send(id, { events: [event('memoryStatusChanged', { status: req.params.status })] }); break;
+    case 'memory/backend/status': {
+      if (!requireMemoryBackend(id)) break;
+      recordMemoryBackend({ method: req.method, params: req.params });
+      if (process.env.OPPI_FAKE_MEMORY_BACKEND_STATUS_ERROR) { fail(id, -32000, process.env.OPPI_FAKE_MEMORY_BACKEND_STATUS_ERROR, { code: 'fake_memory_backend_status' }); break; }
+      send(id, { jobId: 'job-status', operation: 'status', normalized: memoryStatus(), backend: 'fake-runtime-hoppi', summary: 'Read Hoppi memory status through runtime backend broker.', timedOut: false, cancelled: false, diagnostics: [] });
+      break;
+    }
+    case 'memory/backend/recall': {
+      if (!requireMemoryBackend(id)) break;
+      recordMemoryBackend({ method: req.method, params: req.params });
+      if (process.env.OPPI_FAKE_MEMORY_BACKEND_RECALL_ERROR) { fail(id, -32000, process.env.OPPI_FAKE_MEMORY_BACKEND_RECALL_ERROR, { code: 'fake_memory_backend_recall' }); break; }
+      const contextMarkdown = '# Runtime backend Hoppi\\nUse the runtime-owned direct-worker context.';
+      send(id, { jobId: 'job-recall', operation: 'recall', normalized: { status: memoryStatus(), available: true, backendQueried: true, query: req.params.prompt, contextMarkdown, contextBytes: Buffer.byteLength(contextMarkdown, 'utf8'), truncated: false, totalCount: 2, items: [{ id: 'memory-1', content: 'runtime-owned memory', tags: ['runtime-worker'] }], cacheUpdated: true, message: 'Recalled Hoppi context through runtime backend broker.', controls: [], diagnostics: [], events: [] }, backend: 'fake-runtime-hoppi', summary: 'Recalled Hoppi context through runtime backend broker.', timedOut: false, cancelled: false, diagnostics: [] });
+      break;
+    }
+    case 'memory/backend/remember': {
+      if (!requireMemoryBackend(id)) break;
+      recordMemoryBackend({ method: req.method, params: req.params });
+      if (process.env.OPPI_FAKE_MEMORY_BACKEND_REMEMBER_ERROR) { fail(id, -32000, process.env.OPPI_FAKE_MEMORY_BACKEND_REMEMBER_ERROR, { code: 'fake_memory_backend_remember' }); break; }
+      send(id, { jobId: 'job-remember', operation: 'remember', normalized: { status: memoryStatus(), available: true, saved: true, backendApplied: true, cacheUpdated: true, record: { id: 'memory-saved', content: req.params.content, tags: req.params.tags || [] }, message: 'Saved Hoppi memory through runtime backend broker.', controls: [], diagnostics: [], events: [] }, backend: 'fake-runtime-hoppi', summary: 'Saved Hoppi memory through runtime backend broker.', timedOut: false, cancelled: false, diagnostics: [] });
+      break;
+    }
     case 'memory/compact': send(id, { events: [event('handoffCompacted', { summary: req.params.summary })] }); break;
     case 'todos/list': send(id, { state: todoState }); break;
     case 'events/list': send(id, { events }); break;
@@ -107,9 +143,11 @@ rl.on('line', async (line) => {
   return bin;
 }
 
-function createFakeShell(root: string): string {
+function createFakeShell(root: string, options: { requireAgentDir?: string } = {}): string {
 const script = join(root, "fake-oppi-shell.mjs");
   writeFileSync(script, `const argv = process.argv.slice(2);
+const requiredAgentDir = ${JSON.stringify(options.requireAgentDir ?? "")};
+if (requiredAgentDir && process.env.OPPI_AGENT_DIR !== requiredAgentDir) { console.error('expected OPPI_AGENT_DIR=' + requiredAgentDir + ', got ' + (process.env.OPPI_AGENT_DIR || '')); process.exit(4); }
 if (argv.includes('--help')) { console.log('fake oppi-shell help'); process.exit(0); }
 const serverIndex = argv.indexOf('--server');
 const hasProvider = argv.includes('--mock') || argv.includes('--model') || argv.some((arg) => arg.startsWith('--model='));
@@ -265,6 +303,11 @@ test("parseOppiArgs handles OPPi-owned commands", () => {
   assert.deepEqual(parseOppiArgs(["marketplace", "list", "--json"]), { type: "marketplace", subcommand: "list", json: true });
 });
 
+test("runtime-worker GPT defaults use gpt-5.5", () => {
+  assert.equal(defaultRuntimeWorkerModelForProvider("openai-compatible"), "gpt-5.5");
+  assert.equal(defaultRuntimeWorkerModelForProvider("openai-codex"), "gpt-5.5");
+});
+
 test("parse plugin and marketplace commands", () => {
   assert.deepEqual(parsePluginCommand(["add", "./plugin", "--local", "--name", "demo"]), {
     type: "plugin",
@@ -281,6 +324,14 @@ test("parse plugin and marketplace commands", () => {
     subcommand: "enable",
     name: "demo",
     scope: undefined,
+    yes: true,
+    json: true,
+  });
+  assert.deepEqual(parsePluginCommand(["materialize", "demo", "--local", "--yes", "--json"]), {
+    type: "plugin",
+    subcommand: "materialize",
+    name: "demo",
+    scope: "project",
     yes: true,
     json: true,
   });
@@ -489,6 +540,72 @@ test("plugin command smoke stores disabled-by-default plugins and explicit trust
   assert.deepEqual(resolveEnabledPluginSources({ env: { OPPI_HOME: oppiHome }, cwd: root }), [pluginDir]);
 });
 
+test("plugin materialize copies trusted local package into native cache", () => {
+  const root = tempDir("materialize-local");
+  const oppiHome = join(root, "oppi-home");
+  const pluginDir = join(root, "plugin-pack");
+  mkdirSync(join(pluginDir, "skills", "scout"), { recursive: true });
+  writeFileSync(join(pluginDir, "package.json"), JSON.stringify({
+    name: "plugin-pack",
+    version: "1.0.0",
+    pi: { skills: ["./skills"] },
+  }), "utf8");
+  writeFileSync(join(pluginDir, "skills", "scout", "SKILL.md"), "---\nname: scout\ndescription: Scout.\n---\n\n# Scout\n", "utf8");
+
+  const baseEnv = { ...process.env, OPPI_HOME: oppiHome };
+  const add = spawnSync(process.execPath, [resolve("dist", "main.js"), "plugin", "add", pluginDir, "--local", "--enable", "--yes", "--json"], {
+    cwd: root,
+    encoding: "utf8",
+    env: baseEnv,
+  });
+  assert.equal(add.status, 0, add.stderr);
+
+  const result = spawnSync(process.execPath, [resolve("dist", "main.js"), "plugin", "materialize", "plugin-pack", "--local", "--yes", "--json"], {
+    cwd: root,
+    encoding: "utf8",
+    env: baseEnv,
+  });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  const payload = JSON.parse(result.stdout);
+  assert.equal(payload.ok, true);
+  assert.equal(payload.materialization.status, "materialized");
+  assert.equal(payload.materialization.sourceType, "local");
+  assert.equal(payload.materialization.scope, "project");
+  assert.equal(existsSync(payload.materialization.cachePath), true);
+  assert.match(readFileSync(join(payload.materialization.cachePath, "package.json"), "utf8"), /plugin-pack/);
+
+  const store = JSON.parse(readFileSync(join(oppiHome, "plugins", "materialized.json"), "utf8"));
+  assert.equal(store.records.length, 1);
+  assert.equal(store.records[0].pluginId, "plugin-pack");
+  assert.equal(store.records[0].source, pluginDir);
+  assert.equal(store.records[0].sourceType, "local");
+  assert.equal(store.records[0].checksum, payload.materialization.checksum);
+});
+
+test("plugin materialize reports non-local sources without writing a cache record", () => {
+  const root = tempDir("materialize-non-local");
+  const oppiHome = join(root, "oppi-home");
+  const baseEnv = { ...process.env, OPPI_HOME: oppiHome };
+  const add = spawnSync(process.execPath, [resolve("dist", "main.js"), "plugin", "add", "npm:@demo/market-pack", "--enable", "--yes", "--json"], {
+    cwd: root,
+    encoding: "utf8",
+    env: baseEnv,
+  });
+  assert.equal(add.status, 0, add.stderr);
+
+  const result = spawnSync(process.execPath, [resolve("dist", "main.js"), "plugin", "materialize", "@demo/market-pack", "--yes", "--json"], {
+    cwd: root,
+    encoding: "utf8",
+    env: baseEnv,
+  });
+  assert.equal(result.status, 1);
+  const payload = JSON.parse(result.stdout);
+  assert.equal(payload.ok, false);
+  assert.equal(payload.code, "plugin_remote_fetcher_not_enabled");
+  assert.equal(payload.sourceType, "npm");
+  assert.equal(existsSync(join(oppiHome, "plugins", "materialized.json")), false);
+});
+
 test("Claude-style marketplace entries fail with agent handoff prompt", () => {
   const root = tempDir("claude-marketplace");
   const oppiHome = join(root, "oppi-home");
@@ -536,6 +653,14 @@ test("CLI smoke: server command requires explicit experimental flag", () => {
   assert.equal(result.status, 1);
   const parsed = JSON.parse(result.stdout);
   assert.match(parsed.error, /experimental/);
+});
+
+test("CLI help advertises Rust TUI as the default while preserving compatibility wording", () => {
+  const result = spawnSync(process.execPath, [resolve("dist", "main.js"), "--help"], { encoding: "utf8" });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /oppi tui\n/);
+  assert.doesNotMatch(result.stdout, /oppi tui --experimental\n/);
+  assert.match(result.stdout, /Legacy 'oppi tui --experimental' is accepted as a no-op compatibility flag\./);
 });
 
 test("CLI smoke: sandbox setup-windows dry-run previews host changes without server", () => {
@@ -588,6 +713,39 @@ test("CLI smoke: tui command launches Rust UI and wraps shell smoke", () => {
   assert.equal(parsed.ok, true);
   assert.equal(parsed.shellBin, fakeShell);
   assert.equal(parsed.serverBin, fakeServer);
+  assert.match(parsed.diagnostics.join("\n"), /mock smoke completed/);
+});
+
+test("CLI smoke: tui smoke defaults to live Codex provider", () => {
+  const root = tempDir("tui-smoke-live");
+  const fakeServer = createFakeRuntimeServer(root);
+  const expectedAgentDir = join(root, ".oppi", "agent");
+  const fakeShell = createFakeShell(root, { requireAgentDir: expectedAgentDir });
+
+  const result = spawnSync(process.execPath, [resolve("dist", "main.js"), "tui", "smoke", "--json"], {
+    encoding: "utf8",
+    env: { ...process.env, HOME: root, USERPROFILE: root, OPPI_AGENT_DIR: "", PI_CODING_AGENT_DIR: "", OPPI_SERVER_BIN: fakeServer, OPPI_SHELL_BIN: fakeShell, OPPI_RUNTIME_WORKER_PROVIDER: "", OPPI_RUNTIME_WORKER_MODEL: "" },
+  });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  const parsed = JSON.parse(result.stdout);
+  assert.equal(parsed.ok, true);
+  assert.match(parsed.diagnostics.join("\n"), /live smoke completed/);
+});
+
+test("CLI smoke: tui defaults to real Codex provider instead of mock", () => {
+  const root = tempDir("tui-default-provider");
+  const fakeServer = createFakeRuntimeServer(root);
+  const fakeShell = createFakeShell(root);
+
+  const launched = spawnSync(process.execPath, [resolve("dist", "main.js"), "tui"], {
+    encoding: "utf8",
+    env: { ...process.env, OPPI_SERVER_BIN: fakeServer, OPPI_SHELL_BIN: fakeShell, OPPI_RUNTIME_WORKER_PROVIDER: "", OPPI_RUNTIME_WORKER_MODEL: "" },
+  });
+  assert.equal(launched.status, 0, launched.stderr);
+  const parsed = JSON.parse(launched.stdout);
+  assert.equal(parsed.args.includes("--mock"), false);
+  assert.equal(parsed.args[parsed.args.indexOf("--provider") + 1], "openai-codex");
+  assert.equal(parsed.args[parsed.args.indexOf("--model") + 1], "gpt-5.5");
 });
 
 test("CLI smoke: resume forwards to Rust shell resume routes", () => {
@@ -857,13 +1015,14 @@ test("CLI smoke: runtime-worker prompt applies caveman prompt variant to provide
 test("CLI smoke: runtime-worker prompt bridges Hoppi memory when explicitly enabled", () => {
   const root = tempDir("runtime-worker-hoppi");
   const fakeServer = createFakeRuntimeServer(root);
-  const fakeHoppi = createFakeHoppiModule(root);
+  const recordsPath = join(root, "runtime-backend-records.json");
+  writeFileSync(recordsPath, "[]", "utf8");
   const result = spawnSync(process.execPath, [resolve("dist", "main.js"), "runtime-worker", "run", "Use remembered context in the Rust direct worker", "--mock", "--memory", "--json"], {
     encoding: "utf8",
     env: {
       ...process.env,
       OPPI_SERVER_BIN: fakeServer,
-      OPPI_HOPPI_MODULE: fakeHoppi.modulePath,
+      OPPI_FAKE_MEMORY_BACKEND_RECORDS: recordsPath,
       OPPI_SERVER_AUTH_TOKEN: "super-secret-runtime-worker-hoppi-token",
     },
   });
@@ -880,11 +1039,49 @@ test("CLI smoke: runtime-worker prompt bridges Hoppi memory when explicitly enab
   assert.ok(parsed.memoryContextBytes > 0);
   assert.match(parsed.diagnostics.join("\n"), /Hoppi memory loaded/);
 
-  const records = JSON.parse(readFileSync(fakeHoppi.recordsPath, "utf8"));
-  assert.ok(records.some((record: any) => record.type === "recall" && record.input.query.includes("remembered context")));
-  const remembered = records.find((record: any) => record.type === "remember");
-  assert.ok(remembered?.input?.content.includes("Runtime-worker turn summary"));
-  assert.ok(remembered?.input?.content.includes("Use remembered context"));
+  const records = JSON.parse(readFileSync(recordsPath, "utf8"));
+  assert.ok(records.some((record: any) => record.method === "memory/backend/status"));
+  assert.ok(records.some((record: any) => record.method === "memory/backend/recall" && record.params.prompt.includes("remembered context")));
+  const remembered = records.find((record: any) => record.method === "memory/backend/remember");
+  assert.ok(remembered?.params?.content.includes("Runtime-worker turn summary"));
+  assert.ok(remembered?.params?.content.includes("Use remembered context"));
+});
+
+test("CLI smoke: runtime-worker Hoppi memory uses runtime backend routes", () => {
+  const root = tempDir("runtime-worker-hoppi-runtime-backend");
+  const fakeServer = createFakeRuntimeServer(root);
+  const recordsPath = join(root, "runtime-backend-records.json");
+  const poisonHoppiModule = join(root, "direct-hoppi-should-not-load.mjs");
+  writeFileSync(recordsPath, "[]", "utf8");
+  writeFileSync(poisonHoppiModule, "throw new Error('CLI direct Hoppi import should not run');\n", "utf8");
+
+  const result = spawnSync(process.execPath, [resolve("dist", "main.js"), "runtime-worker", "run", "Use runtime-owned remembered context", "--mock", "--memory", "--json"], {
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      OPPI_SERVER_BIN: fakeServer,
+      OPPI_HOPPI_MODULE: poisonHoppiModule,
+      OPPI_FAKE_MEMORY_BACKEND_RECORDS: recordsPath,
+      OPPI_SERVER_AUTH_TOKEN: "super-secret-runtime-worker-hoppi-runtime-backend-token",
+    },
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout.includes("super-secret-runtime-worker-hoppi-runtime-backend-token"), false);
+  assert.equal(result.stdout.includes("CLI direct Hoppi import should not run"), false);
+
+  const parsed = JSON.parse(result.stdout);
+  assert.equal(parsed.ok, true);
+  assert.equal(parsed.memoryEnabled, true);
+  assert.equal(parsed.memoryAvailable, true);
+  assert.equal(parsed.memoryLoaded, true);
+  assert.equal(parsed.memorySaved, true);
+  assert.equal(parsed.memoryProviderPromptIncluded, true);
+  assert.equal(parsed.memoryCount, 2);
+  assert.match(parsed.diagnostics.join("\n"), /runtime backend broker/);
+
+  const records = JSON.parse(readFileSync(recordsPath, "utf8"));
+  assert.ok(records.some((record: any) => record.method === "memory/backend/recall" && record.params.prompt.includes("runtime-owned remembered context")));
+  assert.ok(records.some((record: any) => record.method === "memory/backend/remember" && record.params.source === "oppi:runtime-worker"));
 });
 
 test("CLI smoke: runtime-worker prompt can use Codex subscription auth-store provider", () => {
@@ -934,7 +1131,7 @@ test("CLI smoke: runtime-worker Codex provider fails closed without auth-store s
   assert.match(parsed.diagnostics.join("\n"), /Stable Pi fallback remains available/);
 });
 
-test("CLI smoke: runtime-worker Hoppi bridge degrades when Hoppi is missing", () => {
+test("CLI smoke: runtime-worker Hoppi memory degrades when runtime backend is missing", () => {
   const root = tempDir("runtime-worker-hoppi-missing");
   const fakeServer = createFakeRuntimeServer(root);
   const result = spawnSync(process.execPath, [resolve("dist", "main.js"), "runtime-worker", "run", "Continue without Hoppi", "--mock", "--memory", "--json"], {
@@ -954,19 +1151,23 @@ test("CLI smoke: runtime-worker Hoppi bridge degrades when Hoppi is missing", ()
   assert.equal(parsed.memoryEnabled, true);
   assert.equal(parsed.memoryAvailable, false);
   assert.equal(parsed.memoryLoaded, false);
-  assert.match(parsed.diagnostics.join("\n"), /optional Hoppi package is unavailable|continuing without memory/);
+  assert.match(parsed.diagnostics.join("\n"), /runtime backend .*unavailable|continuing without recalled memory/);
 });
 
-test("CLI smoke: runtime-worker Hoppi bridge falls back when settings read fails", () => {
+test("CLI smoke: runtime-worker Hoppi memory uses safe defaults when settings are unreadable", () => {
   const root = tempDir("runtime-worker-hoppi-settings");
   const fakeServer = createFakeRuntimeServer(root);
-  const fakeHoppi = createFakeHoppiModule(root, { settingsThrows: true });
-  const result = spawnSync(process.execPath, [resolve("dist", "main.js"), "runtime-worker", "run", "Use remembered context despite settings read failure", "--mock", "--memory", "--json"], {
+  const recordsPath = join(root, "runtime-backend-records.json");
+  const settingsPath = join(root, "broken-settings.json");
+  writeFileSync(recordsPath, "[]", "utf8");
+  writeFileSync(settingsPath, "{ not json", "utf8");
+  const result = spawnSync(process.execPath, [resolve("dist", "main.js"), "runtime-worker", "run", "Use remembered context despite unreadable settings", "--mock", "--memory", "--json"], {
     encoding: "utf8",
     env: {
       ...process.env,
       OPPI_SERVER_BIN: fakeServer,
-      OPPI_HOPPI_MODULE: fakeHoppi.modulePath,
+      OPPI_SETTINGS_PATH: settingsPath,
+      OPPI_FAKE_MEMORY_BACKEND_RECORDS: recordsPath,
       OPPI_SERVER_AUTH_TOKEN: "super-secret-runtime-worker-hoppi-settings-token",
     },
   });
@@ -976,10 +1177,10 @@ test("CLI smoke: runtime-worker Hoppi bridge falls back when settings read fails
   assert.equal(parsed.ok, true);
   assert.equal(parsed.memoryLoaded, true);
   assert.equal(parsed.memoryProviderPromptIncluded, true);
-  assert.match(parsed.diagnostics.join("\n"), /settings read failed; using safe defaults/);
+  assert.match(parsed.diagnostics.join("\n"), /runtime backend broker/);
 });
 
-test("CLI smoke: runtime-worker Hoppi bridge stays off when memory is disabled", () => {
+test("CLI smoke: runtime-worker Hoppi memory stays off when memory is disabled", () => {
   const root = tempDir("runtime-worker-hoppi-disabled");
   const fakeServer = createFakeRuntimeServer(root);
   const fakeHoppi = createFakeHoppiModule(root);
@@ -1004,16 +1205,18 @@ test("CLI smoke: runtime-worker Hoppi bridge stays off when memory is disabled",
   assert.deepEqual(records, []);
 });
 
-test("CLI smoke: runtime-worker Hoppi bridge reports status and recall failures without aborting", () => {
+test("CLI smoke: runtime-worker Hoppi backend recall failures do not abort the turn", () => {
   const root = tempDir("runtime-worker-hoppi-recall-failure");
   const fakeServer = createFakeRuntimeServer(root);
-  const fakeHoppi = createFakeHoppiModule(root, { statusThrows: true, recallThrows: true });
+  const recordsPath = join(root, "runtime-backend-records.json");
+  writeFileSync(recordsPath, "[]", "utf8");
   const result = spawnSync(process.execPath, [resolve("dist", "main.js"), "runtime-worker", "run", "Continue after recall trouble", "--mock", "--memory", "--json"], {
     encoding: "utf8",
     env: {
       ...process.env,
       OPPI_SERVER_BIN: fakeServer,
-      OPPI_HOPPI_MODULE: fakeHoppi.modulePath,
+      OPPI_FAKE_MEMORY_BACKEND_RECORDS: recordsPath,
+      OPPI_FAKE_MEMORY_BACKEND_RECALL_ERROR: "fake recall failed",
       OPPI_SERVER_AUTH_TOKEN: "super-secret-runtime-worker-hoppi-recall-token",
     },
   });
@@ -1023,29 +1226,28 @@ test("CLI smoke: runtime-worker Hoppi bridge reports status and recall failures 
   assert.equal(parsed.ok, true);
   assert.equal(parsed.memoryEnabled, true);
   assert.equal(parsed.memoryAvailable, true);
-  assert.equal(parsed.memoryLoaded, true);
+  assert.equal(parsed.memoryLoaded, false);
   assert.equal(parsed.memorySaved, true);
-  assert.equal(parsed.memoryCount, 1);
-  assert.match(parsed.diagnostics.join("\n"), /status unavailable; continuing recall/);
-  assert.match(parsed.diagnostics.join("\n"), /task recall failed; continuing without recalled task context/);
-  const records = JSON.parse(readFileSync(fakeHoppi.recordsPath, "utf8"));
-  assert.ok(records.some((record: any) => record.type === "status"));
-  assert.ok(records.some((record: any) => record.type === "recall"));
+  assert.equal(parsed.memoryCount, 2);
+  assert.match(parsed.diagnostics.join("\n"), /runtime backend recall unavailable; continuing without recalled memory/);
+  const records = JSON.parse(readFileSync(recordsPath, "utf8"));
+  assert.ok(records.some((record: any) => record.method === "memory/backend/status"));
+  assert.ok(records.some((record: any) => record.method === "memory/backend/recall"));
+  assert.ok(records.some((record: any) => record.method === "memory/backend/remember"));
 });
 
-test("CLI smoke: runtime-worker Hoppi bridge redacts write failures and continues", () => {
+test("CLI smoke: runtime-worker Hoppi backend write failures are redacted and continue", () => {
   const root = tempDir("runtime-worker-hoppi-write-failure");
   const fakeServer = createFakeRuntimeServer(root);
-  const fakeHoppi = createFakeHoppiModule(root, {
-    rememberThrows: true,
-    rememberErrorMessage: "fake secret: super-secret-hoppi-write-token",
-  });
+  const recordsPath = join(root, "runtime-backend-records.json");
+  writeFileSync(recordsPath, "[]", "utf8");
   const result = spawnSync(process.execPath, [resolve("dist", "main.js"), "runtime-worker", "run", "Continue after write trouble", "--mock", "--memory", "--json"], {
     encoding: "utf8",
     env: {
       ...process.env,
       OPPI_SERVER_BIN: fakeServer,
-      OPPI_HOPPI_MODULE: fakeHoppi.modulePath,
+      OPPI_FAKE_MEMORY_BACKEND_RECORDS: recordsPath,
+      OPPI_FAKE_MEMORY_BACKEND_REMEMBER_ERROR: "fake secret: super-secret-hoppi-write-token",
       OPPI_SERVER_AUTH_TOKEN: "super-secret-runtime-worker-hoppi-write-token",
     },
   });
@@ -1060,6 +1262,8 @@ test("CLI smoke: runtime-worker Hoppi bridge redacts write failures and continue
   assert.equal(parsed.memorySaved, false);
   assert.match(parsed.diagnostics.join("\n"), /summary save failed/);
   assert.match(parsed.diagnostics.join("\n"), /fake secret: \[redacted\]/);
+  const records = JSON.parse(readFileSync(recordsPath, "utf8"));
+  assert.ok(records.some((record: any) => record.method === "memory/backend/remember"));
 });
 
 test("CLI smoke: runtime-worker prompt shows stable Pi fallback when provider auth is missing", () => {

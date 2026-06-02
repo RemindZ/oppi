@@ -1,0 +1,11 @@
+{
+  "packageName": "@oppiai/native",
+  "packageVersion": "0.2.11",
+  "platform": "win32",
+  "arch": "x64",
+  "binaries": [
+    "oppi-server.exe",
+    "oppi-shell.exe"
+  ],
+  "builtAt": "2026-05-26T20:18:48.715Z"
+}

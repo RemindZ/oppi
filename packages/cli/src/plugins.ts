@@ -1,6 +1,7 @@
-import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, dirname, extname, isAbsolute, join, resolve } from "node:path";
+import { basename, dirname, extname, isAbsolute, join, relative, resolve } from "node:path";
 
 export type PluginScope = "global" | "project";
 export type PluginSourceType = "local" | "npm" | "git" | "url" | "marketplace";
@@ -55,6 +56,32 @@ type MarketplaceStore = {
   marketplaces: MarketplaceEntry[];
 };
 
+type PluginProvenance = {
+  marketplace?: string;
+  catalogUrl?: string;
+  resolvedSource: string;
+  resolvedVersion?: string;
+};
+
+type PluginMaterializationRecord = {
+  pluginId: string;
+  source: string;
+  sourceType: PluginSourceType;
+  scope: PluginScope;
+  cachePath: string;
+  checksum: string;
+  manifestName?: string;
+  manifestVersion?: string;
+  provenance?: PluginProvenance;
+  materializedAt: string;
+};
+
+type PluginMaterializationStore = {
+  version: 1;
+  updatedAt?: string;
+  records: PluginMaterializationRecord[];
+};
+
 type CatalogPlugin = {
   name: string;
   source: string;
@@ -83,6 +110,7 @@ type LoadedCatalog = {
 export type PluginCommand =
   | { type: "plugin"; subcommand: "list"; json: boolean; scope?: PluginScope }
   | { type: "plugin"; subcommand: "add" | "install"; source: string; name?: string; scope: PluginScope; enable: boolean; yes: boolean; json: boolean }
+  | { type: "plugin"; subcommand: "materialize"; name: string; scope?: PluginScope; yes: boolean; json: boolean }
   | { type: "plugin"; subcommand: "remove" | "enable" | "disable" | "doctor"; name: string; scope?: PluginScope; yes: boolean; json: boolean };
 
 export type MarketplaceCommand =
@@ -125,6 +153,14 @@ function projectPluginStorePath(cwd = process.cwd()): string {
 
 function marketplaceStorePath(env: Env = process.env, cwd = process.cwd()): string {
   return join(resolveOppiHome(env, cwd), "marketplaces.json");
+}
+
+function materializationCacheRoot(env: Env = process.env, cwd = process.cwd()): string {
+  return join(resolveOppiHome(env, cwd), "plugins", "cache");
+}
+
+function materializationStorePath(env: Env = process.env, cwd = process.cwd()): string {
+  return join(resolveOppiHome(env, cwd), "plugins", "materialized.json");
 }
 
 function readJsonFile(path: string): unknown | undefined {
@@ -242,6 +278,60 @@ function writeMarketplaceStore(store: MarketplaceStore, env: Env = process.env, 
   writeJsonFile(marketplaceStorePath(env, cwd), { ...store, version: 1, updatedAt: nowIso() });
 }
 
+function normalizeMaterializationRecord(value: unknown): PluginMaterializationRecord | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const input = value as Record<string, unknown>;
+  const sourceType = input.sourceType;
+  const scope = input.scope;
+  if (
+    typeof input.pluginId !== "string"
+    || typeof input.source !== "string"
+    || typeof input.cachePath !== "string"
+    || typeof input.checksum !== "string"
+    || typeof input.materializedAt !== "string"
+    || !(sourceType === "local" || sourceType === "npm" || sourceType === "git" || sourceType === "url" || sourceType === "marketplace")
+    || !(scope === "global" || scope === "project")
+  ) {
+    return undefined;
+  }
+  const provenance = input.provenance && typeof input.provenance === "object" && !Array.isArray(input.provenance)
+    ? input.provenance as Record<string, unknown>
+    : undefined;
+  return {
+    pluginId: input.pluginId,
+    source: input.source,
+    sourceType,
+    scope,
+    cachePath: input.cachePath,
+    checksum: input.checksum,
+    manifestName: typeof input.manifestName === "string" ? input.manifestName : undefined,
+    manifestVersion: typeof input.manifestVersion === "string" ? input.manifestVersion : undefined,
+    provenance: provenance && typeof provenance.resolvedSource === "string"
+      ? {
+        marketplace: typeof provenance.marketplace === "string" ? provenance.marketplace : undefined,
+        catalogUrl: typeof provenance.catalogUrl === "string" ? provenance.catalogUrl : undefined,
+        resolvedSource: provenance.resolvedSource,
+        resolvedVersion: typeof provenance.resolvedVersion === "string" ? provenance.resolvedVersion : undefined,
+      }
+      : undefined,
+    materializedAt: input.materializedAt,
+  };
+}
+
+function readMaterializationStore(env: Env = process.env, cwd = process.cwd()): PluginMaterializationStore {
+  const parsed = readJsonFile(materializationStorePath(env, cwd));
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return { version: 1, records: [] };
+  const input = parsed as Record<string, unknown>;
+  const records = Array.isArray(input.records)
+    ? input.records.map(normalizeMaterializationRecord).filter((item): item is PluginMaterializationRecord => Boolean(item))
+    : [];
+  return { version: 1, updatedAt: typeof input.updatedAt === "string" ? input.updatedAt : undefined, records };
+}
+
+function writeMaterializationStore(store: PluginMaterializationStore, env: Env = process.env, cwd = process.cwd()): void {
+  writeJsonFile(materializationStorePath(env, cwd), { ...store, version: 1, updatedAt: nowIso() });
+}
+
 function parseFlags(args: string[]): ParsedFlags {
   const flags: ParsedFlags = { positional: [], json: false, yes: false, local: false, global: false, enable: false, disable: false };
   for (let i = 0; i < args.length; i += 1) {
@@ -291,6 +381,11 @@ export function parsePluginCommand(args: string[]): PluginCommand {
       yes: flags.yes,
       json: flags.json,
     };
+  }
+  if (subcommand === "materialize") {
+    const name = flags.positional[0];
+    if (!name) throw new Error("oppi plugin materialize requires a plugin name");
+    return { type: "plugin", subcommand, name, scope: flagScope(flags), yes: flags.yes, json: flags.json };
   }
   if (subcommand === "remove" || subcommand === "enable" || subcommand === "disable" || subcommand === "doctor") {
     const name = flags.positional[0];
@@ -770,6 +865,151 @@ function pluginSummary(plugin: InstalledPlugin): Record<string, unknown> {
   };
 }
 
+function localPluginRoot(plugin: InstalledPlugin): string {
+  if (plugin.sourceType !== "local") throw new Error(`Plugin '${plugin.name}' is not a local package.`);
+  if (!existsSync(plugin.source)) throw new Error(`Local plugin source path is missing: ${plugin.source}`);
+  const stats = statSync(plugin.source);
+  return stats.isDirectory() ? plugin.source : dirname(plugin.source);
+}
+
+function pathLooksInsideDist(value: string): boolean {
+  const normalized = value.replace(/\\/g, "/").replace(/^\.\//, "");
+  return normalized === "dist" || normalized.startsWith("dist/");
+}
+
+function materializationPreservesDist(root: string, manifest: OppiPluginManifest | undefined): boolean {
+  const staticRefs = [
+    ...(manifest?.extensions ?? []),
+    ...(manifest?.skills ?? []),
+    ...(manifest?.prompts ?? []),
+    ...(manifest?.themes ?? []),
+  ];
+  if (staticRefs.some(pathLooksInsideDist)) return true;
+
+  const packageJson = readPackageJson(join(root, "package.json"));
+  const runtime = (packageJson?.oppi && typeof packageJson.oppi === "object" && !Array.isArray(packageJson.oppi)
+    ? (packageJson.oppi as Record<string, unknown>).runtime
+    : undefined)
+    ?? (packageJson?.oppiPlugin && typeof packageJson.oppiPlugin === "object" && !Array.isArray(packageJson.oppiPlugin)
+      ? (packageJson.oppiPlugin as Record<string, unknown>).runtime
+      : undefined);
+  if (!runtime || typeof runtime !== "object" || Array.isArray(runtime)) return false;
+  const runtimeObject = runtime as Record<string, unknown>;
+  const values = [
+    typeof runtimeObject.command === "string" ? runtimeObject.command : undefined,
+    ...(Array.isArray(runtimeObject.args) ? runtimeObject.args.filter((item): item is string => typeof item === "string") : []),
+  ].filter((item): item is string => Boolean(item));
+  return values.some(pathLooksInsideDist);
+}
+
+function fileEntries(root: string): string[] {
+  const files: string[] = [];
+  const visit = (dir: string) => {
+    const entries = readdirSync(dir, { withFileTypes: true }).sort((left, right) => left.name.localeCompare(right.name));
+    for (const entry of entries) {
+      const path = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        visit(path);
+      } else if (entry.isFile()) {
+        files.push(path);
+      }
+    }
+  };
+  visit(root);
+  return files;
+}
+
+function checksumDirectory(root: string): string {
+  const hash = createHash("sha256");
+  for (const file of fileEntries(root)) {
+    const rel = relative(root, file).replace(/\\/g, "/");
+    hash.update(rel);
+    hash.update("\0");
+    hash.update(readFileSync(file));
+    hash.update("\0");
+  }
+  return `sha256:${hash.digest("hex")}`;
+}
+
+function copyPluginMaterial(root: string, destination: string, preserveDist: boolean): void {
+  rmSync(destination, { recursive: true, force: true });
+  mkdirSync(destination, { recursive: true });
+  const copyDir = (sourceDir: string, destDir: string) => {
+    const entries = readdirSync(sourceDir, { withFileTypes: true }).sort((left, right) => left.name.localeCompare(right.name));
+    for (const entry of entries) {
+      if (entry.name === ".git" || entry.name === "node_modules" || (entry.name === "dist" && !preserveDist)) continue;
+      const sourcePath = join(sourceDir, entry.name);
+      const destPath = join(destDir, entry.name);
+      if (entry.isDirectory()) {
+        mkdirSync(destPath, { recursive: true });
+        copyDir(sourcePath, destPath);
+      } else if (entry.isFile()) {
+        mkdirSync(dirname(destPath), { recursive: true });
+        copyFileSync(sourcePath, destPath);
+      }
+    }
+  };
+  copyDir(root, destination);
+}
+
+function materializationCachePath(plugin: InstalledPlugin, sourceRoot: string, env: Env, cwd: string): string {
+  const sourceHash = createHash("sha256").update(resolve(sourceRoot)).digest("hex").slice(0, 12);
+  return join(materializationCacheRoot(env, cwd), `${slugifyName(plugin.name)}-${sourceHash}`);
+}
+
+function materializationPayload(record: PluginMaterializationRecord): Record<string, unknown> {
+  return {
+    status: "materialized",
+    sourceType: record.sourceType,
+    scope: record.scope,
+    cachePath: record.cachePath,
+    manifestPath: "package.json",
+    checksum: record.checksum,
+    materializedAt: record.materializedAt,
+    provenance: record.provenance,
+  };
+}
+
+function upsertMaterializationRecord(record: PluginMaterializationRecord, env: Env, cwd: string): void {
+  const store = readMaterializationStore(env, cwd);
+  const without = store.records.filter((item) =>
+    !(pluginKey(item.pluginId) === pluginKey(record.pluginId)
+      && item.scope === record.scope
+      && item.source === record.source
+      && item.sourceType === record.sourceType)
+  );
+  writeMaterializationStore({ version: 1, records: [...without, record].sort((a, b) => a.pluginId.localeCompare(b.pluginId)) }, env, cwd);
+}
+
+function materializeLocalPlugin(plugin: InstalledPlugin, env: Env, cwd: string): PluginMaterializationRecord {
+  if (!plugin.enabled || !plugin.trusted) {
+    throw new Error(`Plugin '${plugin.name}' must be enabled and trusted before materialization.`);
+  }
+  const root = localPluginRoot(plugin);
+  const manifest = readLocalManifest(plugin.source);
+  const cachePath = materializationCachePath(plugin, root, env, cwd);
+  copyPluginMaterial(root, cachePath, materializationPreservesDist(root, manifest));
+  const timestamp = nowIso();
+  const record: PluginMaterializationRecord = {
+    pluginId: plugin.name,
+    source: plugin.source,
+    sourceType: plugin.sourceType,
+    scope: plugin.scope,
+    cachePath,
+    checksum: checksumDirectory(cachePath),
+    manifestName: manifest?.name,
+    manifestVersion: manifest?.version,
+    provenance: {
+      marketplace: plugin.marketplace,
+      resolvedSource: plugin.source,
+      resolvedVersion: plugin.version ?? manifest?.version,
+    },
+    materializedAt: timestamp,
+  };
+  upsertMaterializationRecord(record, env, cwd);
+  return record;
+}
+
 function printPluginReview(plugin: InstalledPlugin): void {
   const risks = pluginRisk(plugin);
   console.log(`Plugin: ${plugin.name}`);
@@ -829,6 +1069,31 @@ export async function runPluginCommand(command: PluginCommand, env: Env = proces
     if (!("name" in command) || !command.name) throw new Error(`oppi plugin ${command.subcommand} requires a plugin name`);
     const plugin = findPlugin(command.name, command.scope, env, cwd);
     if (!plugin) throw new Error(`Plugin not found: ${command.name}`);
+
+    if (command.subcommand === "materialize") {
+      if (!command.yes) {
+        throw new Error("oppi plugin materialize requires --yes because it writes package material into OPPI_HOME/plugins/cache.");
+      }
+      if (plugin.sourceType !== "local") {
+        const payload = {
+          ok: false,
+          code: "plugin_remote_fetcher_not_enabled",
+          message: "This source type has a native materialization contract, but the reviewed fetcher is not implemented in this slice.",
+          sourceType: plugin.sourceType,
+        };
+        if (command.json) console.log(JSON.stringify(payload, null, 2));
+        else console.error(payload.message);
+        return 1;
+      }
+      const record = materializeLocalPlugin(plugin, env, cwd);
+      if (command.json) console.log(JSON.stringify({ ok: true, plugin: pluginSummary(plugin), materialization: materializationPayload(record) }, null, 2));
+      else {
+        console.log(`Materialized plugin '${plugin.name}' into native cache.`);
+        console.log(`cache: ${record.cachePath}`);
+        console.log(`checksum: ${record.checksum}`);
+      }
+      return 0;
+    }
 
     if (command.subcommand === "doctor") {
       const exists = plugin.sourceType !== "local" || existsSync(plugin.source);

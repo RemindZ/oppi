@@ -5,7 +5,7 @@ import type { Model } from "@mariozechner/pi-ai";
 import { createAgentSession, DefaultResourceLoader, getAgentDir, SessionManager } from "@mariozechner/pi-coding-agent";
 import { Text } from "@mariozechner/pi-tui";
 import { Type, type Static } from "typebox";
-import { readPromptVariantSurface } from "./prompt-variant";
+import { promptVariantAppend, readPromptVariantSurface } from "./prompt-variant";
 
 const SETTINGS_KEY = "oppi.permissions";
 const DECISION_ENTRY_TYPE = "oppi-permission-review";
@@ -21,16 +21,37 @@ const REVIEW_TOOL_MAX_BYTES = 24_000;
 const REVIEW_TOOL_MAX_LINES = 240;
 
 export const MODES = ["read-only", "default", "auto-review", "full-access"] as const;
+const CODEX_PROFILE_ALIASES = [":read-only", ":workspace", ":danger-no-sandbox"] as const;
 export type PermissionMode = (typeof MODES)[number];
+type CodexProfileAlias = (typeof CODEX_PROFILE_ALIASES)[number];
 type ReviewStatus = "reviewing" | "approved" | "cached" | "denied" | "failed_closed" | "circuit_blocked" | "manual_allowed" | "manual_denied";
 type RiskLevel = "low" | "medium" | "high" | "critical";
 type AuthorizationLevel = "unknown" | "low" | "medium" | "high";
 type CacheScope = "none" | "exact";
 
+export type ManagedNetworkConfig = {
+  httpProxy?: string;
+  httpsProxy?: string;
+  allProxy?: string;
+  noProxy: string[];
+  allowLoopback: boolean;
+};
+
+export type SandboxConfig = {
+  projectRoots: string[];
+  readableRoots: string[];
+  writableRoots: string[];
+  allowInternet: boolean;
+  allowSsh: boolean;
+  managedNetwork?: ManagedNetworkConfig;
+  protectedPatterns: string[];
+};
+
 export type PermissionConfig = {
   mode: PermissionMode;
   reviewTimeoutMs: number;
   reviewerModel?: string;
+  sandbox: SandboxConfig;
 };
 
 type OppiSettingsFile = Record<string, any> & {
@@ -185,7 +206,18 @@ function readJson(path: string): OppiSettingsFile {
   }
 }
 
+function modeForCodexProfileAlias(value: unknown): PermissionMode | undefined {
+  switch (typeof value === "string" ? value.trim().toLowerCase() : undefined) {
+    case ":read-only": return "read-only";
+    case ":workspace": return "auto-review";
+    case ":danger-no-sandbox": return "full-access";
+    default: return undefined;
+  }
+}
+
 function coerceMode(value: unknown): PermissionMode {
+  const aliasMode = modeForCodexProfileAlias(value);
+  if (aliasMode) return aliasMode;
   return MODES.includes(value as PermissionMode) ? (value as PermissionMode) : "auto-review";
 }
 
@@ -202,11 +234,45 @@ function coerceReviewerModel(value: unknown): string | undefined {
   return /^[^/\s]+\/.+/.test(trimmed) ? trimmed : undefined;
 }
 
+function normalizeStringList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return [...new Set(value.map((item) => typeof item === "string" ? item.trim() : "").filter(Boolean))];
+}
+
+function normalizeOptionalString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function normalizeManagedNetworkConfig(value: Partial<ManagedNetworkConfig> | undefined): ManagedNetworkConfig | undefined {
+  if (!value) return undefined;
+  const managed: ManagedNetworkConfig = {
+    httpProxy: normalizeOptionalString(value.httpProxy),
+    httpsProxy: normalizeOptionalString(value.httpsProxy),
+    allProxy: normalizeOptionalString(value.allProxy),
+    noProxy: normalizeStringList(value.noProxy),
+    allowLoopback: value.allowLoopback === true,
+  };
+  return managed.httpProxy || managed.httpsProxy || managed.allProxy || managed.noProxy.length || managed.allowLoopback ? managed : undefined;
+}
+
+function normalizeSandboxConfig(value: Partial<SandboxConfig> | undefined): SandboxConfig {
+  return {
+    projectRoots: normalizeStringList(value?.projectRoots),
+    readableRoots: normalizeStringList(value?.readableRoots),
+    writableRoots: normalizeStringList(value?.writableRoots),
+    allowInternet: value?.allowInternet === true,
+    allowSsh: value?.allowSsh === true,
+    managedNetwork: normalizeManagedNetworkConfig(value?.managedNetwork),
+    protectedPatterns: normalizeStringList(value?.protectedPatterns),
+  };
+}
+
 function normalizeConfig(value: Partial<PermissionConfig> | undefined): PermissionConfig {
   return {
     mode: coerceMode(value?.mode),
     reviewTimeoutMs: coerceTimeout(value?.reviewTimeoutMs),
     reviewerModel: coerceReviewerModel(value?.reviewerModel),
+    sandbox: normalizeSandboxConfig(value?.sandbox),
   };
 }
 
@@ -241,6 +307,14 @@ function modeDescription(mode: PermissionMode): string {
   }
 }
 
+function codexProfileAliasDescription(alias: CodexProfileAlias): string {
+  switch (alias) {
+    case ":read-only": return "Codex-compatible alias for read-only";
+    case ":workspace": return "Codex-compatible alias for OPPi auto-review workspace mode";
+    case ":danger-no-sandbox": return "Codex-compatible alias for full-access";
+  }
+}
+
 function modeChoice(mode: PermissionMode, current: PermissionMode): string {
   const marker = mode === current ? "●" : "○";
   return `${marker} ${mode.padEnd(11)} ${modeDescription(mode)}`;
@@ -258,6 +332,7 @@ async function showPermissionSettings(pi: ExtensionAPI, ctx: ExtensionCommandCon
     `History     show recent auto-review decisions`,
     `Timeout     auto-review timeout: ${Math.round(config.reviewTimeoutMs / 1000)}s`,
     `Reviewer    auto-review model: ${configuredReviewerModel(config)}`,
+    `Sandbox     ${sandboxStatusSummary(config, ctx.cwd)}`,
     "Clear       clear session allowances/cache",
     "Status      show current mode",
   ];
@@ -297,6 +372,11 @@ async function showPermissionSettings(pi: ExtensionAPI, ctx: ExtensionCommandCon
     return;
   }
 
+  if (choice.startsWith("Sandbox")) {
+    await showSandboxSettings(ctx, config);
+    return;
+  }
+
   if (choice.startsWith("Clear")) {
     clearSessionPermissionState();
     ctx.ui.notify("Cleared session permission allowances, auto-review cache, and circuit breakers.", "info");
@@ -304,6 +384,76 @@ async function showPermissionSettings(pi: ExtensionAPI, ctx: ExtensionCommandCon
   }
 
   ctx.ui.notify(permissionStatusText(config, ctx), "info");
+}
+
+export function effectiveSandboxConfig(config: PermissionConfig, cwd: string): SandboxConfig {
+  const projectRoots = config.sandbox.projectRoots.length ? config.sandbox.projectRoots : [cwd];
+  return {
+    ...config.sandbox,
+    projectRoots,
+    readableRoots: config.sandbox.readableRoots.length ? config.sandbox.readableRoots : projectRoots,
+    writableRoots: config.sandbox.writableRoots.length ? config.sandbox.writableRoots : projectRoots,
+  };
+}
+
+export function sandboxStatusSummary(config: PermissionConfig, cwd: string): string {
+  const sandbox = effectiveSandboxConfig(config, cwd);
+  const managed = sandbox.managedNetwork ? ", managed network on" : "";
+  return `read ${sandbox.readableRoots.length} root(s), write ${sandbox.writableRoots.length} root(s), internet ${sandbox.allowInternet ? "on" : "off"}, ssh ${sandbox.allowSsh ? "on" : "off"}${managed}`;
+}
+
+function parseCsvList(value: string | undefined): string[] | undefined {
+  if (value === undefined) return undefined;
+  return normalizeStringList(value.split(","));
+}
+
+async function showSandboxSettings(ctx: ExtensionCommandContext, config: PermissionConfig): Promise<void> {
+  const sandbox = effectiveSandboxConfig(config, ctx.cwd);
+  const choices = [
+    `Project roots      ${sandbox.projectRoots.join(", ")}`,
+    `Readable roots     ${sandbox.readableRoots.join(", ")}`,
+    `Writable roots     ${sandbox.writableRoots.join(", ")}`,
+    `Internet           ${sandbox.allowInternet ? "allowed" : "blocked"}`,
+    `SSH                ${sandbox.allowSsh ? "allowed" : "blocked"}`,
+    `Protected patterns ${sandbox.protectedPatterns.join(", ") || "default"}`,
+    "Status             show effective sandbox config",
+  ];
+  const choice = await ctx.ui.select("Sandbox configuration", choices);
+  if (!choice) return;
+
+  let nextSandbox = { ...config.sandbox };
+  if (choice.startsWith("Project roots")) {
+    const value = await ctx.ui.input("Project roots (comma-separated)", sandbox.projectRoots.join(", "));
+    const parsed = parseCsvList(value);
+    if (!parsed) return;
+    nextSandbox.projectRoots = parsed;
+  } else if (choice.startsWith("Readable roots")) {
+    const value = await ctx.ui.input("Readable roots (comma-separated; can include outside-project paths)", sandbox.readableRoots.join(", "));
+    const parsed = parseCsvList(value);
+    if (!parsed) return;
+    nextSandbox.readableRoots = parsed;
+  } else if (choice.startsWith("Writable roots")) {
+    const value = await ctx.ui.input("Writable roots (comma-separated; keep narrow)", sandbox.writableRoots.join(", "));
+    const parsed = parseCsvList(value);
+    if (!parsed) return;
+    nextSandbox.writableRoots = parsed;
+  } else if (choice.startsWith("Internet")) {
+    nextSandbox.allowInternet = !sandbox.allowInternet;
+  } else if (choice.startsWith("SSH")) {
+    nextSandbox.allowSsh = !sandbox.allowSsh;
+  } else if (choice.startsWith("Protected patterns")) {
+    const value = await ctx.ui.input("Protected patterns (comma-separated)", sandbox.protectedPatterns.join(", "));
+    const parsed = parseCsvList(value);
+    if (!parsed) return;
+    nextSandbox.protectedPatterns = parsed;
+  } else {
+    ctx.ui.notify(`Sandbox: ${sandboxStatusSummary(config, ctx.cwd)}`, "info");
+    return;
+  }
+
+  const next = normalizeConfig({ ...config, sandbox: nextSandbox });
+  writeGlobalPermissionConfig(next);
+  ctx.ui.notify(`Sandbox updated: ${sandboxStatusSummary(next, ctx.cwd)}`, "info");
 }
 
 function configuredReviewerModel(config: PermissionConfig): string {
@@ -317,7 +467,7 @@ function reviewerModelLabel(model: Model<any> | undefined): string {
 export function permissionStatusText(config: PermissionConfig, ctx?: ExtensionContext): string {
   const configured = configuredReviewerModel(config);
   const resolved = ctx && process.env.OPPI_PERMISSIONS_AUTO_REVIEW_AI !== "0" ? reviewerModelLabel(selectReviewerModel(ctx, config)) : "disabled/unavailable";
-  return `Permissions: ${config.mode}; auto-review reviewer ${configured}${configured === resolved ? "" : ` → ${resolved}`}; timeout ${Math.round(config.reviewTimeoutMs / 1000)}s; cache ${autoExactCache.size}; recent reviews ${reviewRecords().length}.`;
+  return `Permissions: ${config.mode}; auto-review reviewer ${configured}${configured === resolved ? "" : ` → ${resolved}`}; timeout ${Math.round(config.reviewTimeoutMs / 1000)}s; sandbox ${ctx ? sandboxStatusSummary(config, ctx.cwd) : "configured"}; cache ${autoExactCache.size}; recent reviews ${reviewRecords().length}.`;
 }
 
 export function clearSessionPermissionState(): void {
@@ -589,7 +739,7 @@ Decision rules:
 - Deny destructive, external, credential, deployment, or delegation behavior unless authorization is clear.
 - Deny protected-file access unless the user explicitly asked for that exact protected file/action.
 - Deny if the tool call hides side effects behind another agent or service without enough context.
-- Use cache_scope "exact" only for low-risk calls with medium/high user authorization and no protected-file policy hits; otherwise use "none".`;
+- Use cache_scope "exact" only for low-risk calls with medium/high user authorization and no protected-file policy hits; otherwise use "none".${promptVariantAppend("permissions-auto-review-user-append.md")}`;
 }
 
 function parseDecision(text: string): ReviewDecision {
@@ -1021,8 +1171,41 @@ async function handlePermissionCommand(pi: ExtensionAPI, args: string, ctx: Exte
     return;
   }
 
+  if (command === "sandbox") {
+    const sandboxSub = valueRaw?.toLowerCase();
+    if (!sandboxSub || sandboxSub === "status") {
+      ctx.ui.notify(`Sandbox: ${sandboxStatusSummary(config, ctx.cwd)}`, "info");
+      return;
+    }
+    const rest = args.trim().split(/\s+/).slice(2).join(" ");
+    const list = normalizeStringList(rest.split(","));
+    const nextSandbox = { ...config.sandbox };
+    if (sandboxSub === "internet") nextSandbox.allowInternet = rest.toLowerCase() === "on" || rest.toLowerCase() === "true" || rest.toLowerCase() === "allow";
+    else if (sandboxSub === "ssh") nextSandbox.allowSsh = rest.toLowerCase() === "on" || rest.toLowerCase() === "true" || rest.toLowerCase() === "allow";
+    else if (sandboxSub === "read") nextSandbox.readableRoots = list;
+    else if (sandboxSub === "write") nextSandbox.writableRoots = list;
+    else if (sandboxSub === "project") nextSandbox.projectRoots = list;
+    else {
+      ctx.ui.notify("Usage: /permissions sandbox [status|internet on|internet off|ssh on|ssh off|read <paths>|write <paths>|project <paths>]", "warning");
+      return;
+    }
+    const next = normalizeConfig({ ...config, sandbox: nextSandbox });
+    writeGlobalPermissionConfig(next);
+    ctx.ui.notify(`Sandbox updated: ${sandboxStatusSummary(next, ctx.cwd)}`, "info");
+    return;
+  }
+
   if (command === "history" || command === "log") {
     await showPermissionHistory(ctx);
+    return;
+  }
+
+  const aliasMode = modeForCodexProfileAlias(command);
+  if (aliasMode) {
+    const next = { ...config, mode: aliasMode };
+    writeGlobalPermissionConfig(next);
+    publishMode(pi, ctx, next.mode);
+    ctx.ui.notify(`Permissions set to ${next.mode} (${command} compatibility alias).`, "info");
     return;
   }
 
@@ -1060,7 +1243,7 @@ async function handlePermissionCommand(pi: ExtensionAPI, args: string, ctx: Exte
     return;
   }
 
-  ctx.ui.notify("Usage: /permissions [status|history|read-only|default|auto-review|full-access|timeout <seconds>|reviewer-model <auto|provider/model>|clear-session]", "warning");
+  ctx.ui.notify("Usage: /permissions [status|sandbox|history|read-only|default|auto-review|full-access|:read-only|:workspace|:danger-no-sandbox|timeout <seconds>|reviewer-model <auto|provider/model>|clear-session]", "warning");
 }
 
 export default function permissionsExtension(pi: ExtensionAPI) {
@@ -1083,8 +1266,12 @@ export default function permissionsExtension(pi: ExtensionAPI) {
   pi.registerCommand("permissions", {
     description: "Configure OPPi permissions: read-only, default, auto-review, or full-access.",
     getArgumentCompletions: (prefix: string) => {
-      const values = ["status", "history", ...MODES, "timeout", "reviewer-model", "clear-session"];
-      return values.filter((value) => value.startsWith(prefix.toLowerCase())).map((value) => ({ value, label: value }));
+      const values = ["status", "sandbox", "history", ...MODES, ...CODEX_PROFILE_ALIASES, "timeout", "reviewer-model", "clear-session"];
+      return values.filter((value) => value.startsWith(prefix.toLowerCase())).map((value) => ({
+        value,
+        label: value,
+        description: CODEX_PROFILE_ALIASES.includes(value as CodexProfileAlias) ? codexProfileAliasDescription(value as CodexProfileAlias) : undefined,
+      }));
     },
     handler: async (args, ctx) => handlePermissionCommand(pi, args, ctx),
   });

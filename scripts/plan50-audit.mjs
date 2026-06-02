@@ -5,10 +5,10 @@ import { basename, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 
 const repoRoot = resolve(import.meta.dirname, "..");
-const defaultPlanPath = join(repoRoot, ".oppi-plans", "50-standalone-oppi-finish-line.md");
+const defaultPlanPath = join(repoRoot, ".oppi-plans", "completed", "done_50-standalone-oppi-finish-line.md");
 const defaultWorkflowPath = join(repoRoot, ".github", "workflows", "native-shell.yml");
 const defaultManifestWriterPath = join(repoRoot, "scripts", "plan50-write-evidence-manifest.mjs");
-const ciEvidencePublishSetReviewPath = ".oppi-plans/50-ci-evidence-publish-set-review.md";
+const ciEvidencePublishSetReviewPath = ".oppi-plans/completed/done_50-ci-evidence-publish-set-review.md";
 const sandboxLibPath = join(repoRoot, "crates", "oppi-sandbox", "src", "lib.rs");
 const windowsProcessPath = join(repoRoot, "crates", "oppi-sandbox", "src", "windows_process.rs");
 const ciEvidenceInputPaths = [

@@ -1,18 +1,30 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { delimiter, join } from "node:path";
+import { delimiter, isAbsolute, join, resolve } from "node:path";
 import { homedir, tmpdir } from "node:os";
+import { pathToFileURL } from "node:url";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 
 const DEFAULT_MERIDIAN_BASE_URL = "http://127.0.0.1:3456";
+const MERIDIAN_PACKAGE_NAME = "@rynfar/meridian";
+const MERIDIAN_PACKAGE_SPEC = process.env.OPPI_MERIDIAN_PACKAGE_SPEC || `${MERIDIAN_PACKAGE_NAME}@latest`;
 
 type MeridianInstance = {
   config?: { host?: string; port?: number };
   close(): Promise<void>;
 };
 
+type MeridianModule = {
+  startProxyServer: (options: { host: string; port: number; silent: boolean }) => Promise<MeridianInstance>;
+};
+
+type MeridianInstallResult =
+  | { ok: true; modulePath: string; output: string }
+  | { ok: false; error: string; output: string };
+
 let meridianInstance: MeridianInstance | undefined;
 let meridianProcess: ChildProcess | undefined;
+let meridianInstallPromise: Promise<MeridianInstallResult> | undefined;
 
 function meridianBaseUrl(): string {
   return (process.env.OPPI_MERIDIAN_BASE_URL || process.env.MERIDIAN_BASE_URL || DEFAULT_MERIDIAN_BASE_URL).replace(/\/+$/, "");
@@ -27,6 +39,115 @@ function meridianHeaders(): Record<string, string> {
   const profile = process.env.OPPI_MERIDIAN_PROFILE || process.env.MERIDIAN_DEFAULT_PROFILE;
   if (profile) headers["x-meridian-profile"] = profile;
   return headers;
+}
+
+function expandHome(value: string): string {
+  if (value === "~") return homedir();
+  if (value.startsWith("~/") || value.startsWith("~\\")) return join(homedir(), value.slice(2));
+  return value;
+}
+
+function resolveUserPath(value: string): string {
+  const expanded = expandHome(value.trim());
+  return isAbsolute(expanded) ? expanded : resolve(process.cwd(), expanded);
+}
+
+function oppiHome(): string {
+  const explicit = process.env.OPPI_HOME?.trim();
+  return explicit ? resolveUserPath(explicit) : join(homedir(), ".oppi");
+}
+
+function managedPackagesDir(): string {
+  return join(oppiHome(), "packages");
+}
+
+function packageRootFromNodeModules(nodeModulesDir: string, packageName: string): string {
+  return join(nodeModulesDir, ...packageName.split("/"));
+}
+
+function managedMeridianModulePath(packageName = MERIDIAN_PACKAGE_NAME): string {
+  return join(packageRootFromNodeModules(join(managedPackagesDir(), "node_modules"), packageName), "dist", "server.js");
+}
+
+function ensureManagedPackageRoot(): string {
+  const root = managedPackagesDir();
+  mkdirSync(root, { recursive: true });
+  const packageJson = join(root, "package.json");
+  if (!existsSync(packageJson)) {
+    writeFileSync(packageJson, `${JSON.stringify({ private: true, name: "oppi-managed-packages", description: "OPPi managed optional packages." }, null, 2)}\n`, "utf8");
+  }
+  return root;
+}
+
+function npmSpawnCommand(args: string[]): { command: string; args: string[] } {
+  if (process.platform === "win32") return { command: "cmd.exe", args: ["/d", "/s", "/c", "npm", ...args] };
+  return { command: "npm", args };
+}
+
+function formatPath(value: string | undefined): string {
+  if (!value) return "not configured";
+  const home = homedir();
+  return value.startsWith(home) ? `~${value.slice(home.length)}` : value;
+}
+
+async function loadMeridian(): Promise<{ module: MeridianModule; source: string }> {
+  const candidates = [process.env.OPPI_MERIDIAN_MODULE, managedMeridianModulePath()]
+    .filter((candidate): candidate is string => Boolean(candidate));
+
+  for (const candidate of candidates) {
+    try {
+      const resolved = isAbsolute(candidate) ? candidate : resolve(candidate);
+      if (existsSync(resolved)) {
+        return { module: await import(pathToFileURL(resolved).href) as MeridianModule, source: formatPath(resolved) };
+      }
+    } catch {
+      // Try the next managed/import candidate.
+    }
+  }
+
+  return { module: await import(MERIDIAN_PACKAGE_NAME) as MeridianModule, source: MERIDIAN_PACKAGE_NAME };
+}
+
+async function installMeridianPackage(): Promise<MeridianInstallResult> {
+  if (meridianInstallPromise) return meridianInstallPromise;
+  meridianInstallPromise = new Promise<MeridianInstallResult>((resolveInstall) => {
+    const root = ensureManagedPackageRoot();
+    const args = ["install", MERIDIAN_PACKAGE_SPEC, "--save-exact", "--no-audit", "--no-fund"];
+    let output = "";
+    const append = (chunk: unknown) => {
+      output += String(chunk);
+      if (output.length > 12_000) output = output.slice(-12_000);
+    };
+    const npm = npmSpawnCommand(args);
+    const child = spawn(npm.command, npm.args, {
+      cwd: root,
+      stdio: ["ignore", "pipe", "pipe"],
+      windowsHide: true,
+      env: { ...process.env, npm_config_loglevel: process.env.npm_config_loglevel ?? "warn" },
+    });
+    child.stdout?.on("data", append);
+    child.stderr?.on("data", append);
+    child.on("error", (error) => resolveInstall({ ok: false, error: error.message, output }));
+    child.on("close", (code) => {
+      const modulePath = managedMeridianModulePath();
+      if (code === 0 && existsSync(modulePath)) resolveInstall({ ok: true, modulePath, output });
+      else resolveInstall({ ok: false, error: `npm install exited with code ${code ?? "unknown"}`, output });
+    });
+  }).finally(() => {
+    meridianInstallPromise = undefined;
+  });
+  return meridianInstallPromise;
+}
+
+async function installMeridianFromUi(ctx: any): Promise<void> {
+  ctx.ui.notify(`Installing ${MERIDIAN_PACKAGE_SPEC} into ${formatPath(managedPackagesDir())}…`, "info");
+  const result = await installMeridianPackage();
+  if (!result.ok) {
+    const tail = result.output.trim() ? `\n${result.output.trim().slice(-1_200)}` : "";
+    ctx.ui.notify(`Meridian install failed: ${result.error}${tail}`, "warning");
+    return;
+  }
+  ctx.ui.notify(`Installed Meridian bridge: ${formatPath(result.modulePath)}. Run /meridian start, then choose a Meridian Claude model.`, "info");
 }
 
 function registerMeridianProvider(pi: ExtensionAPI): void {
@@ -123,14 +244,12 @@ async function waitForMeridian(child: ChildProcess | undefined, timeoutMs = 12_0
 }
 
 async function startEmbeddedMeridian(): Promise<string> {
-  // Keep Meridian optional at install time. A literal dynamic import would make
-  // TypeScript/package managers treat @rynfar/meridian as a hard dependency,
-  // but Windows installs currently fail in Meridian's transitive postinstall.
-  const packageName = "@rynfar/meridian";
-  const { startProxyServer } = await import(packageName) as { startProxyServer: (options: { host: string; port: number; silent: boolean }) => Promise<MeridianInstance> };
+  process.env.MERIDIAN_DEFAULT_AGENT ||= "pi";
+  process.env.MERIDIAN_PASSTHROUGH ||= "1";
+  const { module, source } = await loadMeridian();
   const { host, port } = parseHostPort();
-  meridianInstance = await startProxyServer({ host, port, silent: true });
-  return "embedded package";
+  meridianInstance = await module.startProxyServer({ host, port, silent: true });
+  return `embedded managed bridge: ${source}`;
 }
 
 function windowsWhichShimDir(): string | undefined {
@@ -177,6 +296,7 @@ async function startCommandMeridian(command: string, args: string[], label: stri
     ...process.env,
     PATH: augmentedPath(),
     MERIDIAN_DEFAULT_AGENT: process.env.MERIDIAN_DEFAULT_AGENT || "pi",
+    MERIDIAN_PASSTHROUGH: process.env.MERIDIAN_PASSTHROUGH || "1",
     MERIDIAN_HOST: host,
     MERIDIAN_PORT: String(port),
   };
@@ -225,18 +345,20 @@ async function startMeridian(): Promise<string> {
     meridianProcess = undefined;
   }
 
-  if (process.env.OPPI_MERIDIAN_DISABLE_NPX !== "1") {
+  if (process.env.OPPI_MERIDIAN_ALLOW_NPX === "1") {
     try {
-      const source = await startCommandMeridian("npx", ["-y", "@rynfar/meridian"], "npx @rynfar/meridian", 60_000);
+      const source = await startCommandMeridian("npx", ["-y", MERIDIAN_PACKAGE_NAME], `npx ${MERIDIAN_PACKAGE_NAME}`, 60_000);
       return `Started Meridian at ${meridianBaseUrl()} (${source})`;
     } catch (error) {
-      failures.push(`npx @rynfar/meridian: ${error instanceof Error ? error.message : String(error)}`);
+      failures.push(`npx ${MERIDIAN_PACKAGE_NAME}: ${error instanceof Error ? error.message : String(error)}`);
       meridianProcess?.kill();
       meridianProcess = undefined;
     }
+  } else {
+    failures.push("npx fallback disabled by default; run /meridian install or set OPPI_MERIDIAN_ALLOW_NPX=1 for an explicit one-off fallback");
   }
 
-  throw new Error(`Could not start Meridian. Install @rynfar/meridian, run meridian externally, or set OPPI_MERIDIAN_COMMAND. Tried: ${failures.join("; ")}`);
+  throw new Error(`Could not start Meridian. Install with /meridian install, run meridian externally, or set OPPI_MERIDIAN_COMMAND/OPPI_MERIDIAN_MODULE. Tried: ${failures.join("; ")}`);
 }
 
 async function stopMeridian(): Promise<string> {
@@ -257,10 +379,22 @@ export default function meridianExtension(pi: ExtensionAPI) {
   registerMeridianProvider(pi);
 
   pi.registerCommand("meridian", {
-    description: "Manage OPPi's optional Meridian Claude subscription bridge: /meridian start|stop|status.",
+    description: "Manage OPPi's optional Meridian Claude subscription bridge: /meridian install|start|stop|status.",
     handler: async (args, ctx) => {
       const action = args.trim().split(/\s+/)[0] || "status";
       try {
+        if (action === "install") {
+          const accepted = await ctx.ui.confirm(
+            "Install Meridian Claude bridge?",
+            `Install ${MERIDIAN_PACKAGE_SPEC} into ${formatPath(managedPackagesDir())}? This enables the managed Claude subscription bridge without spawning npx automatically.`,
+          );
+          if (!accepted) {
+            ctx.ui.notify("Okay — Meridian was not installed. You can run /meridian install later.", "info");
+            return;
+          }
+          await installMeridianFromUi(ctx);
+          return;
+        }
         if (action === "start") {
           ctx.ui.notify(await startMeridian(), "info");
           return;
@@ -274,12 +408,12 @@ export default function meridianExtension(pi: ExtensionAPI) {
             const health = await fetchHealth();
             ctx.ui.notify(health.ok ? `Meridian is reachable at ${meridianBaseUrl()}` : `Meridian returned ${health.text.slice(0, 160)}`, health.ok ? "info" : "warning");
           } catch {
-            ctx.ui.notify(`Meridian is not reachable at ${meridianBaseUrl()}. Run /meridian start or start it externally.`, "warning");
+            ctx.ui.notify(`Meridian is not reachable at ${meridianBaseUrl()}. Run /meridian install, /meridian start, or start it externally.`, "warning");
           }
           return;
         }
 
-        ctx.ui.notify("Usage: /meridian start | stop | status", "info");
+        ctx.ui.notify("Usage: /meridian install | start | stop | status", "info");
       } catch (error) {
         ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
       }

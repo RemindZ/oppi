@@ -1,5 +1,6 @@
 import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
 import { Key, matchesKey } from "@mariozechner/pi-tui";
+import { promptVariantAppend } from "./prompt-variant";
 
 const ALT_ENTER_SEQUENCE = "\x1b\r";
 const FOLLOW_UP_CONTEXT_TYPE = "oppi-follow-up-chain-context";
@@ -125,7 +126,7 @@ function followUpGuidance(chain: FollowUpChain, current: FollowUpItem): string {
     followUpLedger(chain, current),
     finalInstruction,
     "Do not dump this ledger verbatim. Use it to make the final user-facing answer cover the initial request plus all completed follow-ups.",
-  ].join("\n");
+  ].join("\n") + promptVariantAppend("follow-up-chain-system-append.md");
 }
 
 function resetForNewStandalone(prompt: string): void {
@@ -200,8 +201,9 @@ export default function enterRoutingExtension(pi: ExtensionAPI) {
   });
 
   pi.on("agent_end", async (_event, ctx) => {
-    if (activePrompt?.kind === "follow-up" && activeChain?.id === activePrompt.chainId) {
-      const followUp = activeChain.followUps.find((item) => item.id === activePrompt?.followUpId);
+    const prompt = activePrompt;
+    if (prompt?.kind === "follow-up" && activeChain?.id === prompt.chainId) {
+      const followUp = activeChain.followUps.find((item) => item.id === prompt.followUpId);
       if (followUp) {
         followUp.status = "completed";
         followUp.completedAt = nowIso();

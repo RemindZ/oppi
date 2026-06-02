@@ -45,7 +45,7 @@
 │   /sessions    browse session history                                      │
 │   /background  send to background runner                                  │
 │   /todos       show task list                                              │
-│   /effort      model-aware thinking slider                                 │
+│   /effort      default thinking slider                                    │
 │   /exit        quit OPPi                                                   │
 ╰────────────────────────────────────────────────────────────────────────────╯
 ╭────────────────────────────────────────────────────────────────────────────╮

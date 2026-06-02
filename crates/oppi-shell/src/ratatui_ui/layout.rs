@@ -1,4 +1,4 @@
-//! Layout constants and reservation-order helpers for mock parity.
+//! Layout constants and reservation-order helpers for native design parity.
 
 use ratatui::layout::Rect;
 

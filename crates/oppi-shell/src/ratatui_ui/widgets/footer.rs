@@ -29,9 +29,8 @@ pub(in super::super) struct FooterVisualContract {
     pub(in super::super) collapsed_height: u16,
     pub(in super::super) ready_dot: &'static str,
     pub(in super::super) running_dot: &'static str,
-    pub(in super::super) session_bar: &'static str,
-    pub(in super::super) week_bar: &'static str,
-    pub(in super::super) context_bar: &'static str,
+    pub(in super::super) full_bar: &'static str,
+    pub(in super::super) unknown_bar: &'static str,
     pub(in super::super) todos_prefix: &'static str,
 }
 
@@ -40,8 +39,7 @@ pub(in super::super) const FOOTER_VISUAL_CONTRACT: FooterVisualContract = Footer
     collapsed_height: 1,
     ready_dot: "•",
     running_dot: "●",
-    session_bar: "▮▮▮▯▯",
-    week_bar: "▮▯▯▯▯",
-    context_bar: "▮▮▯▯▯",
+    full_bar: "▮▮▮▮▮",
+    unknown_bar: "▯▯▯▯▯",
     todos_prefix: "todos ",
 };

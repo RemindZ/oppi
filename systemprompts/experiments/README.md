@@ -18,12 +18,19 @@ YYYY-MM-DD-short-name.full.md
 Current runtime-selectable variants:
 
 ```text
+/prompt-variant a
+/prompt-variant b
+/prompt-variant caveman
 /prompt-variant promptname_a
 /prompt-variant promptname_b
 /prompt-variant off
 ```
 
-`promptname_a` is based on the authorized agentic-loop/system-prompt architecture writeups. `promptname_b` applies Caveman full compression to the `promptname_a` instruction prose while preserving normal OPPi user-facing style.
+`a` aliases `promptname_a`; `b` and `caveman` alias `promptname_b`.
+
+`promptname_a` is based on the authorized agentic-loop/system-prompt architecture writeups. `promptname_b` applies Caveman full compression to the same runtime surfaces while preserving normal OPPi user-facing style.
+
+Both directories should carry a file for every runtime surface wired through `readPromptVariantSurface()` / `promptVariantAppend()`, including main, feature routing, review/audit, permission reviewer, image generation, memory, compaction, command prompts, and follow-up-chain overlays.
 
 Suggested experiment metadata block:
 

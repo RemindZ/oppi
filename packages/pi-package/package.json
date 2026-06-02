@@ -1,9 +1,12 @@
 {
   "name": "@oppiai/pi-package",
-  "version": "0.2.9",
+  "version": "0.2.11",
   "type": "module",
   "description": "OPPi Pi package: extensions, skills, prompts, and themes.",
   "license": "MIT",
+  "scripts": {
+    "test": "node --test tests/*.test.mjs"
+  },
   "keywords": [
     "pi-package",
     "oppi",
@@ -45,6 +48,7 @@
       "./extensions/oauth-safety.ts",
       "./extensions/update-notice.ts",
       "./extensions/prompt-variant.ts",
+      "./extensions/model-guidance.ts",
       "./extensions/enter-routing.ts",
       "./extensions/suggest-next.ts",
       "./extensions/exit.ts",
@@ -55,6 +59,7 @@
       "./extensions/render-mermaid.ts",
       "./extensions/review.ts",
       "./extensions/init.ts",
+      "./extensions/agents.ts",
       "./extensions/independent.ts",
       "./extensions/todo-write.ts",
       "./extensions/smart-compact.ts",
@@ -62,6 +67,7 @@
       "./extensions/feedback.ts",
       "./extensions/background-tasks.ts",
       "./extensions/shell-tool.ts",
+      "./extensions/rust-agentic-loop.ts",
       "./extensions/permissions.ts",
       "./extensions/tool-digest.ts",
       "./extensions/memory.ts",

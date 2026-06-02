@@ -81,3 +81,43 @@ Guidelines:
 - Use suggest_next_message sparingly, only when the user's next reply is highly predictable (confidence >= 0.7).
 - Suggested messages should be short, concrete, and written in the user's likely wording.
 - Do not suggest generic replies like "ok" unless that exact response is clearly the likely next step.
+
+## `shell_exec` / `shell_task`
+
+Snippets:
+
+> Execute Bash or PowerShell commands for builds, tests, git, package managers, Docker, and shell-native diagnostics.
+
+> Inspect or kill background shell_exec tasks.
+
+Guidelines:
+
+- Use shell_exec for terminal-native operations such as builds, tests, git, package managers, Docker, and shell diagnostics; prefer read, grep, find, ls, edit, and write for ordinary file operations.
+- Provide a concise active-voice description for nontrivial shell_exec commands and use backgrounding only when the immediate result is not needed.
+- On Windows, choose shell=powershell for PowerShell syntax and shell=bash only for Git Bash/POSIX syntax; quote paths with spaces.
+- Do not use shell_exec for interactive prompts, password entry, polling sleep loops, destructive git operations, or production deploys unless the user explicitly requested them.
+- Use shell_task read instead of repeated polling commands, and shell_task kill when a task is stalled, interactive, or no longer needed.
+
+## `render_mermaid`
+
+Snippet:
+
+> Render Mermaid diagram source to ASCII for terminal display
+
+Guidelines:
+
+- Use render_mermaid when the user asks to render, preview, or validate Mermaid diagrams in the terminal.
+- Prefer concise Mermaid diagrams. For ordinary explanations, include Mermaid source and render only when a preview helps.
+- If fallback output is reported, mention that full Mermaid rendering requires the beautiful-mermaid dependency.
+
+## `oppi_feedback_submit`
+
+Snippet:
+
+> Submit a validated OPPi bug report or feature request.
+
+Guidelines:
+
+- Use oppi_feedback_submit only after enough user-provided context is available.
+- Prefer includeDiagnostics=true; include logs only when the user agrees or logs are clearly needed.
+- Never include secrets or raw private conversation history.

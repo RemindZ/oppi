@@ -4,7 +4,7 @@ import { Key, matchesKey, truncateToWidth, visibleWidth } from "@mariozechner/pi
 type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
 
 const ALL_LEVELS: ThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh"];
-const WIDGET_KEY = "oppi.effort-slider";
+const INITIAL_SUBMIT_ECHO_GRACE_MS = 250;
 
 const LEVEL_LABELS: Record<ThinkingLevel, string> = {
   off: "Off",
@@ -57,18 +57,46 @@ function levelLabelForModel(model: any, level: ThinkingLevel): string {
   return LEVEL_LABELS[level];
 }
 
+function isReasoningCapable(model: any): boolean {
+  if (model?.reasoning) return true;
+
+  const id = String(model?.id ?? "").toLowerCase();
+  const provider = String(model?.provider ?? "").toLowerCase();
+
+  // Some subscription providers, especially GitHub Copilot, expose reasoning-capable
+  // model IDs without setting Pi's `reasoning` metadata. Infer conservatively so the
+  // slider does not collapse to Off and immediately feel self-confirming.
+  return (
+    provider.includes("copilot") && (
+      id.includes("gpt-5") ||
+      id.includes("o3") ||
+      id.includes("o4") ||
+      id.includes("claude") ||
+      id.includes("sonnet") ||
+      id.includes("opus") ||
+      id.includes("gemini")
+    )
+  ) ||
+    id.includes("gpt-5") ||
+    id.includes("o3") ||
+    id.includes("o4") ||
+    isAnthropicLike(model) ||
+    id.includes("gemini-2.5") ||
+    id.includes("gemini-3");
+}
+
 function allowedLevelsForModel(model: any): ThinkingLevel[] {
-  if (!model?.reasoning) return ["off"];
+  if (!isReasoningCapable(model)) return ["off"];
   return supportsXhigh(model) ? ALL_LEVELS : ALL_LEVELS.filter((level) => level !== "xhigh");
 }
 
 function recommendedLevelForModel(model: any): ThinkingLevel {
-  if (!model?.reasoning) return "off";
+  if (!isReasoningCapable(model)) return "off";
 
   const provider = String(model.provider ?? "").toLowerCase();
   const id = String(model.id ?? "").toLowerCase();
 
-  if (provider === "openai" || id.includes("gpt-5") || id.includes("o3") || id.includes("o4")) {
+  if (provider === "openai" || provider.includes("copilot") || id.includes("gpt-5") || id.includes("o3") || id.includes("o4")) {
     return supportsXhigh(model) ? "high" : "medium";
   }
 
@@ -184,6 +212,10 @@ function progressRail(theme: any, allowed: ThinkingLevel[], selected: number, wi
   return output;
 }
 
+function isSubmitKey(data: string): boolean {
+  return matchesKey(data, Key.enter) || matchesKey(data, Key.ctrl("enter")) || data === "\r" || data === "\n" || data === "\r\n";
+}
+
 function renderDockedSlider(theme: any, width: number, model: any, allowed: ThinkingLevel[], current: ThinkingLevel, selected: number): string[] {
   const panelWidth = Math.max(1, width);
   const inner = Math.max(1, panelWidth - 2);
@@ -211,7 +243,7 @@ function renderDockedSlider(theme: any, width: number, model: any, allowed: Thin
 
   const maxLevel = allowed[allowed.length - 1] ?? "off";
   const maxLabel = levelLabelForModel(model, maxLevel);
-  const support = model?.reasoning
+  const support = isReasoningCapable(model)
     ? `Current model's rail caps at ${maxLabel}. Switch models with /model.`
     : "Current model is not marked reasoning-capable, so the rail is locked to Off.";
 
@@ -266,87 +298,72 @@ export default function effortExtension(pi: ExtensionAPI) {
       const initial = allowed.includes(current) ? current : allowed[allowed.length - 1] ?? "off";
       let selected = Math.max(0, allowed.indexOf(initial));
 
-      const result = await new Promise<ThinkingLevel | null>((resolve) => {
-        let closed = false;
-        let requestRender = () => {};
-        let unsubscribe: (() => void) | undefined;
+      const result = await ctx.ui.custom<ThinkingLevel | null>((tui, theme, _keybindings, done) => {
+        const openedAt = Date.now();
 
         const setSelected = (level: ThinkingLevel) => {
           const index = allowed.indexOf(level);
           selected = index >= 0 ? index : Math.max(0, allowed.length - 1);
         };
 
-        const close = (value: ThinkingLevel | null) => {
-          if (closed) return;
-          closed = true;
-          unsubscribe?.();
-          ctx.ui.setWidget(WIDGET_KEY, undefined);
-          resolve(value);
+        const redraw = () => tui.requestRender();
+
+        return {
+          render: (width: number) => renderDockedSlider(theme, width, model, allowed, current, selected),
+          invalidate: () => {},
+          handleInput: (data: string) => {
+            if (isSubmitKey(data) && Date.now() - openedAt < INITIAL_SUBMIT_ECHO_GRACE_MS) {
+              return;
+            }
+
+            if ((matchesKey(data, Key.left) || matchesKey(data, Key.up) || data === "h" || data === "k") && selected > 0) {
+              selected--;
+              redraw();
+              return;
+            }
+
+            if ((matchesKey(data, Key.right) || matchesKey(data, Key.down) || data === "l" || data === "j") && selected < allowed.length - 1) {
+              selected++;
+              redraw();
+              return;
+            }
+
+            if (data === "a") {
+              setSelected(recommendedLevelForModel(model));
+              redraw();
+              return;
+            }
+
+            if (matchesKey(data, Key.home) || data === "0") {
+              selected = 0;
+              redraw();
+              return;
+            }
+
+            if (matchesKey(data, Key.end)) {
+              selected = Math.max(0, allowed.length - 1);
+              redraw();
+              return;
+            }
+
+            const quickPick = Number(data);
+            if (Number.isInteger(quickPick) && quickPick >= 1 && quickPick <= allowed.length) {
+              selected = quickPick - 1;
+              redraw();
+              return;
+            }
+
+            if (isSubmitKey(data)) {
+              done(allowed[selected] ?? "off");
+              return;
+            }
+
+            if (matchesKey(data, Key.escape) || matchesKey(data, Key.ctrl("c"))) {
+              done(null);
+            }
+          },
         };
-
-        const redraw = () => requestRender();
-
-        ctx.ui.setWidget(WIDGET_KEY, (tui, theme) => {
-          requestRender = () => tui.requestRender();
-          return {
-            render: (width: number) => renderDockedSlider(theme, width, model, allowed, current, selected),
-            invalidate: () => {},
-          };
-        }, { placement: "aboveEditor" });
-
-        unsubscribe = ctx.ui.onTerminalInput((data: string) => {
-          if (closed) return undefined;
-
-          if ((matchesKey(data, Key.left) || matchesKey(data, Key.up) || data === "h" || data === "k") && selected > 0) {
-            selected--;
-            redraw();
-            return { consume: true };
-          }
-
-          if ((matchesKey(data, Key.right) || matchesKey(data, Key.down) || data === "l" || data === "j") && selected < allowed.length - 1) {
-            selected++;
-            redraw();
-            return { consume: true };
-          }
-
-          if (data === "a") {
-            setSelected(recommendedLevelForModel(model));
-            redraw();
-            return { consume: true };
-          }
-
-          if (matchesKey(data, Key.home) || data === "0") {
-            selected = 0;
-            redraw();
-            return { consume: true };
-          }
-
-          if (matchesKey(data, Key.end)) {
-            selected = Math.max(0, allowed.length - 1);
-            redraw();
-            return { consume: true };
-          }
-
-          const quickPick = Number(data);
-          if (Number.isInteger(quickPick) && quickPick >= 1 && quickPick <= allowed.length) {
-            selected = quickPick - 1;
-            redraw();
-            return { consume: true };
-          }
-
-          if (matchesKey(data, Key.enter) || matchesKey(data, Key.ctrl("enter"))) {
-            close(allowed[selected] ?? "off");
-            return { consume: true };
-          }
-
-          if (matchesKey(data, Key.escape) || matchesKey(data, Key.ctrl("c"))) {
-            close(null);
-            return { consume: true };
-          }
-
-          return { consume: true };
-        });
-      });
+      }, undefined);
 
       if (!result) {
         ctx.ui.notify("Effort unchanged.", "info");

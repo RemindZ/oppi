@@ -1,4 +1,4 @@
-//! Ratatui widget modules for Plan 61 mock parity.
+//! Ratatui widget modules for native design parity.
 
 pub(super) mod dock_tray;
 pub(super) mod editor;

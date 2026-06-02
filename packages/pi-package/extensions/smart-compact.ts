@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { complete } from "@mariozechner/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
 import { convertToLlm, getAgentDir, serializeConversation } from "@mariozechner/pi-coding-agent";
+import { promptVariantAppend } from "./prompt-variant";
 
 const SMART_COMPACT_VERSION = 1;
 const DEFAULT_SMART_COMPACT_THRESHOLD_PERCENT = 65;
@@ -359,7 +360,7 @@ ${files.readFiles.join("\n")}
 
 <modified-files>
 ${files.modifiedFiles.join("\n")}
-</modified-files>${previousSummary}${userFocus}
+</modified-files>${previousSummary}${userFocus}${promptVariantAppend("smart-compact-user-prompt-append.md")}
 
 <conversation-being-compacted>
 ${conversationText}

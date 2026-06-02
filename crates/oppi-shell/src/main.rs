@@ -1,10 +1,17 @@
-use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+use base64::{
+    Engine as _,
+    engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
+};
 use oppi_protocol::{
-    AgentDefinition, AgentRun, AgentSource, ApprovalRequest, ArtifactMetadata, AskUserRequest,
-    Event, EventKind, FilesystemPolicy, ItemKind, ModelRef, NetworkPolicy, PermissionMode,
-    ResolvedAgent, RuntimeListResult, SuggestedNextMessage, Thread, ThreadGoal, ThreadGoalStatus,
-    ThreadStatus, TodoClientAction, TodoClientActionResult, TodoListResult, TodoState, ToolCall,
-    ToolResultStatus,
+    AgentDefinition, AgentListResult, AgentRun, AgentRunPollResult, AgentRunStatus, AgentSource,
+    ApprovalRequest, ArtifactMetadata, AskUserAnswer, AskUserRequest, AskUserSettings,
+    DEFAULT_ASK_USER_TIMEOUT_MS, Diagnostic, Event, EventKind, FilesystemPolicy,
+    GuardianReviewSettings, ItemKind, MemoryConsolidateResult, MemoryRecallResult, MemoryRecord,
+    MemoryRememberResult, MemoryStatus, ModelRef, ModelRegistryListResult, NetworkPolicy,
+    PermissionMode, ResolvedAgent, ResolvedSkill, RuntimeListResult, SkillSource,
+    SuggestedNextMessage, Thread, ThreadGoal, ThreadGoalStatus, ThreadItemBranch, ThreadItemEntry,
+    ThreadItemLabelsResult, ThreadItemsResult, ThreadStatus, TodoClientAction,
+    TodoClientActionResult, TodoListResult, TodoState, ToolCall, ToolResultStatus,
 };
 mod ratatui_ui;
 mod tui;
@@ -26,8 +33,14 @@ const POLL_INTERVAL: Duration = Duration::from_millis(40);
 const TURN_TIMEOUT: Duration = Duration::from_secs(180);
 const EXIT_COMMAND_ECHO_TEXT: &str = "› /exit";
 const EXIT_REQUESTED_TEXT: &str = "exit requested (/exit)";
+const STARTER_AGENT_INSTRUCTIONS: &str = "You are a focused OPPi subagent.\n\nReplace this prompt with specific instructions for the delegated work this agent should handle.";
 const MERIDIAN_DEFAULT_BASE_URL: &str = "http://127.0.0.1:3456";
 const MERIDIAN_PACKAGE_NAME: &str = "@rynfar/meridian";
+const HOPPI_PACKAGE_NAME: &str = "@oppiai/hoppi-memory";
+const HOPPI_LEGACY_PACKAGE_NAME: &str = "hoppi-memory";
+const HOPPI_BRIDGE_TIMEOUT: Duration = Duration::from_secs(120);
+const HOPPI_MEMORY_DRAIN_TIMEOUT: Duration = Duration::from_secs(5);
+const HOPPI_MEMORY_DRAIN_POLL: Duration = Duration::from_millis(100);
 const GPT_MAIN_DEFAULT_MODEL: &str = "gpt-5.5";
 const GPT_CODING_SUBAGENT_DEFAULT_MODEL: &str = "gpt-5.3-codex";
 const CLAUDE_MAIN_DEFAULT_MODEL: &str = "claude-opus-4-6";
@@ -40,12 +53,47 @@ const OPENAI_CODEX_AUTHORIZE_URL: &str = "https://auth.openai.com/oauth/authoriz
 const OPENAI_CODEX_TOKEN_URL: &str = "https://auth.openai.com/oauth/token";
 const OPENAI_CODEX_REDIRECT_URI: &str = "http://localhost:1455/auth/callback";
 const OPENAI_CODEX_SCOPE: &str = "openid profile email offline_access";
+const OPENAI_CODEX_DEFAULT_BASE_URL: &str = "https://chatgpt.com/backend-api";
+const USAGE_REFRESH_INTERVAL: Duration = Duration::from_secs(60);
+const USAGE_FETCH_TIMEOUT: Duration = Duration::from_secs(4);
+const DEFAULT_PERMISSION_REVIEW_TIMEOUT_MS: u64 = 45_000;
+const ASK_USER_ALLOWED_TIMEOUT_MINUTES: [u64; 5] = [0, 1, 2, 5, 10];
+const VALID_IDLE_COMPACT_MINUTES: [u64; 3] = [2, 5, 10];
+const VALID_IDLE_COMPACT_THRESHOLDS: [u64; 4] = [50, 60, 70, 80];
+const VALID_SMART_COMPACT_THRESHOLDS: [u64; 6] = [50, 55, 60, 65, 70, 75];
+const VALID_IMAGE_WIDTH_CELLS: [u64; 3] = [60, 80, 120];
+const IMAGE_PREVIEW_PROTOCOL_VALUES_LABEL: &str = "auto|kitty|wezterm|iterm2|sixel|off";
+const ITERM2_INLINE_IMAGE_MAX_BYTES: u64 = 4 * 1024 * 1024;
+const SIXEL_INLINE_IMAGE_MAX_BYTES: u64 = 4 * 1024 * 1024;
+const VALID_MEMORY_AGENT_MODELS: [&str; 3] = ["auto", "claude", "gpt"];
+const VALID_DEEP_MEMORY_MODELS: [&str; 3] = ["auto", "sonnet", "gpt-5.5"];
+const VALID_HOPPI_INSTALL_OFFERS: [&str; 2] = ["ask", "dismissed"];
+const DEFAULT_SYNC_PASSPHRASE_ENV: &str = "OPPI_HOPPI_SYNC_PASSPHRASE";
+const VALID_SYNC_BACKGROUND: [&str; 4] = ["off", "15m", "30m", "60m"];
+const VALID_SYNC_CONFLICT_MODES: [&str; 3] = ["keep-both", "keep-local", "overwrite-local"];
+const DEFAULT_TURN_PROTECTED_PATTERNS: &[&str] = &[
+    ".env*",
+    ".ssh/",
+    "*.pem",
+    "*.key",
+    ".git/config",
+    ".git/hooks/",
+    ".npmrc",
+    ".pypirc",
+    ".mcp.json",
+    ".claude.json",
+];
 const OPENAI_DIRECT_DEFAULT_MODEL: &str = GPT_MAIN_DEFAULT_MODEL;
 const OPENAI_CODEX_DEFAULT_MODEL: &str = GPT_MAIN_DEFAULT_MODEL;
 const GITHUB_COPILOT_PROVIDER_ID: &str = "github-copilot";
 const GOAL_CONTINUATION_INPUT: &str = "Continue working toward the active thread goal.";
 const GOAL_CONTINUATION_SYSTEM_HEADING: &str = "OPPi goal continuation";
 const GOAL_CONTINUATION_CAP: u32 = 8;
+const HOPPI_MEMORY_CONTEXT_MAX_BYTES: usize = 12_000;
+const HOPPI_MEMORY_QUERY_MAX_CHARS: usize = 4_000;
+const HOPPI_IDLE_CONSOLIDATE_AFTER: Duration = Duration::from_secs(90);
+const HOPPI_IDLE_CONSOLIDATE_BUDGET: u64 = 1_500;
+const HOPPI_MEMORY_SYSTEM_HEADING: &str = "OPPi Hoppi memory";
 const OPPI_FEATURE_ROUTING_SYSTEM_APPEND: &str =
     include_str!("../../../systemprompts/main/oppi-feature-routing-system-append.md");
 const OPPI_FEATURE_ROUTING_VARIANT_A_APPEND: &str = include_str!(
@@ -58,6 +106,9 @@ const GITHUB_COPILOT_CLIENT_ID: &str = "Iv1.b507a08c87ecfe98";
 const GITHUB_COPILOT_DEFAULT_DOMAIN: &str = "github.com";
 const GITHUB_COPILOT_DEFAULT_BASE_URL: &str = "https://api.individual.githubcopilot.com";
 const GITHUB_COPILOT_DEFAULT_MODEL: &str = GPT_MAIN_DEFAULT_MODEL;
+const MOCK_PROVIDER_DISPLAY_LABEL: &str = "local test provider";
+const MOCK_MODEL_ID: &str = "local-test";
+const MOCK_MODEL_DISPLAY_LABEL: &str = "local-test";
 
 // Native fallback catalogs mirror Pi's installed built-in catalogs for the
 // provider paths OPPi owns directly. Pi remains the source of truth for the full
@@ -116,7 +167,45 @@ struct ShellCommand {
     interactive: bool,
     raw: bool,
     ratatui: bool,
+    reasoning_effort_explicit: bool,
     provider: ProviderConfig,
+}
+
+fn install_hoppi_package() -> Result<String, String> {
+    let root = ensure_managed_packages_root()?;
+    let spec = hoppi_package_spec();
+    let output = Command::new(if cfg!(windows) { "npm.cmd" } else { "npm" })
+        .args([
+            "install",
+            spec.as_str(),
+            "--save-exact",
+            "--no-audit",
+            "--no-fund",
+        ])
+        .current_dir(&root)
+        .output()
+        .map_err(|error| format!("spawn npm install: {error}"))?;
+    if output.status.success() && managed_hoppi_module_path().exists() {
+        Ok(format!(
+            "Installed Hoppi backend {} into {}. Next: run `/memory status`, `/memory dashboard`, or configure sync from the Hoppi dashboard.",
+            spec,
+            format_path_for_display(&root)
+        ))
+    } else {
+        let tail = compact_process_output(&[output.stdout, output.stderr].concat());
+        Err(format!(
+            "Hoppi install failed with status {}{}{}",
+            output.status,
+            if tail.is_empty() { "" } else { ": " },
+            tail
+        ))
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NewThreadMode {
+    New,
+    Clear,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -188,9 +277,18 @@ impl ThinkingLevel {
     }
 }
 
+fn display_model_id(model: &str) -> &str {
+    if model == MOCK_MODEL_ID {
+        MOCK_MODEL_DISPLAY_LABEL
+    } else {
+        model
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 struct OpenAiCompatibleConfig {
     flavor: DirectProviderFlavor,
+    provider_id: Option<String>,
     model: String,
     base_url: Option<String>,
     api_key_env: Option<String>,
@@ -204,7 +302,7 @@ struct OpenAiCompatibleConfig {
 impl ProviderConfig {
     fn label(&self) -> &'static str {
         match self {
-            Self::Mock => "mock scripted provider",
+            Self::Mock => MOCK_PROVIDER_DISPLAY_LABEL,
             Self::OpenAiCompatible(config) => match config.flavor {
                 DirectProviderFlavor::OpenAiCompatible => "OpenAI-compatible direct provider",
                 DirectProviderFlavor::OpenAiCodex => "ChatGPT/Codex subscription provider",
@@ -279,6 +377,142 @@ enum GoalCommandRoute {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+enum FollowUpCommandRoute {
+    Status,
+    SetMode(FollowUpMode),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum SteerCommandRoute {
+    Status,
+    SetMode(SteeringMode),
+    Send(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum StartupCommandRoute {
+    Status,
+    SetQuietStartup(bool),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum CursorCommandRoute {
+    Status,
+    SetHardwareCursor(bool),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum TerminalCommandRoute {
+    Status,
+    SetProgress(bool),
+    SetClearOnShrink(bool),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum EditorCommandRoute {
+    Status,
+    SetPaddingX(usize),
+    SetDoubleEscapeAction(DoubleEscapeAction),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum TreeCommandRoute {
+    Show,
+    Entries {
+        after: u64,
+        limit: Option<usize>,
+    },
+    Label {
+        event_id: u64,
+        labels: Vec<String>,
+    },
+    Fork {
+        event_id: u64,
+        title: Option<String>,
+    },
+    Edit {
+        event_id: u64,
+        input: String,
+    },
+    Status,
+    Fold(String),
+    Unfold(String),
+    Toggle(String),
+    Rename {
+        thread_id: String,
+        title: String,
+    },
+    Archive(String),
+    SetFilter(TreeFilterMode),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum SkillsCommandRoute {
+    List,
+    Status,
+    SetCommands(bool),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum AutocompleteCommandRoute {
+    Status,
+    SetMaxVisible(usize),
+}
+
+const DEFAULT_AUTOCOMPLETE_MAX_VISIBLE: usize = 5;
+const MIN_AUTOCOMPLETE_MAX_VISIBLE: usize = 3;
+const MAX_AUTOCOMPLETE_MAX_VISIBLE: usize = 20;
+const AUTOCOMPLETE_VISIBLE_CYCLE_VALUES: [usize; 6] = [3, 5, 7, 10, 15, 20];
+const DEFAULT_EDITOR_PADDING_X: usize = 0;
+const EDITOR_PADDING_X_VALUES: [usize; 4] = [0, 1, 2, 3];
+const DOUBLE_ESCAPE_WINDOW: Duration = Duration::from_millis(500);
+const TREE_FILTER_MODES: [TreeFilterMode; 5] = [
+    TreeFilterMode::Default,
+    TreeFilterMode::NoTools,
+    TreeFilterMode::UserOnly,
+    TreeFilterMode::LabeledOnly,
+    TreeFilterMode::All,
+];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DoubleEscapeAction {
+    Tree,
+    Fork,
+    None,
+}
+
+impl DoubleEscapeAction {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Tree => "tree",
+            Self::Fork => "fork",
+            Self::None => "none",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TreeFilterMode {
+    Default,
+    NoTools,
+    UserOnly,
+    LabeledOnly,
+    All,
+}
+
+impl TreeFilterMode {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Default => "default",
+            Self::NoTools => "no-tools",
+            Self::UserOnly => "user-only",
+            Self::LabeledOnly => "labeled-only",
+            Self::All => "all",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct SlashPalette {
     mode: SlashPaletteMode,
     query: String,
@@ -297,8 +531,8 @@ const SLASH_COMMAND_SPECS: &[SlashCommandSpec] = &[
     },
     SlashCommandSpec {
         command: "/settings",
-        usage: "/settings",
-        description: "Open the native settings panel",
+        usage: "/settings [section|search <query>]",
+        description: "Open native settings or list backed line-mode setting commands",
         aliases: &["/prefs", "/preferences", "/settings:oppi", "/oppi-settings"],
     },
     SlashCommandSpec {
@@ -327,8 +561,8 @@ const SLASH_COMMAND_SPECS: &[SlashCommandSpec] = &[
     },
     SlashCommandSpec {
         command: "/models",
-        usage: "/models [filter]",
-        description: "List known models",
+        usage: "/models [--all] [filter]",
+        description: "List available models",
         aliases: &[],
     },
     SlashCommandSpec {
@@ -363,9 +597,15 @@ const SLASH_COMMAND_SPECS: &[SlashCommandSpec] = &[
     },
     SlashCommandSpec {
         command: "/tree",
-        usage: "/tree [fold|unfold|toggle|rename|delete]",
-        description: "Show or manage the thread/session tree; opens a picker in native TUI",
-        aliases: &["/sessions"],
+        usage: "/tree [entries|sessions|status|filter <default|no-tools|user-only|labeled-only|all>|fork|edit|resubmit|label|unlabel|fold|unfold|toggle|rename|delete]",
+        description: "Show transcript entries; use /sessions or /tree sessions for the session tree",
+        aliases: &[],
+    },
+    SlashCommandSpec {
+        command: "/sessions",
+        usage: "/sessions [rename|delete|fold|unfold|toggle|entries|status|filter]",
+        description: "Show or manage the native session tree",
+        aliases: &[],
     },
     SlashCommandSpec {
         command: "/debug",
@@ -387,9 +627,45 @@ const SLASH_COMMAND_SPECS: &[SlashCommandSpec] = &[
     },
     SlashCommandSpec {
         command: "/steer",
-        usage: "/steer <text>",
-        description: "Send steering input to the active turn",
+        usage: "/steer [status|mode <all|one-at-a-time>|<text>]",
+        description: "Send steering input or configure active-turn delivery",
         aliases: &[],
+    },
+    SlashCommandSpec {
+        command: "/follow-up",
+        usage: "/follow-up [status|mode <all|one-at-a-time>]",
+        description: "Show or set queued follow-up delivery mode",
+        aliases: &["/followups"],
+    },
+    SlashCommandSpec {
+        command: "/startup",
+        usage: "/startup [status|quiet <on|off>]",
+        description: "Show or set Pi-compatible startup behavior",
+        aliases: &["/quiet-startup"],
+    },
+    SlashCommandSpec {
+        command: "/autocomplete",
+        usage: "/autocomplete [status|items <3..20>]",
+        description: "Show or set Pi-compatible autocomplete visible item count",
+        aliases: &["/autocomplete-max-visible"],
+    },
+    SlashCommandSpec {
+        command: "/cursor",
+        usage: "/cursor [status|hardware <on|off>]",
+        description: "Show or set Pi-compatible terminal hardware cursor behavior",
+        aliases: &["/hardware-cursor"],
+    },
+    SlashCommandSpec {
+        command: "/terminal",
+        usage: "/terminal [status|progress <on|off>|clear-on-shrink <on|off>]",
+        description: "Show or set Pi-compatible terminal behavior",
+        aliases: &["/terminal-progress"],
+    },
+    SlashCommandSpec {
+        command: "/editor",
+        usage: "/editor [status|padding <0|1|2|3>|double-escape <tree|fork|none>]",
+        description: "Show or set Pi-compatible editor behavior",
+        aliases: &["/input"],
     },
     SlashCommandSpec {
         command: "/interrupt",
@@ -400,7 +676,7 @@ const SLASH_COMMAND_SPECS: &[SlashCommandSpec] = &[
     SlashCommandSpec {
         command: "/effort",
         usage: "/effort [off|minimal|low|medium|high|xhigh|auto]",
-        description: "Set thinking effort with a model-aware slider",
+        description: "Set Pi-compatible default thinking with a model-aware slider",
         aliases: &[],
     },
     SlashCommandSpec {
@@ -434,22 +710,40 @@ const SLASH_COMMAND_SPECS: &[SlashCommandSpec] = &[
         aliases: &["/stats"],
     },
     SlashCommandSpec {
+        command: "/footer",
+        usage: "/footer [status|path|help|usage|model|permission|memory|context]",
+        description: "Configure persistent footer visibility",
+        aliases: &[],
+    },
+    SlashCommandSpec {
+        command: "/images",
+        usage: "/images [status|capabilities|show|width|auto-resize|block|protocol]",
+        description: "Configure terminal image preview and provider image handling",
+        aliases: &["/image", "/image-settings"],
+    },
+    SlashCommandSpec {
         command: "/memory",
-        usage: "/memory [status|dashboard|settings|maintenance]",
+        usage: "/memory [status|jobs|on|off|startup-recall|task-start-recall|turn-summaries|agent-model|deep-model|idle-dream|sync|dashboard|settings|compaction|maintenance]",
         description: "Control Hoppi memory; bare opens native memory panel",
         aliases: &["/mem", "/memory-maintenance", "/idle-compact"],
     },
     SlashCommandSpec {
         command: "/agents",
-        usage: "/agents [list|dispatch|block|complete]",
-        description: "List or dispatch native agents",
+        usage: "/agents [list|show|create|edit|delete|dispatch]",
+        description: "Manage and dispatch native agents",
         aliases: &[],
     },
     SlashCommandSpec {
         command: "/skills",
-        usage: "/skills",
-        description: "List discovered skills",
+        usage: "/skills [list|status|commands <on|off>]",
+        description: "List discovered skills and toggle /skill:name commands",
         aliases: &[],
+    },
+    SlashCommandSpec {
+        command: "/prompts",
+        usage: "/prompts",
+        description: "List discovered prompt templates",
+        aliases: &["/prompt-templates"],
     },
     SlashCommandSpec {
         command: "/graphify",
@@ -459,20 +753,20 @@ const SLASH_COMMAND_SPECS: &[SlashCommandSpec] = &[
     },
     SlashCommandSpec {
         command: "/theme",
-        usage: "/theme [oppi|dark|light|plain|reload]",
-        description: "Show/change theme; bare opens native theme panel",
+        usage: "/theme [name|reload|preview [name]]",
+        description: "Show, preview, or change built-in/discovered Pi themes; bare opens native theme panel",
         aliases: &["/themes"],
     },
     SlashCommandSpec {
-        command: "/sandbox",
-        usage: "/sandbox [mode]",
-        description: "Show sandbox/permission status; bare opens native panel",
+        command: "/permissions",
+        usage: "/permissions [status|history|timeout|reviewer-model|clear-session|mode]",
+        description: "Show/set permissions and Guardian review settings",
         aliases: &[],
     },
     SlashCommandSpec {
-        command: "/permissions",
-        usage: "/permissions [mode]",
-        description: "Show/set permission mode; bare opens native panel",
+        command: "/mcp",
+        usage: "/mcp [list|connect|test|reload|auth|trust-plugin|disable-plugin]",
+        description: "Show or manage native MCP broker status",
         aliases: &[],
     },
     SlashCommandSpec {
@@ -534,6 +828,12 @@ const SLASH_COMMAND_SPECS: &[SlashCommandSpec] = &[
         usage: "/answer <text-or-option-id>",
         description: "Answer a pending ask_user question",
         aliases: &[],
+    },
+    SlashCommandSpec {
+        command: "/ask-user",
+        usage: "/ask-user [status|timeout <off|1|2|5|10>]",
+        description: "Configure ask_user question timeout",
+        aliases: &["/ask_user", "/questions"],
     },
     SlashCommandSpec {
         command: "/again",
@@ -605,6 +905,55 @@ fn find_slash_command_spec(command: &str) -> Option<&'static SlashCommandSpec> {
     })
 }
 
+fn effective_project_roots(settings: &PermissionSandboxSettings, cwd: &str) -> Vec<String> {
+    let project_roots = normalize_string_slice(&settings.project_roots);
+    if project_roots.is_empty() {
+        vec![cwd.to_string()]
+    } else {
+        project_roots
+    }
+}
+
+fn effective_readable_roots(
+    settings: &PermissionSandboxSettings,
+    project_roots: &[String],
+) -> Vec<String> {
+    let readable_roots = normalize_string_slice(&settings.readable_roots);
+    if readable_roots.is_empty() {
+        project_roots.to_vec()
+    } else {
+        readable_roots
+    }
+}
+
+fn effective_writable_roots(
+    settings: &PermissionSandboxSettings,
+    project_roots: &[String],
+) -> Vec<String> {
+    let writable_roots = normalize_string_slice(&settings.writable_roots);
+    if writable_roots.is_empty() {
+        project_roots.to_vec()
+    } else {
+        writable_roots
+    }
+}
+
+#[cfg(test)]
+fn sandbox_policy_json_with_protected_patterns(
+    mode: PermissionMode,
+    cwd: &str,
+    protected_patterns: &[String],
+) -> Value {
+    sandbox_policy_json_with_settings(
+        mode,
+        cwd,
+        &PermissionSandboxSettings {
+            protected_patterns: protected_patterns.to_vec(),
+            ..PermissionSandboxSettings::default()
+        },
+    )
+}
+
 fn is_exact_slash_command(command: &str) -> bool {
     find_slash_command_spec(command).is_some()
 }
@@ -625,7 +974,6 @@ fn native_bare_picker_command(command: &str) -> bool {
         "/theme"
             | "/effort"
             | "/permissions"
-            | "/sandbox"
             | "/provider"
             | "/login"
             | "/meridian"
@@ -633,6 +981,8 @@ fn native_bare_picker_command(command: &str) -> bool {
             | "/model"
             | "/roles"
             | "/resume"
+            | "/sessions"
+            | "/tree"
             | "/runtime-loop"
     )
 }
@@ -687,12 +1037,14 @@ fn slash_command_visible_in_palette(command: &str) -> bool {
             | "/new"
             | "/fork"
             | "/tree"
+            | "/sessions"
             | "/prompt-variant"
             | "/todos"
             | "/goal"
             | "/theme"
             | "/memory"
             | "/agents"
+            | "/prompts"
             | "/effort"
             | "/background"
             | "/review"
@@ -702,9 +1054,17 @@ fn slash_command_visible_in_palette(command: &str) -> bool {
             | "/bug-report"
             | "/feature-request"
             | "/permissions"
+            | "/ask-user"
+            | "/mcp"
             | "/keys"
             | "/debug"
             | "/usage"
+            | "/footer"
+            | "/images"
+            | "/autocomplete"
+            | "/cursor"
+            | "/terminal"
+            | "/editor"
             | "/stats"
             | "/suggest-next"
             | "/btw"
@@ -737,6 +1097,98 @@ fn slash_command_palette_items(query: &str) -> Vec<SlashPaletteItem> {
         .collect()
 }
 
+fn slash_command_palette_items_with_skills(
+    query: &str,
+    skills: &[ResolvedSkill],
+    enable_skill_commands: bool,
+) -> Vec<SlashPaletteItem> {
+    let mut seen = BTreeSet::new();
+    let mut items = Vec::new();
+    for item in slash_command_palette_items(query)
+        .into_iter()
+        .chain(skill_slash_command_items(
+            skills,
+            enable_skill_commands,
+            query,
+        ))
+    {
+        if seen.insert(item.insert.clone()) {
+            items.push(item);
+        }
+    }
+    items
+}
+
+fn skill_slash_command_items(
+    skills: &[ResolvedSkill],
+    enable_skill_commands: bool,
+    query: &str,
+) -> Vec<SlashPaletteItem> {
+    if !enable_skill_commands {
+        return Vec::new();
+    }
+    let query = query.trim().trim_start_matches('/').to_ascii_lowercase();
+    let mut scored = skills
+        .iter()
+        .filter_map(|skill| {
+            let name = skill.active.name.trim();
+            if name.is_empty() {
+                return None;
+            }
+            let command = format!("skill:{name}");
+            let command_lower = command.to_ascii_lowercase();
+            let name_lower = name.to_ascii_lowercase();
+            let description_lower = skill.active.description.to_ascii_lowercase();
+            let score = if query.is_empty() {
+                0
+            } else if command_lower.starts_with(&query) {
+                1
+            } else if let Some(name_query) = query.strip_prefix("skill:") {
+                if name_lower.starts_with(name_query) {
+                    2
+                } else {
+                    return None;
+                }
+            } else if name_lower.starts_with(&query) {
+                4
+            } else if name_lower.contains(&query) || description_lower.contains(&query) {
+                5
+            } else {
+                return None;
+            };
+            Some((score, name.to_string(), skill))
+        })
+        .collect::<Vec<_>>();
+    scored.sort_by_key(|(score, name, _)| (*score, name.to_ascii_lowercase()));
+    scored
+        .into_iter()
+        .map(|(_, name, skill)| {
+            let label = format!("/skill:{name}");
+            let source = skill_source_label(skill.active.source);
+            let detail = if skill.active.description.trim().is_empty() {
+                format!("{source} skill")
+            } else {
+                format!("{source} skill: {}", skill.active.description.trim())
+            };
+            SlashPaletteItem {
+                label,
+                insert: format!("/skill:{name} "),
+                detail,
+            }
+        })
+        .collect()
+}
+
+fn skill_source_label(source: SkillSource) -> &'static str {
+    match source {
+        SkillSource::BuiltIn => "built-in",
+        SkillSource::User => "user",
+        SkillSource::Project => "project",
+        SkillSource::Plugin => "plugin",
+        SkillSource::Cli => "cli",
+    }
+}
+
 fn arg_item(label: &str, insert: &str, detail: &str) -> SlashPaletteItem {
     SlashPaletteItem {
         label: label.to_string(),
@@ -745,8 +1197,667 @@ fn arg_item(label: &str, insert: &str, detail: &str) -> SlashPaletteItem {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+struct SettingsCommandEntry {
+    section: &'static str,
+    label: &'static str,
+    command: &'static str,
+    description: &'static str,
+    keywords: &'static str,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct SettingsInfoEntry {
+    section: &'static str,
+    label: &'static str,
+    status: &'static str,
+    description: &'static str,
+    keywords: &'static str,
+}
+
+const SETTINGS_SECTIONS: &[(&str, &str)] = &[
+    ("general", "usage, help, ask-user"),
+    (
+        "pi",
+        "model, effort, provider, login, follow-ups, startup, terminal",
+    ),
+    ("footer", "footer visibility"),
+    ("images", "image preview and provider handling"),
+    ("permissions", "Guardian review and sandbox controls"),
+    ("theme", "theme preview and apply"),
+    ("memory", "Hoppi memory controls"),
+    ("compaction", "idle and smart compaction"),
+    ("workspace", "sessions, resume, and tree"),
+    ("mcp", "MCP servers, tools, and resources"),
+];
+
+const SETTINGS_COMMAND_ENTRIES: &[SettingsCommandEntry] = &[
+    SettingsCommandEntry {
+        section: "general",
+        label: "Command help",
+        command: "/help",
+        description: "List the supported slash command surface.",
+        keywords: "commands keybindings shortcuts",
+    },
+    SettingsCommandEntry {
+        section: "general",
+        label: "Usage and status",
+        command: "/usage",
+        description: "Show local usage/status counters and diagnostics.",
+        keywords: "stats status footer",
+    },
+    SettingsCommandEntry {
+        section: "general",
+        label: "Question timeout",
+        command: "/ask-user timeout <off|1|2|5|10>",
+        description: "Persist the backed ask_user question timeout.",
+        keywords: "ask user ask-user questions timeout",
+    },
+    SettingsCommandEntry {
+        section: "pi",
+        label: "Main model",
+        command: "/model <id>",
+        description: "Set the session model.",
+        keywords: "model picker ctrl-l scoped",
+    },
+    SettingsCommandEntry {
+        section: "pi",
+        label: "Scoped models",
+        command: "/scoped-models list|enable|disable",
+        description: "Control Pi-compatible enabled model patterns.",
+        keywords: "model picker cycle ctrl-p",
+    },
+    SettingsCommandEntry {
+        section: "pi",
+        label: "Default thinking",
+        command: "/effort <low|medium|high>",
+        description: "Persist Pi-compatible defaultThinkingLevel for reasoning-capable models.",
+        keywords: "reasoning thinking effort default shift-tab",
+    },
+    SettingsCommandEntry {
+        section: "pi",
+        label: "Provider setup",
+        command: "/provider status|validate|auth-env|base-url",
+        description: "Inspect and configure direct provider readiness.",
+        keywords: "provider api openai compatible base url auth",
+    },
+    SettingsCommandEntry {
+        section: "pi",
+        label: "Login",
+        command: "/login subscription|api",
+        description: "Choose subscription OAuth or env-ref API login.",
+        keywords: "auth codex copilot claude meridian oauth",
+    },
+    SettingsCommandEntry {
+        section: "pi",
+        label: "Follow-up mode",
+        command: "/follow-up mode <all|one-at-a-time>",
+        description: "Persist Pi-compatible queued follow-up delivery mode.",
+        keywords: "follow-up followups queue delivery alt enter",
+    },
+    SettingsCommandEntry {
+        section: "pi",
+        label: "Steering mode",
+        command: "/steer mode <all|one-at-a-time>",
+        description: "Persist Pi-compatible active-turn steering delivery mode.",
+        keywords: "steer steering queue delivery ctrl enter",
+    },
+    SettingsCommandEntry {
+        section: "pi",
+        label: "Quiet startup",
+        command: "/startup quiet <on|off>",
+        description: "Persist Pi-compatible quietStartup for the native ready banner.",
+        keywords: "startup quiet banner verbose",
+    },
+    SettingsCommandEntry {
+        section: "pi",
+        label: "Skill commands",
+        command: "/skills commands <on|off>",
+        description: "Persist Pi-compatible enableSkillCommands for /skill:name prompts.",
+        keywords: "skills slash commands enableSkillCommands",
+    },
+    SettingsCommandEntry {
+        section: "pi",
+        label: "Autocomplete items",
+        command: "/autocomplete items <3..20>",
+        description: "Persist Pi-compatible autocompleteMaxVisible for command palettes.",
+        keywords: "autocomplete dropdown visible items autocompleteMaxVisible commands",
+    },
+    SettingsCommandEntry {
+        section: "pi",
+        label: "Hardware cursor",
+        command: "/cursor hardware <on|off>",
+        description: "Persist Pi-compatible showHardwareCursor for native TUI loops.",
+        keywords: "cursor hardware terminal ime showHardwareCursor",
+    },
+    SettingsCommandEntry {
+        section: "pi",
+        label: "Terminal progress",
+        command: "/terminal progress <on|off>",
+        description: "Persist Pi-compatible terminal.showTerminalProgress for OSC 9;4 turn progress.",
+        keywords: "terminal progress osc 9;4 showTerminalProgress",
+    },
+    SettingsCommandEntry {
+        section: "pi",
+        label: "Editor padding",
+        command: "/editor padding <0|1|2|3>",
+        description: "Persist Pi-compatible editorPaddingX for native input padding.",
+        keywords: "editor input padding editorPaddingX gutter",
+    },
+    SettingsCommandEntry {
+        section: "pi",
+        label: "Double escape",
+        command: "/editor double-escape <tree|fork|none>",
+        description: "Persist Pi-compatible doubleEscapeAction for empty-editor Escape presses.",
+        keywords: "editor escape double doubleEscapeAction tree fork none",
+    },
+    SettingsCommandEntry {
+        section: "pi",
+        label: "Tree filter",
+        command: "/tree filter <default|no-tools|user-only|labeled-only|all>",
+        description: "Persist Pi-compatible treeFilterMode for transcript entries and sessions.",
+        keywords: "tree entries session filter treeFilterMode default no-tools user-only labeled-only all",
+    },
+    SettingsCommandEntry {
+        section: "footer",
+        label: "Footer status",
+        command: "/footer status",
+        description: "Show persisted footer visibility settings.",
+        keywords: "status visibility",
+    },
+    SettingsCommandEntry {
+        section: "footer",
+        label: "Footer visibility",
+        command: "/footer path|help|model|permission|memory|context <on|off>",
+        description: "Toggle backed footer chips and help/path rows.",
+        keywords: "chips workspace path help context",
+    },
+    SettingsCommandEntry {
+        section: "footer",
+        label: "Usage chips",
+        command: "/footer usage <session-weekly|session|weekly|off>",
+        description: "Choose which usage counters appear in the footer.",
+        keywords: "stats counters weekly session",
+    },
+    SettingsCommandEntry {
+        section: "images",
+        label: "Image status",
+        command: "/images status",
+        description: "Show persisted image preview/provider settings.",
+        keywords: "image preview provider",
+    },
+    SettingsCommandEntry {
+        section: "images",
+        label: "Terminal capabilities",
+        command: "/images capabilities",
+        description: "Report detected inline image protocol and fallbacks.",
+        keywords: "kitty wezterm iterm sixel protocol terminal probe",
+    },
+    SettingsCommandEntry {
+        section: "images",
+        label: "Preview protocol",
+        command: "/images protocol <auto|kitty|wezterm|iterm2|sixel|off>",
+        description: "Persist a terminal inline-image protocol override.",
+        keywords: "kitty wezterm iterm sixel protocol terminal override",
+    },
+    SettingsCommandEntry {
+        section: "images",
+        label: "Inline previews",
+        command: "/images show <on|off>",
+        description: "Enable or disable terminal image previews.",
+        keywords: "preview visibility",
+    },
+    SettingsCommandEntry {
+        section: "images",
+        label: "Preview width",
+        command: "/images width <60|80|120>",
+        description: "Persist the target inline preview width in cells.",
+        keywords: "image width cells resize",
+    },
+    SettingsCommandEntry {
+        section: "images",
+        label: "Provider image handling",
+        command: "/images auto-resize|block <on|off>",
+        description: "Control provider image auto-resize and blocking settings.",
+        keywords: "provider resize block",
+    },
+    SettingsCommandEntry {
+        section: "permissions",
+        label: "Permission status",
+        command: "/permissions status",
+        description: "Show effective mode, Guardian, sandbox, and protected-pattern state.",
+        keywords: "guardian sandbox protected roots status",
+    },
+    SettingsCommandEntry {
+        section: "permissions",
+        label: "Review history",
+        command: "/permissions history",
+        description: "Show recent Guardian review decisions.",
+        keywords: "guardian auto-review approvals denials",
+    },
+    SettingsCommandEntry {
+        section: "permissions",
+        label: "Guardian context",
+        command: "/permissions context",
+        description: "Show the auto-review prompt skeleton, context inputs, and reviewer helper tools.",
+        keywords: "guardian prompt context reviewer tools auto-review",
+    },
+    SettingsCommandEntry {
+        section: "permissions",
+        label: "Guardian timeout",
+        command: "/permissions timeout <seconds>",
+        description: "Persist the auto-review timeout.",
+        keywords: "guardian reviewer model timeout",
+    },
+    SettingsCommandEntry {
+        section: "permissions",
+        label: "Reviewer model",
+        command: "/permissions reviewer-model <auto|provider/model>",
+        description: "Persist the reviewer model override.",
+        keywords: "guardian model auto-review",
+    },
+    SettingsCommandEntry {
+        section: "permissions",
+        label: "Sandbox validation",
+        command: "/permissions sandbox validate",
+        description: "Preview effective sandbox roots, root sources, and path issues.",
+        keywords: "sandbox roots root validate preview",
+    },
+    SettingsCommandEntry {
+        section: "permissions",
+        label: "Sandbox presets",
+        command: "/permissions sandbox roots <here|default>",
+        description: "Set all sandbox roots to the workspace or restore fallback behavior.",
+        keywords: "sandbox roots root project read write preset",
+    },
+    SettingsCommandEntry {
+        section: "permissions",
+        label: "Sandbox network",
+        command: "/permissions sandbox internet|ssh <on|off>",
+        description: "Persist backed sandbox network and SSH allowances.",
+        keywords: "sandbox network internet ssh",
+    },
+    SettingsCommandEntry {
+        section: "permissions",
+        label: "Sandbox root lists",
+        command: "/permissions sandbox project|read|write <paths|default>",
+        description: "Replace backed project, readable, or writable sandbox roots.",
+        keywords: "sandbox roots root project readable writable read write",
+    },
+    SettingsCommandEntry {
+        section: "permissions",
+        label: "Sandbox root edits",
+        command: "/permissions sandbox project|read|write add|remove <paths>",
+        description: "Append or remove configured sandbox roots without replacing the list.",
+        keywords: "sandbox roots root add remove multi-select",
+    },
+    SettingsCommandEntry {
+        section: "permissions",
+        label: "Protected patterns",
+        command: "/permissions sandbox protected <patterns|default>",
+        description: "Persist extra protected file/path patterns.",
+        keywords: "sandbox protected env ssh pem key",
+    },
+    SettingsCommandEntry {
+        section: "theme",
+        label: "Theme status",
+        command: "/theme",
+        description: "Show current and discovered themes.",
+        keywords: "themes picker status",
+    },
+    SettingsCommandEntry {
+        section: "theme",
+        label: "Theme preview",
+        command: "/theme preview [name]",
+        description: "List themes or render a terminal-safe preview sample.",
+        keywords: "theme preview picker sample",
+    },
+    SettingsCommandEntry {
+        section: "theme",
+        label: "Apply theme",
+        command: "/theme <name>",
+        description: "Apply a built-in or discovered theme.",
+        keywords: "theme apply current",
+    },
+    SettingsCommandEntry {
+        section: "theme",
+        label: "Reload project theme",
+        command: "/theme reload",
+        description: "Reload the project theme file.",
+        keywords: "theme reload project plugin",
+    },
+    SettingsCommandEntry {
+        section: "memory",
+        label: "Memory status",
+        command: "/memory status",
+        description: "Show Hoppi backend, sync, recall, and write settings.",
+        keywords: "hoppi memory status backend",
+    },
+    SettingsCommandEntry {
+        section: "memory",
+        label: "Memory jobs",
+        command: "/memory jobs",
+        description: "Show Rust-owned memory worker queue and recent jobs.",
+        keywords: "hoppi memory jobs queue worker status",
+    },
+    SettingsCommandEntry {
+        section: "memory",
+        label: "Memory behavior",
+        command: "/memory on|off|startup-recall|task-start-recall|turn-summaries",
+        description: "Persist shared Hoppi behavior switches.",
+        keywords: "hoppi memory recall summaries",
+    },
+    SettingsCommandEntry {
+        section: "memory",
+        label: "Memory models",
+        command: "/memory agent-model|deep-model|idle-dream",
+        description: "Persist Hoppi model and idle maintenance settings.",
+        keywords: "hoppi deep dream idle consolidation model",
+    },
+    SettingsCommandEntry {
+        section: "memory",
+        label: "Memory sync settings",
+        command: "/memory sync repo|remote|pull-startup|push-exit|background|encryption|conflict",
+        description: "Configure shared Git sync metadata.",
+        keywords: "hoppi sync github repo pull push background",
+    },
+    SettingsCommandEntry {
+        section: "memory",
+        label: "Manual sync",
+        command: "/memory sync now|pull|push",
+        description: "Run explicit Hoppi sync actions through the installed backend.",
+        keywords: "hoppi sync action manual",
+    },
+    SettingsCommandEntry {
+        section: "memory",
+        label: "Memory dashboard",
+        command: "/memory dashboard",
+        description: "Open the installed Hoppi dashboard through the native bridge.",
+        keywords: "hoppi dashboard url localhost",
+    },
+    SettingsCommandEntry {
+        section: "memory",
+        label: "Memory records",
+        command: "/memory list|forget|pin|unpin|edit|supersede",
+        description: "List and mutate Hoppi records through normalized runtime routes.",
+        keywords: "hoppi records recall remember pin edit forget supersede",
+    },
+    SettingsCommandEntry {
+        section: "memory",
+        label: "Backend package",
+        command: "/memory install-hoppi [--yes]",
+        description: "Show approval guidance or install/update the managed Hoppi package.",
+        keywords: "hoppi install package backend",
+    },
+    SettingsCommandEntry {
+        section: "compaction",
+        label: "Compaction status",
+        command: "/idle-compact status",
+        description: "Show idle/smart thresholds, usage telemetry, and readiness.",
+        keywords: "compact compaction context threshold",
+    },
+    SettingsCommandEntry {
+        section: "compaction",
+        label: "Compact now",
+        command: "/idle-compact compact",
+        description: "Create a deterministic todo-aware handoff immediately.",
+        keywords: "compact compaction handoff todos",
+    },
+    SettingsCommandEntry {
+        section: "compaction",
+        label: "Idle compact settings",
+        command: "/idle-compact on|off|idle-time|idle-threshold|smart-threshold",
+        description: "Persist idle/smart compaction settings.",
+        keywords: "compact compaction idle smart threshold",
+    },
+    SettingsCommandEntry {
+        section: "compaction",
+        label: "Memory maintenance",
+        command: "/memory maintenance dry-run|apply",
+        description: "Run visible Hoppi maintenance through the installed backend.",
+        keywords: "hoppi memory consolidate maintenance",
+    },
+    SettingsCommandEntry {
+        section: "workspace",
+        label: "Sessions",
+        command: "/sessions",
+        description: "Open or list native session history.",
+        keywords: "workspace resume history",
+    },
+    SettingsCommandEntry {
+        section: "workspace",
+        label: "Resume",
+        command: "/resume",
+        description: "Resume a prior session for this workspace.",
+        keywords: "workspace sessions history",
+    },
+    SettingsCommandEntry {
+        section: "workspace",
+        label: "Tree",
+        command: "/tree",
+        description: "Show transcript entries for the active thread.",
+        keywords: "workspace transcript entries tree",
+    },
+    SettingsCommandEntry {
+        section: "mcp",
+        label: "MCP status",
+        command: "/mcp list",
+        description: "List configured MCP servers, tools, resources, and subscriptions.",
+        keywords: "mcp servers tools resources subscriptions",
+    },
+    SettingsCommandEntry {
+        section: "mcp",
+        label: "MCP connection",
+        command: "/mcp connect|test|reload|auth <server-id>",
+        description: "Connect, test, reload, or start auth for an MCP server.",
+        keywords: "mcp server connection auth reload test",
+    },
+    SettingsCommandEntry {
+        section: "mcp",
+        label: "MCP resources",
+        command: "/mcp resources|read|subscribe|unsubscribe",
+        description: "List, read, and manage MCP resource subscriptions.",
+        keywords: "mcp resources resource subscriptions updates",
+    },
+];
+
+const SETTINGS_INFO_ENTRIES: &[SettingsInfoEntry] = &[
+    SettingsInfoEntry {
+        section: "pi",
+        label: "Collapse changelog",
+        status: "stable Pi only",
+        description: "Show condensed changelog output after stable Pi updates.",
+        keywords: "changelog collapse updates stable pi only",
+    },
+    SettingsInfoEntry {
+        section: "pi",
+        label: "Install telemetry",
+        status: "stable Pi only",
+        description: "Send stable Pi's anonymous install/update telemetry ping.",
+        keywords: "install telemetry analytics ping stable pi only",
+    },
+];
+
+fn settings_section_alias(section: &str) -> Option<&'static str> {
+    match section.trim().to_ascii_lowercase().as_str() {
+        "general" | "gen" => Some("general"),
+        "pi" | "model" | "models" | "provider" | "login" => Some("pi"),
+        "footer" | "status" => Some("footer"),
+        "image" | "images" | "preview" | "previews" => Some("images"),
+        "permission" | "permissions" | "guardian" | "sandbox" => Some("permissions"),
+        "theme" | "themes" => Some("theme"),
+        "memory" | "mem" | "hoppi" => Some("memory"),
+        "compact" | "compaction" | "idle-compact" => Some("compaction"),
+        "workspace" | "sessions" | "session" | "resume" | "tree" => Some("workspace"),
+        "mcp" => Some("mcp"),
+        _ => None,
+    }
+}
+
+fn format_settings_command_panel(args: &str) -> Result<String, String> {
+    let trimmed = args.trim();
+    if trimmed.is_empty()
+        || matches!(
+            trimmed.to_ascii_lowercase().as_str(),
+            "status" | "sections" | "list"
+        )
+    {
+        return Ok(format_settings_root_panel());
+    }
+
+    let lower = trimmed.to_ascii_lowercase();
+    if lower == "search" || lower.starts_with("search ") {
+        let query = trimmed.strip_prefix("search").unwrap_or_default().trim();
+        return Ok(format_settings_search_panel(query));
+    }
+
+    if let Some(section) = settings_section_alias(trimmed) {
+        return Ok(format_settings_section_panel(section));
+    }
+
+    Err(format!(
+        "settings: unknown section `{trimmed}`. Use /settings, /settings <section>, or /settings search <query>."
+    ))
+}
+
+fn format_settings_root_panel() -> String {
+    let mut rendered = [
+        "settings sections".to_string(),
+        "Use /settings <section> for backed line-mode commands, or /settings search sandbox to find matching controls.".to_string(),
+        "In retained/Ratatui TUI, bare /settings opens the interactive settings panel.".to_string(),
+        String::new(),
+    ]
+    .join("\n");
+    for (section, description) in SETTINGS_SECTIONS {
+        rendered.push_str(&format!(
+            "- {section}: /settings {section} ({description})\n"
+        ));
+    }
+    rendered.trim_end().to_string()
+}
+
+fn format_settings_section_panel(section: &str) -> String {
+    let description = SETTINGS_SECTIONS
+        .iter()
+        .find_map(|(slug, description)| (*slug == section).then_some(*description))
+        .unwrap_or("backed settings");
+    let entries = SETTINGS_COMMAND_ENTRIES
+        .iter()
+        .filter(|entry| entry.section == section)
+        .collect::<Vec<_>>();
+    let mut rendered = format!(
+        "settings: {section}\n{description}\n\n{}",
+        format_settings_entries(&entries)
+    );
+    let info_entries = SETTINGS_INFO_ENTRIES
+        .iter()
+        .filter(|entry| entry.section == section)
+        .collect::<Vec<_>>();
+    if !info_entries.is_empty() {
+        rendered.push_str("\n\nstable Pi-only rows\n");
+        rendered.push_str(&format_settings_info_entries(&info_entries));
+        rendered.push_str("\nThese are not editable native toggles.");
+    }
+    rendered.push_str("\n\nUse /settings search <query> to search backed commands and notes.");
+    rendered
+}
+
+fn format_settings_search_panel(query: &str) -> String {
+    let terms = query
+        .split_whitespace()
+        .map(|term| term.trim_matches('/').to_ascii_lowercase())
+        .filter(|term| !term.is_empty())
+        .collect::<Vec<_>>();
+    if terms.is_empty() {
+        return "settings search: provide a query, e.g. /settings search sandbox roots".to_string();
+    }
+    let entries = SETTINGS_COMMAND_ENTRIES
+        .iter()
+        .filter(|entry| settings_entry_matches(entry, &terms))
+        .collect::<Vec<_>>();
+    let mut rendered = format!("settings search: {query}\n");
+    if entries.is_empty() {
+        rendered.push_str(
+            "No backed settings commands matched. Try /settings sections or a broader query.",
+        );
+    } else {
+        rendered.push('\n');
+        rendered.push_str(&format_settings_entries(&entries));
+    }
+    rendered
+}
+
+fn settings_entry_matches(entry: &SettingsCommandEntry, terms: &[String]) -> bool {
+    let haystack = format!(
+        "{} {} {} {} {}",
+        entry.section, entry.label, entry.command, entry.description, entry.keywords
+    )
+    .to_ascii_lowercase();
+    terms.iter().all(|term| haystack.contains(term))
+}
+
+fn settings_info_entry_matches(entry: &SettingsInfoEntry, terms: &[String]) -> bool {
+    let haystack = format!(
+        "{} {} {} {} {}",
+        entry.section, entry.label, entry.status, entry.description, entry.keywords
+    )
+    .to_ascii_lowercase();
+    terms.iter().all(|term| haystack.contains(term))
+}
+
+fn format_settings_entries(entries: &[&SettingsCommandEntry]) -> String {
+    entries
+        .iter()
+        .map(|entry| {
+            format!(
+                "- {}: {}\n  {}",
+                entry.label, entry.command, entry.description
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn format_settings_info_entries(entries: &[&SettingsInfoEntry]) -> String {
+    entries
+        .iter()
+        .map(|entry| {
+            format!(
+                "- {}: {}\n  {}",
+                entry.label, entry.status, entry.description
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 fn slash_arg_suggestions(command: &str, args: &str) -> Vec<SlashPaletteItem> {
     let mut items = match command {
+        "/settings" | "/prefs" | "/preferences" | "/settings:oppi" | "/oppi-settings" => vec![
+            arg_item(
+                "search",
+                "/settings search ",
+                "Search backed setting commands",
+            ),
+            arg_item("general", "/settings general", "Usage, help, ask-user"),
+            arg_item("pi", "/settings pi", "Model, provider, follow-ups"),
+            arg_item("footer", "/settings footer", "Footer visibility"),
+            arg_item("images", "/settings images", "Image preview settings"),
+            arg_item(
+                "permissions",
+                "/settings permissions",
+                "Guardian and sandbox",
+            ),
+            arg_item("theme", "/settings theme", "Theme preview and apply"),
+            arg_item("memory", "/settings memory", "Hoppi memory controls"),
+            arg_item(
+                "compaction",
+                "/settings compaction",
+                "Idle and smart compaction",
+            ),
+            arg_item("workspace", "/settings workspace", "Sessions and tree"),
+            arg_item("mcp", "/settings mcp", "MCP server and resource commands"),
+        ],
         "/login" => vec![
             arg_item(
                 "subscription",
@@ -840,6 +1951,149 @@ fn slash_arg_suggestions(command: &str, args: &str) -> Vec<SlashPaletteItem> {
                 "Explain Anthropic/Meridian stance",
             ),
         ],
+        "/follow-up" | "/followups" => vec![
+            arg_item("status", "/follow-up status", "Show mode and queue depth"),
+            arg_item(
+                "mode all",
+                "/follow-up mode all",
+                "Deliver queued follow-ups together",
+            ),
+            arg_item(
+                "mode one-at-a-time",
+                "/follow-up mode one-at-a-time",
+                "Deliver queued follow-ups separately",
+            ),
+        ],
+        "/steer" => vec![
+            arg_item("status", "/steer status", "Show mode and queue depth"),
+            arg_item(
+                "mode all",
+                "/steer mode all",
+                "Deliver every steering message to the active turn",
+            ),
+            arg_item(
+                "mode one-at-a-time",
+                "/steer mode one-at-a-time",
+                "Queue extra steering messages separately",
+            ),
+            arg_item("<text>", "/steer ", "Steer the active turn"),
+        ],
+        "/startup" | "/quiet-startup" => vec![
+            arg_item("status", "/startup status", "Show startup behavior"),
+            arg_item("quiet on", "/startup quiet on", "Suppress ready banner"),
+            arg_item("quiet off", "/startup quiet off", "Show ready banner"),
+        ],
+        "/autocomplete" | "/autocomplete-max-visible" => vec![
+            arg_item("status", "/autocomplete status", "Show visible item count"),
+            arg_item(
+                "items 3",
+                "/autocomplete items 3",
+                "Show three autocomplete items",
+            ),
+            arg_item(
+                "items 5",
+                "/autocomplete items 5",
+                "Show five autocomplete items",
+            ),
+            arg_item(
+                "items 7",
+                "/autocomplete items 7",
+                "Show seven autocomplete items",
+            ),
+            arg_item(
+                "items 10",
+                "/autocomplete items 10",
+                "Show ten autocomplete items",
+            ),
+            arg_item(
+                "items 15",
+                "/autocomplete items 15",
+                "Show fifteen autocomplete items",
+            ),
+            arg_item(
+                "items 20",
+                "/autocomplete items 20",
+                "Show twenty autocomplete items",
+            ),
+        ],
+        "/cursor" | "/hardware-cursor" => vec![
+            arg_item("status", "/cursor status", "Show cursor behavior"),
+            arg_item(
+                "hardware on",
+                "/cursor hardware on",
+                "Keep the terminal hardware cursor visible",
+            ),
+            arg_item(
+                "hardware off",
+                "/cursor hardware off",
+                "Hide the terminal hardware cursor in native TUI",
+            ),
+        ],
+        "/terminal" | "/terminal-progress" => vec![
+            arg_item(
+                "status",
+                "/terminal status",
+                "Show terminal progress behavior",
+            ),
+            arg_item(
+                "progress on",
+                "/terminal progress on",
+                "Emit OSC 9;4 progress while turns are active",
+            ),
+            arg_item(
+                "progress off",
+                "/terminal progress off",
+                "Disable OSC 9;4 turn progress indicators",
+            ),
+            arg_item(
+                "clear-on-shrink on",
+                "/terminal clear-on-shrink on",
+                "Clear stale retained rows when terminal content shrinks",
+            ),
+            arg_item(
+                "clear-on-shrink off",
+                "/terminal clear-on-shrink off",
+                "Leave stale-row cleanup disabled for Pi-compatible defaults",
+            ),
+        ],
+        "/editor" | "/input" => vec![
+            arg_item("status", "/editor status", "Show editor behavior"),
+            arg_item(
+                "padding 0",
+                "/editor padding 0",
+                "Use no extra input padding",
+            ),
+            arg_item(
+                "padding 1",
+                "/editor padding 1",
+                "Use one column of input padding",
+            ),
+            arg_item(
+                "padding 2",
+                "/editor padding 2",
+                "Use two columns of input padding",
+            ),
+            arg_item(
+                "padding 3",
+                "/editor padding 3",
+                "Use three columns of input padding",
+            ),
+            arg_item(
+                "double-escape tree",
+                "/editor double-escape tree",
+                "Open transcript entries after double Escape with an empty editor",
+            ),
+            arg_item(
+                "double-escape fork",
+                "/editor double-escape fork",
+                "Prepare a fork action after double Escape with an empty editor",
+            ),
+            arg_item(
+                "double-escape none",
+                "/editor double-escape none",
+                "Disable the empty-editor double Escape shortcut",
+            ),
+        ],
         "/model" => {
             let mut items = vec![
                 arg_item("<model-id>", "/model ", "Set the session model id"),
@@ -875,7 +2129,83 @@ fn slash_arg_suggestions(command: &str, args: &str) -> Vec<SlashPaletteItem> {
             }
             items
         }
-        "/permissions" | "/sandbox" => vec![
+        "/permissions" => vec![
+            arg_item("status", &format!("{command} status"), "Show active policy"),
+            arg_item(
+                "history",
+                &format!("{command} history"),
+                "Show Guardian reviews",
+            ),
+            arg_item(
+                "context",
+                &format!("{command} context"),
+                "Show Guardian prompt context",
+            ),
+            arg_item(
+                "timeout 30",
+                &format!("{command} timeout 30"),
+                "Set reviewer timeout",
+            ),
+            arg_item(
+                "reviewer-model auto",
+                &format!("{command} reviewer-model auto"),
+                "Use the parent provider",
+            ),
+            arg_item(
+                "sandbox validate",
+                &format!("{command} sandbox validate"),
+                "Validate effective sandbox roots",
+            ),
+            arg_item(
+                "sandbox roots here",
+                &format!("{command} sandbox roots here"),
+                "Set all sandbox roots to the current workspace",
+            ),
+            arg_item(
+                "sandbox roots default",
+                &format!("{command} sandbox roots default"),
+                "Reset sandbox roots to fallback behavior",
+            ),
+            arg_item(
+                "sandbox project add",
+                &format!("{command} sandbox project add "),
+                "Append project sandbox roots",
+            ),
+            arg_item(
+                "sandbox project remove",
+                &format!("{command} sandbox project remove "),
+                "Remove project sandbox roots",
+            ),
+            arg_item(
+                "sandbox read add",
+                &format!("{command} sandbox read add "),
+                "Append readable sandbox roots",
+            ),
+            arg_item(
+                "sandbox read remove",
+                &format!("{command} sandbox read remove "),
+                "Remove readable sandbox roots",
+            ),
+            arg_item(
+                "sandbox write add",
+                &format!("{command} sandbox write add "),
+                "Append writable sandbox roots",
+            ),
+            arg_item(
+                "sandbox write remove",
+                &format!("{command} sandbox write remove "),
+                "Remove writable sandbox roots",
+            ),
+            arg_item(
+                "sandbox protected",
+                &format!("{command} sandbox protected "),
+                "Edit extra protected path patterns",
+            ),
+            arg_item(
+                "clear-session",
+                &format!("{command} clear-session"),
+                "Clear Guardian session state",
+            ),
             arg_item(
                 "read-only",
                 &format!("{command} read-only"),
@@ -897,7 +2227,196 @@ fn slash_arg_suggestions(command: &str, args: &str) -> Vec<SlashPaletteItem> {
                 "Unrestricted turn policy",
             ),
         ],
+        "/ask-user" | "/ask_user" | "/questions" => vec![
+            arg_item(
+                "status",
+                &format!("{command} status"),
+                "Show timeout setting",
+            ),
+            arg_item(
+                "timeout off",
+                &format!("{command} timeout off"),
+                "Disable question timeout",
+            ),
+            arg_item(
+                "timeout 5",
+                &format!("{command} timeout 5"),
+                "Use 5 minute timeout",
+            ),
+            arg_item(
+                "timeout 10",
+                &format!("{command} timeout 10"),
+                "Use 10 minute timeout",
+            ),
+        ],
+        "/footer" => vec![
+            arg_item(
+                "status",
+                "/footer status",
+                "Show footer visibility settings",
+            ),
+            arg_item("path on", "/footer path on", "Show workspace path"),
+            arg_item("path off", "/footer path off", "Hide workspace path"),
+            arg_item("help on", "/footer help on", "Show hotkey help row"),
+            arg_item("help off", "/footer help off", "Hide hotkey help row"),
+            arg_item(
+                "usage session-weekly",
+                "/footer usage session-weekly",
+                "Show session and weekly usage",
+            ),
+            arg_item(
+                "usage session",
+                "/footer usage session",
+                "Show session usage only",
+            ),
+            arg_item(
+                "usage weekly",
+                "/footer usage weekly",
+                "Show weekly usage only",
+            ),
+            arg_item("usage off", "/footer usage off", "Hide usage chips"),
+            arg_item("model on", "/footer model on", "Show model chip"),
+            arg_item("model off", "/footer model off", "Hide model chip"),
+            arg_item(
+                "permission on",
+                "/footer permission on",
+                "Show permission chip",
+            ),
+            arg_item(
+                "permission off",
+                "/footer permission off",
+                "Hide permission chip",
+            ),
+            arg_item("memory on", "/footer memory on", "Show memory chip"),
+            arg_item("memory off", "/footer memory off", "Hide memory chip"),
+            arg_item("context on", "/footer context on", "Show context chip"),
+            arg_item("context off", "/footer context off", "Hide context chip"),
+        ],
+        "/images" => vec![
+            arg_item("status", "/images status", "Show image settings"),
+            arg_item(
+                "capabilities",
+                "/images capabilities",
+                "Show terminal image preview support",
+            ),
+            arg_item(
+                "protocol auto",
+                "/images protocol auto",
+                "Auto-detect inline image protocol",
+            ),
+            arg_item(
+                "protocol kitty",
+                "/images protocol kitty",
+                "Force Kitty inline image protocol",
+            ),
+            arg_item(
+                "protocol wezterm",
+                "/images protocol wezterm",
+                "Force WezTerm inline image protocol",
+            ),
+            arg_item(
+                "protocol iterm2",
+                "/images protocol iterm2",
+                "Force iTerm2 inline image protocol",
+            ),
+            arg_item(
+                "protocol sixel",
+                "/images protocol sixel",
+                "Force Sixel inline image protocol",
+            ),
+            arg_item(
+                "protocol off",
+                "/images protocol off",
+                "Disable inline image protocol detection",
+            ),
+            arg_item("show on", "/images show on", "Render inline image previews"),
+            arg_item("show off", "/images show off", "Hide inline image previews"),
+            arg_item("width 60", "/images width 60", "Use 60-cell image previews"),
+            arg_item("width 80", "/images width 80", "Use 80-cell image previews"),
+            arg_item(
+                "width 120",
+                "/images width 120",
+                "Use 120-cell image previews",
+            ),
+            arg_item(
+                "auto-resize on",
+                "/images auto-resize on",
+                "Resize large input images before providers",
+            ),
+            arg_item(
+                "auto-resize off",
+                "/images auto-resize off",
+                "Keep input image size unchanged",
+            ),
+            arg_item(
+                "block on",
+                "/images block on",
+                "Prevent images from being sent to providers",
+            ),
+            arg_item(
+                "block off",
+                "/images block off",
+                "Allow images to be sent to providers",
+            ),
+        ],
+        "/mcp" => vec![
+            arg_item("list", "/mcp list", "Show servers, tools, and diagnostics"),
+            arg_item(
+                "connect",
+                "/mcp connect ",
+                "Initialize a trusted local server",
+            ),
+            arg_item("test", "/mcp test ", "Record/check server diagnostics"),
+            arg_item("reload", "/mcp reload ", "Reload server metadata"),
+            arg_item("auth", "/mcp auth ", "Start auth flow when supported"),
+            arg_item(
+                "resources",
+                "/mcp resources ",
+                "List resources exposed by a trusted MCP server, optionally from a cursor",
+            ),
+            arg_item(
+                "templates",
+                "/mcp templates ",
+                "List resource templates exposed by a trusted MCP server, optionally from a cursor",
+            ),
+            arg_item(
+                "read",
+                "/mcp read ",
+                "Read one resource from a trusted MCP server",
+            ),
+            arg_item(
+                "subscribe",
+                "/mcp subscribe ",
+                "Subscribe to updates for one MCP resource",
+            ),
+            arg_item(
+                "unsubscribe",
+                "/mcp unsubscribe ",
+                "Stop updates for one MCP resource",
+            ),
+            arg_item(
+                "prompts",
+                "/mcp prompts ",
+                "List prompts exposed by a trusted MCP server, optionally from a cursor",
+            ),
+            arg_item(
+                "prompt",
+                "/mcp prompt ",
+                "Get one prompt from a trusted MCP server",
+            ),
+            arg_item(
+                "trust-plugin",
+                "/mcp trust-plugin ",
+                "Trust and enable a plugin MCP server",
+            ),
+            arg_item(
+                "disable-plugin",
+                "/mcp disable-plugin ",
+                "Disable a plugin MCP server trust record",
+            ),
+        ],
         "/theme" => vec![
+            arg_item("preview", "/theme preview", "Preview available themes"),
             arg_item("oppi", "/theme oppi", "OPPi theme"),
             arg_item("dark", "/theme dark", "Dark ANSI theme"),
             arg_item("light", "/theme light", "Light ANSI theme"),
@@ -957,10 +2476,186 @@ fn slash_arg_suggestions(command: &str, args: &str) -> Vec<SlashPaletteItem> {
         ],
         "/memory" | "/mem" => vec![
             arg_item("status", "/memory status", "Show memory status"),
-            arg_item("on", "/memory on", "Enable client-hosted memory"),
+            arg_item("jobs", "/memory jobs", "Show memory worker jobs"),
+            arg_item(
+                "jobs cancel",
+                "/memory jobs cancel ",
+                "Cancel an active memory worker job",
+            ),
+            arg_item("on", "/memory on", "Enable runtime-backed memory"),
             arg_item("off", "/memory off", "Disable memory"),
+            arg_item(
+                "startup-recall on",
+                "/memory startup-recall on",
+                "Inject startup memory context",
+            ),
+            arg_item(
+                "startup-recall off",
+                "/memory startup-recall off",
+                "Skip startup memory context",
+            ),
+            arg_item(
+                "task-start-recall on",
+                "/memory task-start-recall on",
+                "Recall memories at task start",
+            ),
+            arg_item(
+                "task-start-recall off",
+                "/memory task-start-recall off",
+                "Skip task-start recall",
+            ),
+            arg_item(
+                "turn-summaries on",
+                "/memory turn-summaries on",
+                "Save bounded turn summaries",
+            ),
+            arg_item(
+                "turn-summaries off",
+                "/memory turn-summaries off",
+                "Skip turn summary writes",
+            ),
+            arg_item(
+                "agent-model auto",
+                "/memory agent-model auto",
+                "Use automatic memory distillation model",
+            ),
+            arg_item(
+                "agent-model gpt",
+                "/memory agent-model gpt",
+                "Use GPT-backed memory distillation",
+            ),
+            arg_item(
+                "deep-model auto",
+                "/memory deep-model auto",
+                "Use automatic deep-dream model policy",
+            ),
+            arg_item(
+                "deep-model sonnet",
+                "/memory deep-model sonnet",
+                "Use Sonnet for deep memory reconciliation",
+            ),
+            arg_item(
+                "idle-dream on",
+                "/memory idle-dream on",
+                "Enable idle memory consolidation",
+            ),
+            arg_item(
+                "idle-dream off",
+                "/memory idle-dream off",
+                "Disable idle memory consolidation",
+            ),
+            arg_item(
+                "install-offer ask",
+                "/memory install-offer ask",
+                "Offer Hoppi install on first start",
+            ),
+            arg_item(
+                "install-offer dismissed",
+                "/memory install-offer dismissed",
+                "Dismiss the first-start Hoppi install offer",
+            ),
+            arg_item(
+                "install-hoppi",
+                "/memory install-hoppi",
+                "Show Hoppi install approval",
+            ),
+            arg_item(
+                "install-hoppi --yes",
+                "/memory install-hoppi --yes",
+                "Install/update Hoppi after approval",
+            ),
+            arg_item("sync on", "/memory sync on", "Enable Hoppi sync setting"),
+            arg_item("sync off", "/memory sync off", "Disable Hoppi sync"),
+            arg_item(
+                "sync now",
+                "/memory sync now",
+                "Run Hoppi pull + push sync now",
+            ),
+            arg_item(
+                "sync pull",
+                "/memory sync pull",
+                "Pull shared Hoppi memory now",
+            ),
+            arg_item(
+                "sync push",
+                "/memory sync push",
+                "Push shared Hoppi memory now",
+            ),
+            arg_item(
+                "sync repo",
+                "/memory sync repo ",
+                "Set local Hoppi sync repository path",
+            ),
+            arg_item(
+                "sync remote",
+                "/memory sync remote ",
+                "Set Hoppi sync git remote URL",
+            ),
+            arg_item(
+                "sync remote none",
+                "/memory sync remote none",
+                "Clear Hoppi sync remote URL",
+            ),
+            arg_item(
+                "sync pull-startup on",
+                "/memory sync pull-startup on",
+                "Pull Hoppi sync repo at startup",
+            ),
+            arg_item(
+                "sync push-exit on",
+                "/memory sync push-exit on",
+                "Push Hoppi sync repo on exit",
+            ),
+            arg_item(
+                "sync background 30m",
+                "/memory sync background 30m",
+                "Set background sync interval",
+            ),
+            arg_item(
+                "sync encryption env",
+                "/memory sync encryption env",
+                "Use passphrase env var encryption",
+            ),
+            arg_item(
+                "sync encryption file",
+                "/memory sync encryption file",
+                "Use passphrase file encryption",
+            ),
+            arg_item(
+                "sync passphrase-env",
+                "/memory sync passphrase-env OPPI_HOPPI_SYNC_PASSPHRASE",
+                "Set sync passphrase env var",
+            ),
+            arg_item(
+                "sync passphrase-file",
+                "/memory sync passphrase-file ",
+                "Set sync passphrase file path",
+            ),
+            arg_item(
+                "sync conflict keep-both",
+                "/memory sync conflict keep-both",
+                "Keep both files on sync conflicts",
+            ),
+            arg_item(
+                "sync conflict keep-local",
+                "/memory sync conflict keep-local",
+                "Prefer local files on sync conflicts",
+            ),
             arg_item("dashboard", "/memory dashboard", "Open memory dashboard"),
+            arg_item("list", "/memory list", "List cached Hoppi memories"),
+            arg_item(
+                "forget",
+                "/memory forget ",
+                "Forget a memory by id with --yes",
+            ),
+            arg_item("pin", "/memory pin ", "Pin a memory by id with --yes"),
+            arg_item("unpin", "/memory unpin ", "Unpin a memory by id with --yes"),
             arg_item("settings", "/memory settings", "Open memory settings"),
+            arg_item(
+                "compaction",
+                "/memory compaction ",
+                "Configure idle/smart compaction thresholds",
+            ),
             arg_item(
                 "maintenance dry-run",
                 "/memory maintenance dry-run",
@@ -971,10 +2666,44 @@ fn slash_arg_suggestions(command: &str, args: &str) -> Vec<SlashPaletteItem> {
                 "/memory maintenance apply",
                 "Apply explicit maintenance",
             ),
-            arg_item("compact", "/memory compact ", "Record a compaction summary"),
+            arg_item(
+                "compact",
+                "/memory compact ",
+                "Record or derive a compaction summary",
+            ),
+        ],
+        "/idle-compact" => vec![
+            arg_item("status", "/idle-compact status", "Show compaction settings"),
+            arg_item(
+                "compact",
+                "/idle-compact compact",
+                "Create a todo-aware handoff now",
+            ),
+            arg_item("on", "/idle-compact on", "Enable idle compaction"),
+            arg_item("off", "/idle-compact off", "Disable idle compaction"),
+            arg_item(
+                "idle-time",
+                "/idle-compact idle-time ",
+                "Set idle minutes: 2, 5, or 10",
+            ),
+            arg_item(
+                "idle-threshold",
+                "/idle-compact idle-threshold ",
+                "Set idle context threshold",
+            ),
+            arg_item(
+                "smart-threshold",
+                "/idle-compact smart-threshold ",
+                "Set smart compact threshold",
+            ),
         ],
         "/agents" => vec![
-            arg_item("list", "/agents list", "List agents and dispatch profile"),
+            arg_item("list", "/agents list", "List discovered agents"),
+            arg_item("show", "/agents show ", "Show an agent definition"),
+            arg_item("create", "/agents create ", "Create a project agent"),
+            arg_item("create user", "/agents create user ", "Create a user agent"),
+            arg_item("edit", "/agents edit ", "Open or print an agent definition"),
+            arg_item("delete", "/agents delete ", "Delete an agent with --yes"),
             arg_item("dispatch", "/agents dispatch ", "Dispatch <agent> <task>"),
             arg_item("block", "/agents block ", "Block <run-id> <reason>"),
             arg_item(
@@ -991,6 +2720,20 @@ fn slash_arg_suggestions(command: &str, args: &str) -> Vec<SlashPaletteItem> {
                 "export",
                 "/agents export ",
                 "Export an agent markdown definition",
+            ),
+        ],
+        "/skills" => vec![
+            arg_item("list", "/skills list", "List active skill definitions"),
+            arg_item("status", "/skills status", "Show /skill:name command state"),
+            arg_item(
+                "commands on",
+                "/skills commands on",
+                "Enable /skill:name commands",
+            ),
+            arg_item(
+                "commands off",
+                "/skills commands off",
+                "Disable /skill:name commands",
             ),
         ],
         "/graphify" => vec![
@@ -1054,7 +2797,14 @@ fn slash_arg_suggestions(command: &str, args: &str) -> Vec<SlashPaletteItem> {
             "/runtime-loop status",
             "Show native Rust loop status",
         )],
-        "/models" => vec![arg_item("<filter>", "/models ", "Filter known model ids")],
+        "/models" => vec![
+            arg_item(
+                "--all",
+                "/models --all ",
+                "Include unavailable registry entries",
+            ),
+            arg_item("<filter>", "/models ", "Filter available model ids"),
+        ],
         "/scoped-models" => vec![
             arg_item("list", "/scoped-models list", "Show current model scope"),
             arg_item("enable", "/scoped-models enable ", "Add a model to scope"),
@@ -1070,12 +2820,68 @@ fn slash_arg_suggestions(command: &str, args: &str) -> Vec<SlashPaletteItem> {
             "/resume ",
             "Paste a thread id; /resume opens picker in native TUI",
         )],
-        "/tree" | "/sessions" => vec![
+        "/tree" => vec![
+            arg_item(
+                "entries",
+                "/tree entries",
+                "Show completed transcript entries for the active thread",
+            ),
+            arg_item("status", "/tree status", "Show the configured tree filter"),
+            arg_item(
+                "filter default",
+                "/tree filter default",
+                "Default active-session tree",
+            ),
+            arg_item(
+                "filter no-tools",
+                "/tree filter no-tools",
+                "Pi-compatible no-tools filter",
+            ),
+            arg_item(
+                "filter user-only",
+                "/tree filter user-only",
+                "Pi-compatible user-only filter",
+            ),
+            arg_item(
+                "filter labeled-only",
+                "/tree filter labeled-only",
+                "Show titled/labeled sessions",
+            ),
+            arg_item(
+                "filter all",
+                "/tree filter all",
+                "Show all sessions, including archived",
+            ),
             arg_item("fold", "/tree fold ", "Collapse a fork subtree"),
             arg_item("unfold", "/tree unfold ", "Expand a fork subtree"),
             arg_item("toggle", "/tree toggle ", "Toggle a fork subtree"),
+        ],
+        "/sessions" => vec![
             arg_item("rename", "/sessions rename ", "Rename a saved session"),
             arg_item("delete", "/sessions delete ", "Archive a saved session"),
+            arg_item("fold", "/sessions fold ", "Collapse a fork subtree"),
+            arg_item("unfold", "/sessions unfold ", "Expand a fork subtree"),
+            arg_item("toggle", "/sessions toggle ", "Toggle a fork subtree"),
+            arg_item(
+                "entries",
+                "/sessions entries",
+                "Show completed transcript entries for the active thread",
+            ),
+            arg_item(
+                "status",
+                "/sessions status",
+                "Show the configured tree filter",
+            ),
+            arg_item(
+                "filter default",
+                "/sessions filter default",
+                "Default session-tree filter",
+            ),
+            arg_item(
+                "filter all",
+                "/sessions filter all",
+                "Show all sessions, including archived",
+            ),
         ],
         "/new" => vec![arg_item("[title]", "/new ", "Optional session title")],
         "/fork" => vec![arg_item("[title]", "/fork ", "Optional fork title")],
@@ -1087,7 +2893,6 @@ fn slash_arg_suggestions(command: &str, args: &str) -> Vec<SlashPaletteItem> {
                 "Preview Ratatui frame size",
             ),
         ],
-        "/steer" => vec![arg_item("<text>", "/steer ", "Steer the active turn")],
         "/answer" => vec![arg_item(
             "<text-or-option-id>",
             "/answer ",
@@ -1126,6 +2931,7 @@ fn slash_arg_suggestions(command: &str, args: &str) -> Vec<SlashPaletteItem> {
             remainder.starts_with(&needle) || item.label.to_ascii_lowercase().starts_with(&needle)
         });
     }
+
     items
 }
 
@@ -1171,17 +2977,36 @@ fn effort_arg_suggestions(provider: &ProviderConfig, args: &str) -> Vec<SlashPal
 }
 
 fn slash_palette_for_buffer(buffer: &str, selected: usize) -> Option<SlashPalette> {
+    slash_palette_for_buffer_with_skills(buffer, selected, &[], false)
+}
+
+fn slash_palette_for_buffer_with_skills(
+    buffer: &str,
+    selected: usize,
+    skills: &[ResolvedSkill],
+    enable_skill_commands: bool,
+) -> Option<SlashPalette> {
     let parsed = parse_slash_buffer(buffer)?;
     if !parsed.has_args {
-        let items = slash_command_palette_items(parsed.command_token);
+        let items = slash_command_palette_items_with_skills(
+            parsed.command_token,
+            skills,
+            enable_skill_commands,
+        );
         if items.is_empty() {
             return None;
         }
         let selected = selected.min(items.len().saturating_sub(1));
+        let command_count = visible_slash_command_specs().len()
+            + if enable_skill_commands {
+                skills.len()
+            } else {
+                0
+            };
         return Some(SlashPalette {
             mode: SlashPaletteMode::Commands,
             query: parsed.command_token.to_string(),
-            title: format!("slash commands ({})", visible_slash_command_specs().len()),
+            title: format!("slash commands ({command_count})"),
             hint: "type to filter • ↑↓/PgUp/PgDn choose • Tab completes • Enter chooses/runs"
                 .to_string(),
             items,
@@ -1190,7 +3015,11 @@ fn slash_palette_for_buffer(buffer: &str, selected: usize) -> Option<SlashPalett
     }
 
     let Some(spec) = find_slash_command_spec(parsed.command_token) else {
-        let items = slash_command_palette_items(parsed.command_token);
+        let items = slash_command_palette_items_with_skills(
+            parsed.command_token,
+            skills,
+            enable_skill_commands,
+        );
         if items.is_empty() {
             return None;
         }
@@ -1273,7 +3102,12 @@ fn slash_palette_for_buffer_with_session(
     provider: &ProviderConfig,
 ) -> Option<SlashPalette> {
     let parsed = parse_slash_buffer(buffer)?;
-    let mut palette = slash_palette_for_buffer(buffer, selected)?;
+    let mut palette = slash_palette_for_buffer_with_skills(
+        buffer,
+        selected,
+        &session.skill_command_cache,
+        session.enable_skill_commands,
+    )?;
     if palette.mode != SlashPaletteMode::Arguments {
         return Some(palette);
     }
@@ -1346,7 +3180,7 @@ fn slash_dynamic_arg_suggestions(
                     .collect()
             })
             .unwrap_or_default(),
-        "/permissions" | "/sandbox" => {
+        "/permissions" => {
             let current = session.permission_mode.as_str();
             slash_arg_suggestions(command, args)
                 .into_iter()
@@ -1415,24 +3249,34 @@ fn run(args: Vec<String>) -> Result<(), String> {
             command.json,
         );
     }
+
     let mut provider = command.provider.clone();
     let mut session = ShellSession::connect(
         command.server.clone().unwrap_or_else(default_server_path),
         command.resume_thread.clone(),
     )?;
-    if let Some(saved_effort) = load_reasoning_effort_setting(&session.role_profile_path)
-        && matches!(&provider, ProviderConfig::OpenAiCompatible(config) if config.reasoning_effort.is_none())
-        && allowed_effort_levels_for_provider(&provider).contains(&saved_effort)
-    {
-        set_provider_effort_level(&mut provider, saved_effort);
+    if command.list_sessions {
+        session.handle_resume_command(Vec::new(), command.json)?;
+        session.shutdown();
+        return Ok(());
     }
+    apply_saved_reasoning_effort(
+        &mut provider,
+        &session.role_profile_path,
+        command.reasoning_effort_explicit,
+    );
     session.register_provider_model(&provider)?;
-    if !command.json {
+    if should_print_startup_banner(command.json, session.quiet_startup) {
         println!(
             "OPPi Rust shell ready ({}). Type a prompt, /help, /exit, or Ctrl+C twice in native/raw mode to stop.",
             provider.label()
         );
     }
+
+    if command.interactive && !command.json {
+        maybe_offer_hoppi_install_on_startup(&mut session)?;
+    }
+    maybe_run_hoppi_startup_sync(&mut session, command.json)?;
 
     if let Some(prompt) = command.initial_prompt.as_deref() {
         let outcome =
@@ -1452,10 +3296,17 @@ fn run(args: Vec<String>) -> Result<(), String> {
             command.raw,
             command.ratatui,
         )?;
+        session.maybe_remember_hoppi_exit_recap();
+        session.maybe_drain_memory_jobs(command.json)?;
+        maybe_run_hoppi_exit_sync(&mut session, command.json)?;
     }
 
     session.shutdown();
     Ok(())
+}
+
+fn should_print_startup_banner(json_output: bool, quiet_startup: bool) -> bool {
+    !json_output && !quiet_startup
 }
 
 fn interactive_loop(
@@ -1474,6 +3325,124 @@ fn interactive_loop(
     line_interactive_loop(session, provider, json)
 }
 
+fn maybe_offer_hoppi_install_on_startup(session: &mut ShellSession) -> Result<(), String> {
+    if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
+        return Ok(());
+    }
+    if !should_offer_hoppi_first_start_install(
+        &session.memory_settings,
+        hoppi_backend_available_for_startup_offer(),
+    ) {
+        return Ok(());
+    }
+
+    session.memory_status = Some(MemoryStatus {
+        enabled: true,
+        initialized: false,
+        backend: "setup".to_string(),
+        scope: "project".to_string(),
+        memory_count: 0,
+        ..MemoryStatus::default()
+    });
+    session.print_text(&hoppi_first_start_install_prompt(), false)?;
+    print!("Install Hoppi now? [y/N] ");
+    io::stdout()
+        .flush()
+        .map_err(|error| format!("flush Hoppi install prompt: {error}"))?;
+
+    let mut answer = String::new();
+    io::stdin()
+        .read_line(&mut answer)
+        .map_err(|error| format!("read Hoppi install prompt: {error}"))?;
+    let normalized = answer.trim().to_lowercase();
+    if matches!(normalized.as_str(), "y" | "yes") {
+        session.print_text("Installing Hoppi backend after explicit approval.", false)?;
+        match install_hoppi_package() {
+            Ok(message) => {
+                session.memory_settings.enabled = true;
+                session.memory_settings.hoppi_install_offer = "ask".to_string();
+                save_memory_settings(&session.role_profile_path, &session.memory_settings)?;
+                session.memory_status = Some(MemoryStatus {
+                    enabled: true,
+                    initialized: true,
+                    backend: "hoppi".to_string(),
+                    scope: "project".to_string(),
+                    memory_count: 0,
+                    ..MemoryStatus::default()
+                });
+                session.print_text(&message, false)
+            }
+            Err(error) => {
+                session.memory_status = Some(MemoryStatus {
+                    enabled: true,
+                    initialized: false,
+                    backend: "setup".to_string(),
+                    scope: "project".to_string(),
+                    memory_count: 0,
+                    ..MemoryStatus::default()
+                });
+                session.print_text(&format!("Hoppi install failed: {error}"), false)
+            }
+        }
+    } else {
+        session.memory_settings.hoppi_install_offer = "dismissed".to_string();
+        save_memory_settings(&session.role_profile_path, &session.memory_settings)?;
+        session.print_text(
+            "Okay - you can install Hoppi later with `/memory install-hoppi` or re-enable the startup offer with `/memory install-offer ask`.",
+            false,
+        )
+    }
+}
+
+fn maybe_run_hoppi_startup_sync(
+    session: &mut ShellSession,
+    json_output: bool,
+) -> Result<(), String> {
+    maybe_run_hoppi_lifecycle_sync(session, HoppiSyncLifecycle::Startup, json_output)
+}
+
+fn maybe_run_hoppi_exit_sync(session: &mut ShellSession, json_output: bool) -> Result<(), String> {
+    maybe_run_hoppi_lifecycle_sync(session, HoppiSyncLifecycle::Exit, json_output)
+}
+
+fn maybe_run_hoppi_lifecycle_sync(
+    session: &mut ShellSession,
+    lifecycle: HoppiSyncLifecycle,
+    json_output: bool,
+) -> Result<(), String> {
+    let Some(direction) = hoppi_sync_lifecycle_direction(&session.memory_settings, lifecycle)
+    else {
+        return Ok(());
+    };
+    match session.run_hoppi_sync_with_job_reporting(direction, lifecycle.reason()) {
+        Ok(run) => {
+            let summary = format_hoppi_sync_report(direction, &run.result);
+            if json_output {
+                return session.print_value(
+                    "memorySync",
+                    json!({
+                        "summary": summary,
+                        "direction": direction.as_str(),
+                        "reason": lifecycle.reason(),
+                        "repoPath": format_path_for_display(&run.invocation.repo_path),
+                        "remote": run.invocation.remote.clone(),
+                        "result": hoppi_sync_result_json(&run.result),
+                    }),
+                    json_output,
+                );
+            }
+            session.print_text(
+                &format!("memory: {} sync {}", lifecycle.label(), summary),
+                json_output,
+            )
+        }
+        Err(error) => session.print_text(
+            &format!("memory: {} sync skipped: {error}", lifecycle.label()),
+            json_output,
+        ),
+    }
+}
+
 fn line_interactive_loop(
     session: &mut ShellSession,
     provider: &mut ProviderConfig,
@@ -1483,6 +3452,9 @@ fn line_interactive_loop(
     let mut input = String::new();
     let mut editor = LineEditor::default();
     loop {
+        session.maybe_run_hoppi_background_sync(json)?;
+        session.maybe_run_hoppi_idle_consolidation(json)?;
+        session.maybe_offer_compaction(provider, json)?;
         if !json {
             session.render_docks();
             print!("\noppi> ");
@@ -1514,6 +3486,7 @@ fn line_interactive_loop(
                         break;
                     }
                     session.drain_follow_ups(provider, json)?;
+                    session.maybe_offer_compaction(provider, json)?;
                     continue;
                 }
                 if session.handle_login_picker_input(prompt, provider, json)? {
@@ -1525,10 +3498,12 @@ fn line_interactive_loop(
                 }
                 let _ = session.run_turn_for_role(prompt, provider, json, Some("executor"))?;
                 session.drain_follow_ups(provider, json)?;
+                session.maybe_offer_compaction(provider, json)?;
             }
             EditorAction::SubmitFollowUp(prompt) => {
                 session.queue_follow_up(prompt.trim(), json)?;
                 session.drain_follow_ups(provider, json)?;
+                session.maybe_offer_compaction(provider, json)?;
             }
             EditorAction::Steer(prompt) => {
                 session.steer_active_turn(prompt.trim(), json)?;
@@ -1536,13 +3511,26 @@ fn line_interactive_loop(
             EditorAction::RestoreQueued => {
                 if let Some(restored) = session.restore_latest_follow_up() {
                     editor.replace_buffer(restored);
-                    session.print_text("restored queued follow-up into editor", json)?;
+                    session.print_text("restored queued message into editor", json)?;
                 } else {
-                    session.print_text("no queued follow-up to restore", json)?;
+                    session.print_text("no queued message to restore", json)?;
                 }
             }
             EditorAction::OpenSettings => {
                 session.print_text("settings subpanels require the retained TUI; run without --no-tui or use /theme, /permissions, /model, /provider, /login, /tree, and /memory commands directly", json)?;
+            }
+            EditorAction::OpenTree => {
+                session.handle_tree_command("/tree", Vec::new(), Some(provider), json)?;
+            }
+            EditorAction::OpenFork => {
+                editor.replace_buffer("/fork ".to_string());
+                session.print_text(
+                    "double escape: /fork ready; add a title or press Enter",
+                    json,
+                )?;
+            }
+            EditorAction::EmptyEscape => {
+                handle_raw_empty_escape_action(session, provider, json, &mut editor)?;
             }
             EditorAction::Interrupt => {
                 session.interrupt_active_turn(json)?;
@@ -1569,6 +3557,7 @@ fn raw_interactive_loop(
     spawn_raw_input_thread(tx);
     let mut editor = LineEditor::default();
     let mut input_open = true;
+    session.refresh_native_usage(provider, false);
     loop {
         match rx.recv_timeout(POLL_INTERVAL) {
             Ok(input) => {
@@ -1583,11 +3572,16 @@ fn raw_interactive_loop(
 
         if let Some(outcome) = session.poll_turn_events(json)? {
             if matches!(outcome, TurnOutcome::Completed) {
+                session.refresh_native_usage(provider, false);
                 session.start_next_queued_or_goal_continuation(provider, json)?;
             }
+        } else if session.maybe_timeout_pending_question(provider, json)? {
+            session.refresh_native_usage(provider, false);
         } else if !session.is_turn_running() && !session.has_pending_pause() {
             session.start_next_queued_or_goal_continuation(provider, json)?;
         }
+        session.maybe_run_hoppi_background_sync(json)?;
+        session.maybe_offer_compaction(provider, json)?;
 
         if !input_open && !session.is_turn_running() {
             break;
@@ -1642,7 +3636,7 @@ fn handle_raw_editor_action(
         EditorAction::SubmitFollowUp(prompt) => {
             session.queue_follow_up(prompt.trim(), json)?;
             if !session.is_turn_running() && !session.has_pending_pause() {
-                session.start_next_queued_follow_up(provider, json)?;
+                session.start_next_queued_or_goal_continuation(provider, json)?;
             }
             Ok(true)
         }
@@ -1655,13 +3649,13 @@ fn handle_raw_editor_action(
                 editor.replace_buffer(restored);
                 session.print_text(
                     &format!(
-                        "restored queued follow-up into editor: {}",
+                        "restored queued message into editor: {}",
                         editor.buffer_preview()
                     ),
                     json,
                 )?;
             } else {
-                session.print_text("no queued follow-up to restore", json)?;
+                session.print_text("no queued message to restore", json)?;
             }
             Ok(true)
         }
@@ -1672,10 +3666,51 @@ fn handle_raw_editor_action(
             )?;
             Ok(true)
         }
+        EditorAction::OpenTree => {
+            session.handle_tree_command("/tree", Vec::new(), Some(provider), json)?;
+            Ok(true)
+        }
+        EditorAction::OpenFork => {
+            editor.replace_buffer("/fork ".to_string());
+            session.print_text(
+                "double escape: /fork ready; add a title or press Enter",
+                json,
+            )?;
+            Ok(true)
+        }
+        EditorAction::EmptyEscape => {
+            handle_raw_empty_escape_action(session, provider, json, editor)?;
+            Ok(true)
+        }
         EditorAction::Interrupt => {
             session.interrupt_active_turn(json)?;
             Ok(true)
         }
+    }
+}
+
+fn handle_raw_empty_escape_action(
+    session: &mut ShellSession,
+    provider: &mut ProviderConfig,
+    json: bool,
+    editor: &mut LineEditor,
+) -> Result<(), String> {
+    if session.is_turn_running() {
+        return session.interrupt_active_turn(json);
+    }
+    match editor.resolve_empty_escape(session.double_escape_action, Instant::now()) {
+        EditorAction::None => Ok(()),
+        EditorAction::OpenTree => {
+            session.handle_tree_command("/tree", Vec::new(), Some(provider), json)
+        }
+        EditorAction::OpenFork => {
+            editor.replace_buffer("/fork ".to_string());
+            session.print_text(
+                "double escape: /fork ready; add a title or press Enter",
+                json,
+            )
+        }
+        other => handle_raw_editor_action(session, provider, json, editor, other).map(|_| ()),
     }
 }
 
@@ -1739,8 +3774,11 @@ enum EditorAction {
     Steer(String),
     RestoreQueued,
     OpenSettings,
+    OpenTree,
+    OpenFork,
     Interrupt,
     Cleared,
+    EmptyEscape,
     Exit,
 }
 
@@ -1751,6 +3789,7 @@ struct LineEditor {
     history: Vec<String>,
     history_index: Option<usize>,
     ctrl_c_armed: bool,
+    last_empty_escape_at: Option<Instant>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1891,6 +3930,9 @@ impl LineEditor {
         if !matches!(input, EditorInput::CtrlC) {
             self.ctrl_c_armed = false;
         }
+        if !matches!(input, EditorInput::Escape) {
+            self.last_empty_escape_at = None;
+        }
         match input {
             EditorInput::Text(text) => {
                 self.insert_text(&text);
@@ -1948,9 +3990,10 @@ impl LineEditor {
             EditorInput::Tab | EditorInput::BackTab => EditorAction::None,
             EditorInput::Escape => {
                 if self.buffer.is_empty() {
-                    EditorAction::Interrupt
+                    EditorAction::EmptyEscape
                 } else {
                     self.clear();
+                    self.last_empty_escape_at = None;
                     EditorAction::Cleared
                 }
             }
@@ -1977,6 +4020,27 @@ impl LineEditor {
                     EditorAction::Cleared
                 }
             }
+        }
+    }
+
+    fn resolve_empty_escape(&mut self, action: DoubleEscapeAction, now: Instant) -> EditorAction {
+        if action == DoubleEscapeAction::None {
+            self.last_empty_escape_at = None;
+            return EditorAction::None;
+        }
+        let is_double = self
+            .last_empty_escape_at
+            .is_some_and(|last| now.duration_since(last) < DOUBLE_ESCAPE_WINDOW);
+        if is_double {
+            self.last_empty_escape_at = None;
+            match action {
+                DoubleEscapeAction::Tree => EditorAction::OpenTree,
+                DoubleEscapeAction::Fork => EditorAction::OpenFork,
+                DoubleEscapeAction::None => EditorAction::None,
+            }
+        } else {
+            self.last_empty_escape_at = Some(now);
+            EditorAction::None
         }
     }
 
@@ -2218,6 +4282,8 @@ struct PendingApproval {
 struct PendingQuestion {
     turn_id: String,
     request: AskUserRequest,
+    requested_at: Instant,
+    deadline_at: Option<Instant>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -2279,6 +4345,48 @@ struct TranscriptEntry {
     item_id: Option<String>,
     tool_call_id: Option<String>,
     artifact_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct NativeTokenUsage {
+    input_tokens: i64,
+    output_tokens: i64,
+    total_tokens: i64,
+    provider_calls: usize,
+}
+
+#[derive(Debug, Clone, Default)]
+struct NativeUsageState {
+    session: NativeTokenUsage,
+    latest_context_tokens: Option<i64>,
+    latest_context_window: Option<u64>,
+    live_limits: Option<NativeLiveUsage>,
+    live_error: Option<String>,
+    last_refresh: Option<Instant>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct NativeLiveUsage {
+    source: String,
+    plan_type: Option<String>,
+    five_hour: Option<NativeUsageWindow>,
+    weekly: Option<NativeUsageWindow>,
+    fetched_at_ms: u64,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct NativeUsageWindow {
+    label: String,
+    used_percent: Option<f64>,
+    resets_at: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CodexUsageAuth {
+    access_token: String,
+    refresh_token: String,
+    expires: i64,
+    account_id: String,
 }
 
 #[derive(Debug, Clone)]
@@ -2477,6 +4585,123 @@ impl RetainedTui {
     }
 }
 
+impl NativeUsageState {
+    fn observe_provider_diagnostic(&mut self, diagnostic: &Diagnostic) {
+        if diagnostic.metadata.get("component").map(String::as_str) != Some("provider") {
+            return;
+        }
+        let input = diagnostic_i64(diagnostic, "inputTokens").unwrap_or(0);
+        let output = diagnostic_i64(diagnostic, "outputTokens").unwrap_or(0);
+        let total = diagnostic_i64(diagnostic, "totalTokens")
+            .unwrap_or_else(|| input.saturating_add(output));
+        if input <= 0 && output <= 0 && total <= 0 {
+            return;
+        }
+        self.session.input_tokens = self.session.input_tokens.saturating_add(input);
+        self.session.output_tokens = self.session.output_tokens.saturating_add(output);
+        self.session.total_tokens = self.session.total_tokens.saturating_add(total);
+        self.session.provider_calls = self.session.provider_calls.saturating_add(1);
+        if input > 0 {
+            self.latest_context_tokens = Some(input);
+        }
+        if let Some(context_window) = diagnostic_u64(diagnostic, "contextWindow")
+            .or_else(|| diagnostic_u64(diagnostic, "contextWindowTokens"))
+            .filter(|value| *value > 0)
+        {
+            self.latest_context_window = Some(context_window);
+        }
+    }
+
+    fn session_footer_label(&self) -> String {
+        if let Some(window) = self
+            .live_limits
+            .as_ref()
+            .and_then(|limits| limits.five_hour.as_ref())
+            && let Some(remaining) = window.remaining_percent()
+        {
+            return format!("usage {} {}% left", window.label, remaining.round() as i64);
+        }
+        format!(
+            "usage session {}",
+            format_compact_tokens(self.session.total_tokens)
+        )
+    }
+
+    fn weekly_footer_label(&self) -> Option<String> {
+        let window = self.live_limits.as_ref()?.weekly.as_ref()?;
+        let remaining = window.remaining_percent()?;
+        Some(format!("week {}% left", remaining.round() as i64))
+    }
+
+    fn context_footer_label(&self) -> String {
+        self.latest_context_tokens
+            .map(|tokens| format!("ctx {}", format_compact_tokens(tokens)))
+            .unwrap_or_else(|| "ctx pending".to_string())
+    }
+
+    fn panel_limits_line(&self) -> String {
+        if let Some(limits) = &self.live_limits {
+            let mut parts = Vec::new();
+            if let Some(window) = &limits.five_hour {
+                parts.push(window.panel_label());
+            }
+            if let Some(window) = &limits.weekly {
+                parts.push(window.panel_label());
+            }
+            let details = if parts.is_empty() {
+                "no provider windows returned".to_string()
+            } else {
+                parts.join("; ")
+            };
+            let plan = limits
+                .plan_type
+                .as_deref()
+                .map(|plan| format!(" plan={plan}"))
+                .unwrap_or_default();
+            return format!("limits: {details} (source={}{} )", limits.source, plan)
+                .replace(" )", ")");
+        }
+        if let Some(error) = &self.live_error {
+            return format!("limits: live refresh failed ({error})");
+        }
+        "limits: pending live refresh".to_string()
+    }
+}
+
+impl NativeUsageWindow {
+    fn remaining_percent(&self) -> Option<f64> {
+        self.used_percent
+            .map(|used| (100.0 - used).clamp(0.0, 100.0))
+    }
+
+    fn panel_label(&self) -> String {
+        let pct = self
+            .remaining_percent()
+            .map(|remaining| format!("{}% left", remaining.round() as i64))
+            .unwrap_or_else(|| "unknown remaining".to_string());
+        let reset = self
+            .resets_at
+            .map(format_reset_epoch)
+            .map(|value| format!(" reset={value}"))
+            .unwrap_or_default();
+        format!("{} {pct}{reset}", self.label)
+    }
+}
+
+fn diagnostic_i64(diagnostic: &Diagnostic, key: &str) -> Option<i64> {
+    diagnostic
+        .metadata
+        .get(key)
+        .and_then(|value| value.parse::<i64>().ok())
+}
+
+fn diagnostic_u64(diagnostic: &Diagnostic, key: &str) -> Option<u64> {
+    diagnostic
+        .metadata
+        .get(key)
+        .and_then(|value| value.parse::<u64>().ok())
+}
+
 fn redact_render_text(text: &str) -> String {
     text.lines()
         .map(|line| {
@@ -2607,6 +4832,12 @@ fn transcript_entry_from_event(
             entry.label = "approval".to_string();
             entry.tool_call_id = request.tool_call.as_ref().map(tool_call_id);
         }
+        EventKind::PermissionReviewStarted { record }
+        | EventKind::PermissionReviewCompleted { record } => {
+            entry.kind = permission_review_transcript_kind(record.status);
+            entry.label = "review".to_string();
+            entry.tool_call_id = Some(record.tool_call_id.clone());
+        }
         EventKind::AskUserRequested { .. } => {
             entry.kind = TranscriptEntryKind::Info;
             entry.label = "question".to_string();
@@ -2618,6 +4849,17 @@ fn transcript_entry_from_event(
         _ => {}
     }
     entry
+}
+
+fn permission_review_transcript_kind(
+    status: oppi_protocol::GuardianReviewStatus,
+) -> TranscriptEntryKind {
+    match status {
+        oppi_protocol::GuardianReviewStatus::Denied
+        | oppi_protocol::GuardianReviewStatus::FailedClosed
+        | oppi_protocol::GuardianReviewStatus::CircuitBlocked => TranscriptEntryKind::Denied,
+        _ => TranscriptEntryKind::Info,
+    }
 }
 
 fn tool_display_kind_name_main(name: &str) -> &'static str {
@@ -2669,6 +4911,516 @@ fn artifact_transcript_body(artifact: &ArtifactMetadata) -> String {
     parts.join(" · ")
 }
 
+#[derive(Debug, Clone)]
+struct LoadedShellTheme {
+    name: String,
+    source: String,
+    colors: Value,
+    export: Option<Value>,
+    line_tokens: ThemeTokens,
+}
+
+#[derive(Debug, Clone)]
+struct ModelRegistryCache {
+    provider: String,
+    selected_model: Option<String>,
+    scope: Vec<String>,
+    available_only: bool,
+    items: Vec<ModelRef>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct PermissionSandboxSettings {
+    allow_internet: bool,
+    allow_ssh: bool,
+    project_roots: Vec<String>,
+    readable_roots: Vec<String>,
+    writable_roots: Vec<String>,
+    protected_patterns: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct OppiCompactSettings {
+    idle_enabled: bool,
+    idle_minutes: u64,
+    idle_threshold_percent: u64,
+    smart_threshold_percent: u64,
+}
+
+impl Default for OppiCompactSettings {
+    fn default() -> Self {
+        Self {
+            idle_enabled: true,
+            idle_minutes: 5,
+            idle_threshold_percent: 70,
+            smart_threshold_percent: 65,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FollowUpMode {
+    All,
+    OneAtATime,
+}
+
+impl Default for FollowUpMode {
+    fn default() -> Self {
+        Self::All
+    }
+}
+
+impl FollowUpMode {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::All => "all",
+            Self::OneAtATime => "one-at-a-time",
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::All => "all",
+            Self::OneAtATime => "one at a time",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SteeringMode {
+    All,
+    OneAtATime,
+}
+
+impl Default for SteeringMode {
+    fn default() -> Self {
+        Self::All
+    }
+}
+
+impl SteeringMode {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::All => "all",
+            Self::OneAtATime => "one-at-a-time",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FooterUsageDisplay {
+    SessionWeekly,
+    Session,
+    Weekly,
+    Off,
+}
+
+impl Default for FooterUsageDisplay {
+    fn default() -> Self {
+        Self::SessionWeekly
+    }
+}
+
+impl FooterUsageDisplay {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::SessionWeekly => "session-weekly",
+            Self::Session => "session",
+            Self::Weekly => "weekly",
+            Self::Off => "off",
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::SessionWeekly => "session + weekly",
+            Self::Session => "session",
+            Self::Weekly => "weekly",
+            Self::Off => "off",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct FooterSettings {
+    show_path: bool,
+    show_help_bar: bool,
+    usage_display: FooterUsageDisplay,
+    show_model: bool,
+    show_permission: bool,
+    show_memory: bool,
+    show_context: bool,
+}
+
+impl Default for FooterSettings {
+    fn default() -> Self {
+        Self {
+            show_path: true,
+            show_help_bar: true,
+            usage_display: FooterUsageDisplay::SessionWeekly,
+            show_model: true,
+            show_permission: true,
+            show_memory: true,
+            show_context: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ImagePreviewProtocolOverride {
+    Auto,
+    Kitty,
+    Wezterm,
+    Iterm2,
+    Sixel,
+    Off,
+}
+
+impl ImagePreviewProtocolOverride {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Kitty => "kitty",
+            Self::Wezterm => "wezterm",
+            Self::Iterm2 => "iterm2",
+            Self::Sixel => "sixel",
+            Self::Off => "off",
+        }
+    }
+}
+
+impl Default for ImagePreviewProtocolOverride {
+    fn default() -> Self {
+        Self::Auto
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ImageSettings {
+    show_images: bool,
+    image_width_cells: u64,
+    auto_resize_images: bool,
+    block_images: bool,
+    preview_protocol: ImagePreviewProtocolOverride,
+}
+
+impl Default for ImageSettings {
+    fn default() -> Self {
+        Self {
+            show_images: true,
+            image_width_cells: 80,
+            auto_resize_images: true,
+            block_images: false,
+            preview_protocol: ImagePreviewProtocolOverride::Auto,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct MemorySettings {
+    enabled: bool,
+    agent_model: String,
+    deep_model: String,
+    startup_recall: bool,
+    task_start_recall: bool,
+    turn_summaries: bool,
+    idle_consolidation: bool,
+    dashboard_port: Option<u16>,
+    hoppi_install_offer: String,
+    sync_enabled: bool,
+    sync_repo_path: Option<String>,
+    sync_repo_url: Option<String>,
+    sync_pull_on_startup: bool,
+    sync_push_on_exit: bool,
+    sync_background: String,
+    sync_encryption: String,
+    sync_passphrase_source: String,
+    sync_passphrase_env: String,
+    sync_passphrase_file: Option<String>,
+    sync_conflict_mode: String,
+}
+
+impl Default for MemorySettings {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            agent_model: "auto".to_string(),
+            deep_model: "auto".to_string(),
+            startup_recall: true,
+            task_start_recall: true,
+            turn_summaries: true,
+            idle_consolidation: true,
+            dashboard_port: None,
+            hoppi_install_offer: "ask".to_string(),
+            sync_enabled: false,
+            sync_repo_path: None,
+            sync_repo_url: None,
+            sync_pull_on_startup: true,
+            sync_push_on_exit: true,
+            sync_background: "off".to_string(),
+            sync_encryption: "none".to_string(),
+            sync_passphrase_source: "env".to_string(),
+            sync_passphrase_env: DEFAULT_SYNC_PASSPHRASE_ENV.to_string(),
+            sync_passphrase_file: None,
+            sync_conflict_mode: "keep-both".to_string(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HoppiSyncDirection {
+    Pull,
+    Push,
+    Both,
+}
+
+impl HoppiSyncDirection {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Pull => "pull",
+            Self::Push => "push",
+            Self::Both => "both",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HoppiSyncLifecycle {
+    Startup,
+    Exit,
+    Clear,
+}
+
+impl HoppiSyncLifecycle {
+    fn reason(self) -> &'static str {
+        match self {
+            Self::Startup => "startup",
+            Self::Exit => "exit",
+            Self::Clear => "clear",
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Startup => "startup",
+            Self::Exit => "exit",
+            Self::Clear => "clear",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HoppiSessionRecapReason {
+    Exit,
+    Clear,
+}
+
+impl HoppiSessionRecapReason {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Exit => "exit",
+            Self::Clear => "clear",
+        }
+    }
+
+    fn job_reason(self) -> &'static str {
+        match self {
+            Self::Exit => "exit-recap",
+            Self::Clear => "clear-recap",
+        }
+    }
+
+    fn tag(self) -> &'static str {
+        match self {
+            Self::Exit => "oppi-exit-recap",
+            Self::Clear => "oppi-clear-recap",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct HoppiSyncInvocation {
+    module_path: PathBuf,
+    repo_path: PathBuf,
+    direction: HoppiSyncDirection,
+    remote: Option<String>,
+    conflict_mode: String,
+    passphrase: Option<String>,
+    message: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct HoppiSyncCommandResult {
+    imported: u64,
+    exported: u64,
+    committed: bool,
+    pushed: bool,
+    conflicts: Vec<String>,
+    embeddings_rebuild_recommended: bool,
+    rebuilt_embeddings: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct HoppiSyncRunResult {
+    invocation: HoppiSyncInvocation,
+    result: HoppiSyncCommandResult,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct HoppiRecallInvocation {
+    module_path: PathBuf,
+    cwd: PathBuf,
+    prompt: String,
+    include_startup: bool,
+    include_task: bool,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct HoppiRecallCommandResult {
+    context_markdown: Option<String>,
+    context_bytes: u64,
+    memory_count: u64,
+    pinned_count: Option<u64>,
+    store_path: Option<String>,
+    records: Vec<MemoryRecord>,
+    omitted_reason: Option<String>,
+    truncated: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct HoppiDashboardInvocation {
+    module_path: PathBuf,
+    cwd: PathBuf,
+    port: Option<u16>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct HoppiDashboardCommandResult {
+    url: String,
+    fallback_url: Option<String>,
+    memory_count: u64,
+    pinned_count: u64,
+    store_path: Option<String>,
+}
+
+struct HoppiDashboardProcess {
+    result: HoppiDashboardCommandResult,
+    child: Child,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct HoppiListInvocation {
+    module_path: PathBuf,
+    cwd: PathBuf,
+    include_superseded: bool,
+    pinned_only: bool,
+    limit: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct HoppiListCommandResult {
+    records: Vec<MemoryRecord>,
+    memory_count: u64,
+    pinned_count: u64,
+    store_path: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct HoppiForgetInvocation {
+    module_path: PathBuf,
+    cwd: PathBuf,
+    id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct HoppiForgetCommandResult {
+    id: String,
+    memory_count: Option<u64>,
+    pinned_count: Option<u64>,
+    store_path: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct HoppiPinInvocation {
+    module_path: PathBuf,
+    cwd: PathBuf,
+    id: String,
+    pinned: bool,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct HoppiPinCommandResult {
+    id: String,
+    pinned: bool,
+    record: Option<MemoryRecord>,
+    memory_count: Option<u64>,
+    pinned_count: Option<u64>,
+    store_path: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct HoppiUpdateInvocation {
+    module_path: PathBuf,
+    cwd: PathBuf,
+    id: String,
+    patch: Value,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct HoppiUpdateCommandResult {
+    id: String,
+    record: Option<MemoryRecord>,
+    memory_count: Option<u64>,
+    pinned_count: Option<u64>,
+    store_path: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct HoppiConsolidateInvocation {
+    module_path: PathBuf,
+    cwd: PathBuf,
+    dry_run: bool,
+    stage: String,
+    limit: Option<u64>,
+    budget: Option<u64>,
+    agent_model: String,
+    deep_model: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct HoppiConsolidateCommandResult {
+    dry_run: bool,
+    model_used: Option<String>,
+    summary: Option<String>,
+    records: Vec<MemoryRecord>,
+    deleted_ids: Vec<String>,
+    memory_count: u64,
+    pinned_count: Option<u64>,
+    store_path: Option<String>,
+    last_consolidated_at: Option<String>,
+    queue_depth: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct HoppiRememberInvocation {
+    module_path: PathBuf,
+    cwd: PathBuf,
+    summary: String,
+    tags: Vec<String>,
+    source: String,
+    source_session_id: String,
+    layer: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct HoppiRememberCommandResult {
+    saved: bool,
+    memory_count: u64,
+    pinned_count: Option<u64>,
+    store_path: Option<String>,
+    record: Option<MemoryRecord>,
+}
+
 struct ShellSession {
     rpc: RpcClient,
     thread_id: String,
@@ -2679,14 +5431,51 @@ struct ShellSession {
     active_turn_id: Option<String>,
     todo_state: TodoState,
     current_goal: Option<ThreadGoal>,
+    usage_state: NativeUsageState,
+    memory_status: Option<MemoryStatus>,
     suggestion: Option<SuggestedNextMessage>,
     permission_mode: PermissionMode,
     permission_mode_source: String,
+    permission_review_settings: GuardianReviewSettings,
+    permission_sandbox_settings: PermissionSandboxSettings,
+    compact_settings: OppiCompactSettings,
+    ask_user_settings: AskUserSettings,
+    follow_up_mode: FollowUpMode,
+    steering_mode: SteeringMode,
+    quiet_startup: bool,
+    enable_skill_commands: bool,
+    autocomplete_max_visible: usize,
+    show_hardware_cursor: bool,
+    double_escape_action: DoubleEscapeAction,
+    tree_filter_mode: TreeFilterMode,
+    show_terminal_progress: bool,
+    terminal_clear_on_shrink: bool,
+    editor_padding_x: usize,
+    skill_command_cache: Vec<ResolvedSkill>,
+    footer_settings: FooterSettings,
+    image_settings: ImageSettings,
+    memory_settings: MemorySettings,
+    hoppi_dashboard_process: Option<HoppiDashboardProcess>,
+    next_hoppi_background_sync_at: Option<Instant>,
+    hoppi_dirty_version: u64,
+    hoppi_consolidated_version: u64,
+    hoppi_idle_consolidation_attempted_version: u64,
+    hoppi_dirty_at: Option<Instant>,
+    hoppi_idle_consolidating: bool,
+    compaction_idle_since: Option<Instant>,
+    last_compaction_offer_key: Option<String>,
+    mcp_summary: Option<String>,
     follow_up_queue: VecDeque<String>,
+    steering_queue: VecDeque<String>,
+    steered_turns: BTreeSet<String>,
     last_prompt: Option<String>,
     prompt_variant: String,
     theme: String,
+    loaded_theme: Option<LoadedShellTheme>,
+    theme_list_cache: Option<Value>,
+    theme_preview_cache: BTreeMap<String, LoadedShellTheme>,
     selected_model: Option<String>,
+    model_registry_cache: Option<ModelRegistryCache>,
     known_model_ids: BTreeSet<String>,
     scoped_model_ids: Vec<String>,
     role_models: BTreeMap<String, String>,
@@ -2700,7 +5489,113 @@ struct ShellSession {
     terminal_ui_active: bool,
 }
 
+fn take_follow_up_batch(queue: &mut VecDeque<String>, mode: FollowUpMode) -> Vec<String> {
+    let Some(first) = queue.pop_front() else {
+        return Vec::new();
+    };
+    let mut batch = vec![first];
+    if mode == FollowUpMode::All {
+        batch.extend(queue.drain(..));
+    }
+    batch
+}
+
+fn format_follow_up_batch_prompt(prompts: &[String]) -> String {
+    match prompts {
+        [] => String::new(),
+        [prompt] => prompt.clone(),
+        _ => {
+            let mut lines = Vec::with_capacity(prompts.len() + 1);
+            lines.push("Queued follow-ups:".to_string());
+            for (index, prompt) in prompts.iter().enumerate() {
+                lines.push(format!("{}. {}", index + 1, prompt.trim()));
+            }
+            lines.join("\n")
+        }
+    }
+}
+
+fn format_follow_up_run_message(prompts: &[String]) -> String {
+    match prompts {
+        [] => "running queued follow-up".to_string(),
+        [prompt] => format!("running queued follow-up: {prompt}"),
+        _ => format!("running {} queued follow-ups", prompts.len()),
+    }
+}
+
+fn take_steering_batch(queue: &mut VecDeque<String>, mode: SteeringMode) -> Vec<String> {
+    let Some(first) = queue.pop_front() else {
+        return Vec::new();
+    };
+    let mut batch = vec![first];
+    if mode == SteeringMode::All {
+        batch.extend(queue.drain(..));
+    }
+    batch
+}
+
+fn format_steering_batch_prompt(prompts: &[String]) -> String {
+    match prompts {
+        [] => String::new(),
+        [prompt] => prompt.clone(),
+        _ => {
+            let mut lines = Vec::with_capacity(prompts.len() + 1);
+            lines.push("Queued steering messages:".to_string());
+            for (index, prompt) in prompts.iter().enumerate() {
+                lines.push(format!("{}. {}", index + 1, prompt.trim()));
+            }
+            lines.join("\n")
+        }
+    }
+}
+
+fn format_steering_run_message(prompts: &[String]) -> String {
+    match prompts {
+        [] => "running queued steering".to_string(),
+        [prompt] => format!("running queued steering: {prompt}"),
+        _ => format!("running {} queued steering messages", prompts.len()),
+    }
+}
+
 impl ShellSession {
+    fn refresh_native_usage(&mut self, provider: &ProviderConfig, force: bool) {
+        let Some(config) = codex_usage_provider_config(provider) else {
+            return;
+        };
+        if !force
+            && self
+                .usage_state
+                .last_refresh
+                .is_some_and(|last| last.elapsed() < USAGE_REFRESH_INTERVAL)
+        {
+            return;
+        }
+        self.usage_state.last_refresh = Some(Instant::now());
+        match fetch_openai_codex_live_usage(config) {
+            Ok(snapshot) => {
+                self.usage_state.live_limits = Some(snapshot);
+                self.usage_state.live_error = None;
+            }
+            Err(error) => {
+                self.usage_state.live_error = Some(compact_usage_error(&error));
+            }
+        }
+        self.sync_ui_docks();
+    }
+
+    fn memory_footer_label(&self) -> String {
+        self.memory_status
+            .as_ref()
+            .map(|status| {
+                if status.enabled {
+                    format!("{}:{}", status.backend, status.memory_count)
+                } else {
+                    "off".to_string()
+                }
+            })
+            .unwrap_or_else(|| "unknown".to_string())
+    }
+
     fn connect(server_path: PathBuf, resume_thread: Option<String>) -> Result<Self, String> {
         let mut rpc = RpcClient::spawn(server_path)?;
         initialize_rpc_client(&mut rpc)?;
@@ -2731,6 +5626,26 @@ impl ShellSession {
         let scoped_model_ids = load_enabled_model_scope(&role_profile_path);
         let (permission_mode, permission_mode_source) =
             load_permission_mode_setting(&role_profile_path);
+        let permission_review_settings = load_permission_review_settings(&role_profile_path);
+        let permission_sandbox_settings = load_permission_sandbox_settings(&role_profile_path);
+        let compact_settings = load_oppi_compact_settings(&role_profile_path);
+        let ask_user_settings = load_ask_user_settings(&role_profile_path);
+        let follow_up_mode = load_follow_up_mode_setting(&role_profile_path);
+        let steering_mode = load_steering_mode_setting(&role_profile_path);
+        let quiet_startup = load_quiet_startup_setting(&role_profile_path);
+        let enable_skill_commands = load_skill_commands_setting(&role_profile_path);
+        let autocomplete_max_visible = load_autocomplete_max_visible_setting(&role_profile_path);
+        let show_hardware_cursor = load_show_hardware_cursor_setting(&role_profile_path);
+        let double_escape_action = load_double_escape_action_setting(&role_profile_path);
+        let tree_filter_mode = load_tree_filter_mode_setting(&role_profile_path);
+        let show_terminal_progress = load_show_terminal_progress_setting(&role_profile_path);
+        let terminal_clear_on_shrink = load_terminal_clear_on_shrink_setting(&role_profile_path);
+        let editor_padding_x = load_editor_padding_x_setting(&role_profile_path);
+        let footer_settings = load_footer_settings(&role_profile_path);
+        let image_settings = load_image_settings(&role_profile_path);
+        let memory_settings = load_memory_settings(&role_profile_path);
+        let next_hoppi_background_sync_at =
+            hoppi_next_background_sync_at(&memory_settings, Instant::now());
         let prompt_variant = load_prompt_variant_setting(&role_profile_path);
         let mut session = Self {
             rpc,
@@ -2742,14 +5657,51 @@ impl ShellSession {
             active_turn_id: None,
             todo_state: TodoState::default(),
             current_goal: None,
+            usage_state: NativeUsageState::default(),
+            memory_status: None,
             suggestion: None,
             permission_mode,
             permission_mode_source,
+            permission_review_settings,
+            permission_sandbox_settings,
+            compact_settings,
+            ask_user_settings,
+            follow_up_mode,
+            steering_mode,
+            quiet_startup,
+            enable_skill_commands,
+            autocomplete_max_visible,
+            show_hardware_cursor,
+            double_escape_action,
+            tree_filter_mode,
+            show_terminal_progress,
+            terminal_clear_on_shrink,
+            editor_padding_x,
+            skill_command_cache: Vec::new(),
+            footer_settings,
+            image_settings,
+            memory_settings,
+            hoppi_dashboard_process: None,
+            next_hoppi_background_sync_at,
+            hoppi_dirty_version: 0,
+            hoppi_consolidated_version: 0,
+            hoppi_idle_consolidation_attempted_version: 0,
+            hoppi_dirty_at: None,
+            hoppi_idle_consolidating: false,
+            compaction_idle_since: None,
+            last_compaction_offer_key: None,
+            mcp_summary: None,
             follow_up_queue: VecDeque::new(),
+            steering_queue: VecDeque::new(),
+            steered_turns: BTreeSet::new(),
             last_prompt: None,
             prompt_variant,
             theme: "oppi".to_string(),
+            loaded_theme: None,
+            theme_list_cache: None,
+            theme_preview_cache: BTreeMap::new(),
             selected_model: None,
+            model_registry_cache: None,
             known_model_ids: BTreeSet::new(),
             scoped_model_ids,
             role_models,
@@ -2762,28 +5714,104 @@ impl ShellSession {
             ui: RetainedTui::new(2_000),
             terminal_ui_active: false,
         };
+        session.sync_permission_review_settings()?;
+        session.sync_ask_user_settings()?;
         session.load_thread_state(false)?;
+        session.refresh_skill_command_cache();
         Ok(session)
+    }
+
+    fn line_theme_tokens(&self) -> ThemeTokens {
+        if !ansi_enabled() {
+            return plain_theme_tokens();
+        }
+        self.loaded_theme
+            .as_ref()
+            .map(|theme| theme.line_tokens)
+            .unwrap_or_else(|| theme_tokens(&self.theme))
+    }
+
+    fn refresh_skill_command_cache(&mut self) {
+        let Ok(value) = self
+            .rpc
+            .request("skills/list", json!({ "threadId": self.thread_id }))
+        else {
+            self.skill_command_cache.clear();
+            return;
+        };
+        let Ok(result) = serde_json::from_value::<RuntimeListResult<ResolvedSkill>>(value) else {
+            self.skill_command_cache.clear();
+            return;
+        };
+        self.skill_command_cache = result.items;
+    }
+
+    fn refresh_theme_settings_cache(&mut self) {
+        let Ok(list) = self
+            .rpc
+            .request("theme/list", json!({ "threadId": self.thread_id }))
+        else {
+            self.theme_list_cache = None;
+            self.theme_preview_cache.clear();
+            return;
+        };
+        let entries = active_theme_entries_from_theme_list(&list);
+        self.theme_list_cache = Some(list);
+        self.theme_preview_cache.clear();
+        for entry in entries
+            .into_iter()
+            .filter(|entry| normalize_theme_name(&entry.name).is_none())
+            .take(32)
+        {
+            let Ok(value) = self.rpc.request(
+                "theme/load",
+                theme_load_params_json(&self.thread_id, &entry.name),
+            ) else {
+                continue;
+            };
+            let Ok(loaded) = loaded_shell_theme_from_load_result(&value, &entry.name) else {
+                continue;
+            };
+            self.theme_preview_cache
+                .insert(entry.name.clone(), loaded.clone());
+            self.theme_preview_cache.insert(loaded.name.clone(), loaded);
+        }
+    }
+
+    fn render_event_line(&self, event: &Event) -> Option<String> {
+        match &event.kind {
+            EventKind::ArtifactCreated { artifact } => {
+                Some(format_artifact_created_with_image_settings(
+                    artifact,
+                    self.line_theme_tokens(),
+                    &self.image_settings,
+                ))
+            }
+            _ => render_event_line_with_tokens(event, self.line_theme_tokens(), &self.tool_calls),
+        }
     }
 
     fn start_turn_for_role(
         &mut self,
         prompt: &str,
         provider: &ProviderConfig,
-        _json: bool,
+        json_output: bool,
         role: Option<&str>,
     ) -> Result<String, String> {
-        self.start_turn_for_role_with_system_append(prompt, provider, _json, role, None)
+        self.start_turn_for_role_with_system_append(prompt, provider, json_output, role, None)
     }
 
     fn start_turn_for_role_with_system_append(
         &mut self,
         prompt: &str,
         provider: &ProviderConfig,
-        _json: bool,
+        json_output: bool,
         role: Option<&str>,
         system_append: Option<&str>,
     ) -> Result<String, String> {
+        self.compaction_idle_since = None;
+        let prompt = self.expand_skill_command_input(prompt)?;
+        let prompt = prompt.as_str();
         self.last_prompt = Some(prompt.to_string());
         let effective_provider = self.provider_for_role(provider, role);
         if let Some(role_name) = role
@@ -2799,7 +5827,11 @@ impl ShellSession {
             "threadId": self.thread_id,
             "input": prompt,
             "executionMode": "background",
-            "sandboxPolicy": sandbox_policy_json(self.permission_mode, &self.cwd),
+            "sandboxPolicy": sandbox_policy_json_with_settings(
+                self.permission_mode,
+                &self.cwd,
+                &self.permission_sandbox_settings,
+            ),
         });
         match &effective_provider {
             ProviderConfig::Mock => {
@@ -2809,9 +5841,16 @@ impl ShellSession {
                 }
             }
             ProviderConfig::OpenAiCompatible(config) => {
+                let hoppi_recall = self.prepare_hoppi_recall_for_prompt(prompt);
                 let mut provider_json = openai_provider_json(config);
                 apply_feature_routing_to_provider(&mut provider_json, &self.prompt_variant);
                 apply_prompt_variant_to_provider(&mut provider_json, &self.prompt_variant);
+                if let Some(context) = hoppi_recall
+                    .as_ref()
+                    .and_then(|result| result.context_markdown.as_deref())
+                {
+                    append_hoppi_memory_context_to_provider(&mut provider_json, context);
+                }
                 if let Some(system_append) = system_append {
                     append_system_prompt_to_provider(
                         &mut provider_json,
@@ -2830,8 +5869,33 @@ impl ShellSession {
             .ok_or_else(|| "turn/run-agentic returned no turn id".to_string())?
             .to_string();
         self.active_turn_id = Some(turn_id.clone());
+        self.emit_terminal_progress(true, json_output);
         self.sync_ui_docks();
         Ok(turn_id)
+    }
+
+    fn emit_terminal_progress(&self, active: bool, json_output: bool) {
+        if let Some(sequence) =
+            terminal_progress_output(self.show_terminal_progress, active, json_output)
+        {
+            print!("{sequence}");
+            let _ = io::stdout().flush();
+        }
+    }
+
+    fn expand_skill_command_input(&mut self, prompt: &str) -> Result<String, String> {
+        if !self.enable_skill_commands || !prompt.trim_start().starts_with("/skill:") {
+            return Ok(prompt.to_string());
+        }
+        let value = self.rpc.request(
+            "skills/expand",
+            json!({ "threadId": self.thread_id, "input": prompt }),
+        )?;
+        Ok(value
+            .get("input")
+            .and_then(Value::as_str)
+            .unwrap_or(prompt)
+            .to_string())
     }
 
     fn run_turn_for_role(
@@ -2865,6 +5929,14 @@ impl ShellSession {
     ) -> Result<bool, String> {
         let mut parts = line.split_whitespace();
         let command = parts.next().unwrap_or_default();
+        if command.starts_with("/skill:") && self.enable_skill_commands {
+            if self.is_turn_running() || self.has_pending_pause() {
+                self.queue_follow_up(line.trim(), json)?;
+            } else {
+                self.start_turn_for_role(line.trim(), provider, json, Some("executor"))?;
+            }
+            return Ok(true);
+        }
         match command {
             "/exit" | "/quit" => {
                 self.print_exit_requested(json)?;
@@ -2875,10 +5947,8 @@ impl ShellSession {
                 Ok(true)
             }
             "/settings" | "/prefs" | "/preferences" | "/settings:oppi" | "/oppi-settings" => {
-                self.print_text(
-                    "settings: in the retained TUI, /settings opens an arrow-key settings panel with nested theme, permissions, provider, login, model, sessions, and memory panels. Ctrl+L opens the model selector, Ctrl+P/Ctrl+Shift+P cycles models, and Shift+Tab cycles effort. In line-mode use /theme, /permissions, /model, /provider, /login, /tree, and /memory directly. In native TUI, bare /theme, /permissions, /provider, /login, /memory, /tree, /sessions, /resume, /model, /models, and /roles open native pickers.",
-                    json,
-                )?;
+                let args = parts.collect::<Vec<_>>().join(" ");
+                self.print_text(&format_settings_command_panel(args.trim())?, json)?;
                 Ok(true)
             }
             "/login" | "/logout" => {
@@ -2890,7 +5960,18 @@ impl ShellSession {
                 Ok(true)
             }
             "/usage" | "/stats" => {
+                self.refresh_native_usage(provider, true);
                 self.print_text(&format_usage_panel(self, provider), json)?;
+                Ok(true)
+            }
+            "/footer" => {
+                let args = parts.collect::<Vec<_>>().join(" ");
+                self.handle_footer_command(args.trim(), json)?;
+                Ok(true)
+            }
+            "/images" | "/image" | "/image-settings" => {
+                let args = parts.collect::<Vec<_>>().join(" ");
+                self.handle_images_command(args.trim(), json)?;
                 Ok(true)
             }
             "/suggest-next" => {
@@ -2907,7 +5988,7 @@ impl ShellSession {
                 Ok(true)
             }
             "/memory" | "/mem" => {
-                self.handle_memory_command(parts.collect::<Vec<_>>(), json)?;
+                self.handle_memory_command(provider, parts.collect::<Vec<_>>(), json)?;
                 Ok(true)
             }
             "/memory-maintenance" => {
@@ -2919,16 +6000,26 @@ impl ShellSession {
                     ["help"] => mapped.clear(),
                     _ => mapped.push("dry-run"),
                 }
-                self.handle_memory_command(mapped, json)?;
+                self.handle_memory_command(provider, mapped, json)?;
                 Ok(true)
             }
             "/idle-compact" => {
-                self.handle_memory_command(vec!["settings"], json)?;
+                let args = parts.collect::<Vec<_>>().join(" ");
+                self.handle_compaction_command(provider, args.trim(), json)?;
                 Ok(true)
             }
             "/sandbox" | "/permissions" => {
                 let args = parts.collect::<Vec<_>>().join(" ");
                 self.handle_permissions_command(args.trim(), json)?;
+                Ok(true)
+            }
+            "/ask-user" | "/ask_user" | "/questions" => {
+                let args = parts.collect::<Vec<_>>().join(" ");
+                self.handle_ask_user_command(args.trim(), json)?;
+                Ok(true)
+            }
+            "/mcp" => {
+                self.handle_mcp_command(parts.collect::<Vec<_>>(), json)?;
                 Ok(true)
             }
             "/models" => {
@@ -2945,7 +6036,11 @@ impl ShellSession {
                 Ok(true)
             }
             "/skills" => {
-                self.handle_skills_command(json)?;
+                self.handle_skills_command(parts.collect::<Vec<_>>(), json)?;
+                Ok(true)
+            }
+            "/prompts" | "/prompt-templates" => {
+                self.handle_prompt_templates_command(json)?;
                 Ok(true)
             }
             "/graphify" => {
@@ -2970,8 +6065,20 @@ impl ShellSession {
                 self.handle_resume_command(parts.collect::<Vec<_>>(), json)?;
                 Ok(true)
             }
-            "/new" | "/clear" | "/reset" => {
-                self.handle_new_thread_command(parts.collect::<Vec<_>>(), json)?;
+            "/new" => {
+                self.handle_new_thread_command(
+                    parts.collect::<Vec<_>>(),
+                    json,
+                    NewThreadMode::New,
+                )?;
+                Ok(true)
+            }
+            "/clear" | "/reset" => {
+                self.handle_new_thread_command(
+                    parts.collect::<Vec<_>>(),
+                    json,
+                    NewThreadMode::Clear,
+                )?;
                 Ok(true)
             }
             "/fork" => {
@@ -2979,7 +6086,7 @@ impl ShellSession {
                 Ok(true)
             }
             "/tree" | "/sessions" => {
-                self.handle_tree_command(parts.collect::<Vec<_>>(), json)?;
+                self.handle_tree_command(command, parts.collect::<Vec<_>>(), Some(provider), json)?;
                 Ok(true)
             }
             "/debug" => {
@@ -2994,9 +6101,39 @@ impl ShellSession {
                 self.print_text(terminal_capability_summary(false), json)?;
                 Ok(true)
             }
+            "/follow-up" | "/followups" => {
+                let args = parts.collect::<Vec<_>>().join(" ");
+                self.handle_follow_up_command(args.trim(), json)?;
+                Ok(true)
+            }
+            "/startup" | "/quiet-startup" => {
+                let args = parts.collect::<Vec<_>>().join(" ");
+                self.handle_startup_command(args.trim(), json)?;
+                Ok(true)
+            }
+            "/autocomplete" | "/autocomplete-max-visible" => {
+                let args = parts.collect::<Vec<_>>().join(" ");
+                self.handle_autocomplete_command(args.trim(), json)?;
+                Ok(true)
+            }
+            "/cursor" | "/hardware-cursor" => {
+                let args = parts.collect::<Vec<_>>().join(" ");
+                self.handle_cursor_command(args.trim(), json)?;
+                Ok(true)
+            }
+            "/terminal" | "/terminal-progress" => {
+                let args = parts.collect::<Vec<_>>().join(" ");
+                self.handle_terminal_command(args.trim(), json)?;
+                Ok(true)
+            }
+            "/editor" | "/input" => {
+                let args = parts.collect::<Vec<_>>().join(" ");
+                self.handle_editor_command(args.trim(), json)?;
+                Ok(true)
+            }
             "/steer" => {
                 let input = parts.collect::<Vec<_>>().join(" ");
-                self.steer_active_turn(input.trim(), json)?;
+                self.handle_steer_command(input.trim(), json)?;
                 Ok(true)
             }
             "/interrupt" | "/cancel" => {
@@ -3071,7 +6208,7 @@ impl ShellSession {
             }
             "/btw" => {
                 let question = parts.collect::<Vec<_>>().join(" ");
-                self.handle_btw_command(question.trim(), json)?;
+                self.handle_btw_command(question.trim(), provider, json)?;
                 Ok(true)
             }
             "/again" => {
@@ -3087,7 +6224,14 @@ impl ShellSession {
                 Ok(true)
             }
             other => {
-                self.print_text(&format!("unknown command: {other}. Try /help."), json)?;
+                let args = parts.collect::<Vec<_>>().join(" ");
+                match self.prepare_and_run_command(other, &args, provider, json) {
+                    Ok(()) => {}
+                    Err(error) if is_command_prepare_unknown_error(&error) => {
+                        self.print_text(&format!("unknown command: {other}. Try /help."), json)?;
+                    }
+                    Err(error) => return Err(error),
+                }
                 Ok(true)
             }
         }
@@ -3322,6 +6466,7 @@ impl ShellSession {
         *provider = ProviderConfig::OpenAiCompatible(with_default_reasoning_effort(
             OpenAiCompatibleConfig {
                 flavor: DirectProviderFlavor::OpenAiCompatible,
+                provider_id: None,
                 model,
                 base_url: None,
                 api_key_env: Some(env_name.to_string()),
@@ -3340,6 +6485,38 @@ impl ShellSession {
             ),
             json_output,
         )
+    }
+
+    fn print_memory_settings_value_update(
+        &mut self,
+        label: &str,
+        value: &str,
+        json_output: bool,
+    ) -> Result<(), String> {
+        if json_output {
+            return self.print_value(
+                "memory",
+                json!({ "settings": memory_settings_json(&self.memory_settings) }),
+                json_output,
+            );
+        }
+        self.print_text(&format!("memory: {label} {value}"), json_output)
+    }
+
+    fn print_memory_settings_text_update(
+        &mut self,
+        label: &str,
+        value: String,
+        json_output: bool,
+    ) -> Result<(), String> {
+        if json_output {
+            return self.print_value(
+                "memory",
+                json!({ "settings": memory_settings_json(&self.memory_settings) }),
+                json_output,
+            );
+        }
+        self.print_text(&format!("memory: {label} {value}"), json_output)
     }
 
     fn configure_codex_login(
@@ -3385,7 +6562,7 @@ impl ShellSession {
 
         let model = self
             .session_model(provider)
-            .filter(|model| *model != "mock-scripted")
+            .filter(|model| *model != MOCK_MODEL_ID)
             .map(str::to_string)
             .or_else(|| env::var("OPPI_OPENAI_CODEX_MODEL").ok())
             .or_else(default_model_from_env)
@@ -3393,6 +6570,7 @@ impl ShellSession {
         *provider = ProviderConfig::OpenAiCompatible(with_default_reasoning_effort(
             OpenAiCompatibleConfig {
                 flavor: DirectProviderFlavor::OpenAiCodex,
+                provider_id: None,
                 model,
                 base_url: env::var("OPPI_OPENAI_CODEX_BASE_URL")
                     .ok()
@@ -3474,6 +6652,7 @@ impl ShellSession {
         *provider = ProviderConfig::OpenAiCompatible(with_default_reasoning_effort(
             OpenAiCompatibleConfig {
                 flavor: DirectProviderFlavor::GitHubCopilot,
+                provider_id: None,
                 model,
                 base_url: Some(base_url),
                 api_key_env: None,
@@ -3498,7 +6677,7 @@ impl ShellSession {
     ) -> Result<(), String> {
         let selected_model = self
             .session_model(provider)
-            .filter(|model| *model != "mock-scripted")
+            .filter(|model| *model != MOCK_MODEL_ID)
             .unwrap_or(MERIDIAN_DEFAULT_MODEL)
             .to_string();
         let config = meridian_provider_config(Some(&selected_model));
@@ -3695,32 +6874,201 @@ impl ShellSession {
     fn handle_models_command(
         &mut self,
         provider: &ProviderConfig,
-        filter: &str,
+        args: &str,
         json_output: bool,
     ) -> Result<(), String> {
-        let models = main_model_refs_for_provider(self, provider);
+        let (show_all, filter) = parse_models_command_args(args);
+        let available_only = !show_all;
+        let result = self.model_registry_result(provider, available_only)?;
+        let models = result.items;
+        let diagnostic_messages = result
+            .diagnostics
+            .iter()
+            .map(|diagnostic| diagnostic.message.clone())
+            .collect::<Vec<_>>();
         if json_output {
             self.print_value(
                 "models",
                 json!({
-                    "items": filter_models(&models, filter),
-                    "selectedModel": self.selected_model,
+                    "items": filter_models(&models, &filter),
+                    "diagnostics": result.diagnostics,
+                    "availableOnly": result.available_only,
+                    "selectedModel": result.selected_model,
+                    "provider": result.provider,
+                    "scope": result.scope,
                     "filter": if filter.is_empty() { Value::Null } else { json!(filter) },
                     "roleModels": self.role_models,
                     "roleProfilePath": self.role_profile_path.display().to_string(),
-                    "source": "native provider catalog + current selection",
+                    "source": if available_only { "runtime native registry (available)" } else { "runtime native registry (all)" },
                 }),
                 json_output,
             )
         } else {
-            let rendered = format_model_list(
+            let selected_model = result
+                .selected_model
+                .as_ref()
+                .map(|model| model.id.as_str())
+                .or_else(|| self.selected_model.as_deref());
+            let rendered = format_model_list_with_diagnostics(
                 &models,
-                self.selected_model.as_deref(),
-                filter,
+                selected_model,
+                &filter,
                 &self.role_models,
+                &diagnostic_messages,
             );
             self.print_text(&rendered, json_output)
         }
+    }
+
+    fn model_registry_result(
+        &mut self,
+        provider: &ProviderConfig,
+        available_only: bool,
+    ) -> Result<ModelRegistryListResult, String> {
+        self.model_registry_result_with_scope(
+            provider,
+            available_only,
+            self.scoped_model_ids.clone(),
+        )
+    }
+
+    fn model_registry_result_with_scope(
+        &mut self,
+        provider: &ProviderConfig,
+        available_only: bool,
+        scope: Vec<String>,
+    ) -> Result<ModelRegistryListResult, String> {
+        let value = self.rpc.request(
+            "model/registry",
+            json!({
+                "threadId": self.thread_id,
+                "provider": provider_name(provider),
+                "selectedModelId": self.session_model(provider),
+                "scope": scope.clone(),
+                "availableOnly": available_only,
+            }),
+        )?;
+        let result: ModelRegistryListResult = serde_json::from_value(value)
+            .map_err(|error| format!("decode model/registry: {error}"))?;
+        if scope == self.scoped_model_ids {
+            self.model_registry_cache = Some(ModelRegistryCache {
+                provider: result.provider.clone(),
+                selected_model: result.selected_model.as_ref().map(|model| model.id.clone()),
+                scope: result.scope.clone(),
+                available_only: result.available_only,
+                items: result.items.clone(),
+            });
+        }
+        Ok(result)
+    }
+
+    fn refresh_model_registry_cache(
+        &mut self,
+        provider: &ProviderConfig,
+        available_only: bool,
+    ) -> Result<(), String> {
+        let provider_name = provider_name(provider);
+        let selected_model = self.session_model(provider).map(str::to_string);
+        if self.model_registry_cache.as_ref().is_some_and(|cache| {
+            cache.provider == provider_name
+                && cache.selected_model == selected_model
+                && cache.scope == self.scoped_model_ids
+                && cache.available_only == available_only
+        }) {
+            return Ok(());
+        }
+        self.model_registry_result(provider, available_only)
+            .map(|_| ())
+    }
+
+    fn cached_model_refs_for_provider(
+        &self,
+        provider: &ProviderConfig,
+        available_only: bool,
+    ) -> Option<&[ModelRef]> {
+        let provider_name = provider_name(provider);
+        self.model_registry_cache
+            .as_ref()
+            .filter(|cache| {
+                cache.provider == provider_name && cache.available_only == available_only
+            })
+            .map(|cache| cache.items.as_slice())
+    }
+
+    fn current_model_context_window(&self, provider: &ProviderConfig) -> Option<u64> {
+        let provider_name = provider_name(provider);
+        let selected = self.session_model(provider)?;
+        self.model_registry_cache
+            .as_ref()
+            .filter(|cache| {
+                cache.provider == provider_name
+                    && cache.selected_model.as_deref() == Some(selected)
+                    && cache.scope == self.scoped_model_ids
+            })
+            .and_then(|cache| {
+                cache
+                    .items
+                    .iter()
+                    .find(|model| model.provider == provider_name && model.id == selected)
+                    .and_then(|model| model.context_window)
+            })
+    }
+
+    fn compaction_trigger_telemetry_for_provider(
+        &mut self,
+        provider: &ProviderConfig,
+    ) -> CompactionTriggerTelemetry {
+        let _ = self.refresh_model_registry_cache(provider, false);
+        let context_window = self
+            .usage_state
+            .latest_context_window
+            .or_else(|| self.current_model_context_window(provider));
+        compaction_trigger_telemetry(
+            &self.compact_settings,
+            self.usage_state.latest_context_tokens,
+            context_window,
+            active_todos(&self.todo_state).len(),
+        )
+    }
+
+    fn cached_model_ids_for_provider(
+        &self,
+        provider: &ProviderConfig,
+        available_only: bool,
+    ) -> Option<Vec<String>> {
+        self.cached_model_refs_for_provider(provider, available_only)
+            .map(|items| items.iter().map(|model| model.id.clone()).collect())
+    }
+
+    fn runtime_model_refs_for_provider(
+        &mut self,
+        provider: &ProviderConfig,
+        available_only: bool,
+    ) -> Result<Vec<ModelRef>, String> {
+        Ok(self.model_registry_result(provider, available_only)?.items)
+    }
+
+    fn runtime_model_refs_for_provider_with_scope(
+        &mut self,
+        provider: &ProviderConfig,
+        available_only: bool,
+        scope: Vec<String>,
+    ) -> Result<Vec<ModelRef>, String> {
+        Ok(self
+            .model_registry_result_with_scope(provider, available_only, scope)?
+            .items)
+    }
+
+    fn runtime_model_ids_for_provider(
+        &mut self,
+        provider: &ProviderConfig,
+        available_only: bool,
+    ) -> Result<Vec<String>, String> {
+        Ok(self
+            .runtime_model_refs_for_provider(provider, available_only)?
+            .into_iter()
+            .map(|model| model.id)
+            .collect())
     }
 
     fn handle_suggest_next_command(
@@ -3851,7 +7199,8 @@ impl ShellSession {
     ) -> Result<(), String> {
         match args.as_slice() {
             [] | ["list"] => {
-                let rendered = format_scoped_models(self, provider);
+                let registry = self.model_registry_result(provider, false)?;
+                let rendered = format_scoped_models_from_registry(provider, &registry);
                 self.print_text(&rendered, json_output)
             }
             ["enable", model] | ["add", model] => {
@@ -3868,7 +7217,11 @@ impl ShellSession {
                         Some(self.scoped_model_ids.as_slice()),
                     )?;
                 }
-                self.print_text(&format_scoped_models(self, provider), json_output)
+                let registry = self.model_registry_result(provider, false)?;
+                self.print_text(
+                    &format_scoped_models_from_registry(provider, &registry),
+                    json_output,
+                )
             }
             ["disable" | "remove", model] => {
                 let model = model.trim();
@@ -3877,7 +7230,11 @@ impl ShellSession {
                     &self.role_profile_path,
                     Some(self.scoped_model_ids.as_slice()),
                 )?;
-                self.print_text(&format_scoped_models(self, provider), json_output)
+                let registry = self.model_registry_result(provider, false)?;
+                self.print_text(
+                    &format_scoped_models_from_registry(provider, &registry),
+                    json_output,
+                )
             }
             ["clear" | "all"] => {
                 self.scoped_model_ids.clear();
@@ -3970,6 +7327,26 @@ impl ShellSession {
         model: &str,
         json_output: bool,
     ) -> Result<(), String> {
+        if model.contains('/') {
+            let custom_provider =
+                custom_provider_config_for_model_at_path(model, &models_json_path())?;
+            let selected_model = current_provider_model(&custom_provider)
+                .unwrap_or(model)
+                .to_string();
+            *provider = custom_provider;
+            self.register_model_ref(&selected_model, provider_name(provider), None)?;
+            let value = self.rpc.request(
+                "model/select",
+                json!({ "threadId": self.thread_id, "modelId": selected_model }),
+            )?;
+            self.selected_model = Some(selected_model.clone());
+            let selected_label = format!("{}/{}", provider_name(provider), selected_model);
+            return if json_output {
+                self.print_value("modelSelected", value, json_output)
+            } else {
+                self.print_text(&format!("model set to {selected_label}"), json_output)
+            };
+        }
         self.register_model_ref(model, provider_name(provider), None)?;
         let value = self.rpc.request(
             "model/select",
@@ -3994,9 +7371,13 @@ impl ShellSession {
 
     fn model_status(&self, provider: &ProviderConfig) -> String {
         let session_model = self.session_model(provider).unwrap_or("none");
+        let session_model_display = display_model_id(session_model);
         format!(
-            "model: {session_model}\nselected: {}\n{}\nroleProfileSource: {}",
-            self.selected_model.as_deref().unwrap_or("none"),
+            "model: {session_model_display}\nselected: {}\n{}\nroleProfileSource: {}",
+            self.selected_model
+                .as_deref()
+                .map(display_model_id)
+                .unwrap_or("none"),
             format_role_profiles(&self.role_models, self.session_model(provider)),
             self.role_profile_path.display()
         )
@@ -4005,11 +7386,11 @@ impl ShellSession {
     fn register_provider_model(&mut self, provider: &ProviderConfig) -> Result<(), String> {
         match provider {
             ProviderConfig::Mock => {
-                self.register_model_ref("mock-scripted", "mock", None)?;
-                self.selected_model = Some("mock-scripted".to_string());
+                self.register_model_ref(MOCK_MODEL_ID, "mock", None)?;
+                self.selected_model = Some(MOCK_MODEL_ID.to_string());
                 let _ = self.rpc.request(
                     "model/select",
-                    json!({ "threadId": self.thread_id, "modelId": "mock-scripted" }),
+                    json!({ "threadId": self.thread_id, "modelId": MOCK_MODEL_ID }),
                 )?;
             }
             ProviderConfig::OpenAiCompatible(config) => {
@@ -4051,6 +7432,7 @@ impl ShellSession {
                     "id": model,
                     "provider": provider,
                     "displayName": model,
+                    "contextWindow": null,
                     "role": role,
                 }
             }),
@@ -4115,7 +7497,10 @@ impl ShellSession {
         let effort = self
             .effective_effort_for_role(normalized, provider)
             .unwrap_or_else(|| "off".to_string());
-        format!("role={normalized} model={model} ({model_source}) effort={effort}")
+        format!(
+            "role={normalized} model={} ({model_source}) effort={effort}",
+            display_model_id(&model)
+        )
     }
 
     fn handle_resume_command(&mut self, args: Vec<&str>, json_output: bool) -> Result<(), String> {
@@ -4157,7 +7542,13 @@ impl ShellSession {
         &mut self,
         args: Vec<&str>,
         json_output: bool,
+        mode: NewThreadMode,
     ) -> Result<(), String> {
+        if mode == NewThreadMode::Clear {
+            self.maybe_remember_hoppi_clear_recap();
+            self.maybe_drain_memory_jobs(json_output)?;
+            maybe_run_hoppi_lifecycle_sync(self, HoppiSyncLifecycle::Clear, json_output)?;
+        }
         let title = if args.is_empty() {
             "OPPi shell".to_string()
         } else {
@@ -4186,74 +7577,176 @@ impl ShellSession {
         self.switch_to_thread(value, json_output, "forked")
     }
 
-    fn handle_tree_command(&mut self, args: Vec<&str>, json_output: bool) -> Result<(), String> {
-        if let Some(action) = args.first().copied() {
-            match action {
-                "fold" | "collapse" => {
-                    let thread_id = args
-                        .get(1)
-                        .copied()
-                        .ok_or_else(|| "usage: /tree fold <thread-id>".to_string())?;
-                    self.folded_threads.insert(thread_id.to_string());
-                    return self.print_text(&format!("session {thread_id} folded"), json_output);
+    fn handle_tree_command(
+        &mut self,
+        command: &str,
+        args: Vec<&str>,
+        provider: Option<&ProviderConfig>,
+        json_output: bool,
+    ) -> Result<(), String> {
+        match tree_command_route_for_command(command, &args)? {
+            TreeCommandRoute::Entries { after, limit } => {
+                let limit = limit.unwrap_or(TREE_ENTRY_DEFAULT_LIMIT);
+                let value = self.rpc.request(
+                    "thread/items",
+                    json!({
+                        "threadId": self.thread_id,
+                        "after": after,
+                        "filter": self.tree_filter_mode.as_str(),
+                        "limit": limit
+                    }),
+                )?;
+                let result: ThreadItemsResult = serde_json::from_value(value)
+                    .map_err(|error| format!("decode thread/items: {error}"))?;
+                let returned_count = result.entries.len();
+                let next_after = thread_item_tree_next_after(&result.entries, result.total_count);
+                if json_output {
+                    return self.print_value(
+                        "treeEntries",
+                        json!({
+                            "threadId": self.thread_id,
+                            "after": result.after,
+                            "limit": limit,
+                            "treeFilterMode": self.tree_filter_mode.as_str(),
+                            "branch": &result.branch,
+                            "returnedCount": returned_count,
+                            "totalCount": result.total_count,
+                            "nextAfter": next_after,
+                            "items": thread_item_tree_json_from_entries(&result.entries),
+                        }),
+                        json_output,
+                    );
                 }
-                "unfold" | "expand" => {
-                    let thread_id = args
-                        .get(1)
-                        .copied()
-                        .ok_or_else(|| "usage: /tree unfold <thread-id>".to_string())?;
-                    self.folded_threads.remove(thread_id);
-                    return self.print_text(&format!("session {thread_id} unfolded"), json_output);
-                }
-                "toggle" => {
-                    let thread_id = args
-                        .get(1)
-                        .copied()
-                        .ok_or_else(|| "usage: /tree toggle <thread-id>".to_string())?;
-                    let state = if self.folded_threads.remove(thread_id) {
-                        "unfolded"
-                    } else {
-                        self.folded_threads.insert(thread_id.to_string());
-                        "folded"
-                    };
-                    return self.print_text(&format!("session {thread_id} {state}"), json_output);
-                }
-                "rename" => {
-                    let thread_id = args
-                        .get(1)
-                        .copied()
-                        .ok_or_else(|| "usage: /sessions rename <thread-id> <title>".to_string())?;
-                    let title = args.get(2..).unwrap_or(&[]).join(" ");
-                    if title.trim().is_empty() {
-                        return Err("usage: /sessions rename <thread-id> <title>".to_string());
-                    }
-                    let value = self.rpc.request(
-                        "thread/rename",
-                        json!({ "threadId": thread_id, "title": title }),
-                    )?;
-                    return self.print_value("session", value, json_output);
-                }
-                "delete" | "archive" => {
-                    let thread_id = args
-                        .get(1)
-                        .copied()
-                        .ok_or_else(|| "usage: /sessions delete <thread-id>".to_string())?;
-                    let value = self
-                        .rpc
-                        .request("thread/archive", json!({ "threadId": thread_id }))?;
-                    return self.print_value("session", value, json_output);
-                }
-                _ => {}
+                return self.print_text(
+                    &format_thread_item_tree_from_entries(
+                        &result.entries,
+                        Some(&result.branch),
+                        self.tree_filter_mode,
+                        result.after,
+                        result.total_count,
+                        next_after,
+                    ),
+                    json_output,
+                );
             }
+            TreeCommandRoute::Label { event_id, labels } => {
+                let value = self.rpc.request(
+                    "thread/item-labels/set",
+                    json!({
+                        "threadId": self.thread_id,
+                        "eventId": event_id,
+                        "labels": labels
+                    }),
+                )?;
+                if json_output {
+                    return self.print_value("treeItemLabels", value, json_output);
+                }
+                let result: ThreadItemLabelsResult = serde_json::from_value(value)
+                    .map_err(|error| format!("decode thread/item-labels/set: {error}"))?;
+                return self.print_text(&format_thread_item_labels_result(&result), json_output);
+            }
+            TreeCommandRoute::Fork { event_id, title } => {
+                let value = self.rpc.request(
+                    "thread/item-fork",
+                    json!({
+                        "threadId": self.thread_id,
+                        "eventId": event_id,
+                        "title": title
+                    }),
+                )?;
+                return self.switch_to_thread(value, json_output, "forked");
+            }
+            TreeCommandRoute::Edit { event_id, input } => {
+                let provider = provider.ok_or_else(|| {
+                    "tree edit requires an interactive provider context".to_string()
+                })?;
+                let title = format!("Edit from event {event_id}");
+                let value = self.rpc.request(
+                    "thread/item-edit-fork",
+                    json!({
+                        "threadId": self.thread_id,
+                        "eventId": event_id,
+                        "input": input.clone(),
+                        "title": title
+                    }),
+                )?;
+                let input = value
+                    .get("input")
+                    .and_then(Value::as_str)
+                    .unwrap_or(input.as_str())
+                    .to_string();
+                self.switch_to_thread(value, json_output, "forked")?;
+                self.start_turn_for_role(&input, provider, json_output, Some("executor"))?;
+                return Ok(());
+            }
+            TreeCommandRoute::Fold(thread_id) => {
+                self.folded_threads.insert(thread_id.clone());
+                return self.print_text(&format!("session {thread_id} folded"), json_output);
+            }
+            TreeCommandRoute::Unfold(thread_id) => {
+                self.folded_threads.remove(&thread_id);
+                return self.print_text(&format!("session {thread_id} unfolded"), json_output);
+            }
+            TreeCommandRoute::Toggle(thread_id) => {
+                let state = if self.folded_threads.remove(&thread_id) {
+                    "unfolded"
+                } else {
+                    self.folded_threads.insert(thread_id.clone());
+                    "folded"
+                };
+                return self.print_text(&format!("session {thread_id} {state}"), json_output);
+            }
+            TreeCommandRoute::Rename { thread_id, title } => {
+                let value = self.rpc.request(
+                    "thread/rename",
+                    json!({ "threadId": thread_id, "title": title }),
+                )?;
+                return self.print_value("session", value, json_output);
+            }
+            TreeCommandRoute::Archive(thread_id) => {
+                let value = self
+                    .rpc
+                    .request("thread/archive", json!({ "threadId": thread_id }))?;
+                return self.print_value("session", value, json_output);
+            }
+            TreeCommandRoute::SetFilter(mode) => {
+                self.tree_filter_mode = mode;
+                save_tree_filter_mode_setting(&self.role_profile_path, mode)?;
+                if json_output {
+                    return self.print_value(
+                        "tree",
+                        json!({ "treeFilterMode": self.tree_filter_mode.as_str() }),
+                        json_output,
+                    );
+                }
+                return self.print_text(&format_tree_status(self.tree_filter_mode), json_output);
+            }
+            TreeCommandRoute::Status => {
+                if json_output {
+                    return self.print_value(
+                        "tree",
+                        json!({ "treeFilterMode": self.tree_filter_mode.as_str() }),
+                        json_output,
+                    );
+                }
+                return self.print_text(&format_tree_status(self.tree_filter_mode), json_output);
+            }
+            TreeCommandRoute::Show => {}
         }
         let value = self.rpc.request("thread/list", json!({}))?;
         if json_output {
+            let mut value = value;
+            value["treeFilterMode"] = json!(self.tree_filter_mode.as_str());
             return self.print_value("tree", value, json_output);
         }
         let result: RuntimeListResult<Thread> = serde_json::from_value(value)
             .map_err(|error| format!("decode thread/list: {error}"))?;
-        let mut rendered =
-            format_thread_tree_with_folded(&result.items, &self.thread_id, &self.folded_threads);
+        let mut rendered = format_thread_tree_with_filter(
+            &result.items,
+            &self.thread_id,
+            &self.folded_threads,
+            self.tree_filter_mode,
+        );
         if let Some(summary) = self.latest_handoff_summary()? {
             rendered.push_str(&format!("\nsummary: {summary}"));
         }
@@ -4272,6 +7765,18 @@ impl ShellSession {
             "lastPrompt": self.last_prompt.as_deref().map(redact_debug_text),
             "currentGoal": self.current_goal.as_ref(),
             "followUpQueue": self.follow_up_queue.len(),
+            "followUpMode": self.follow_up_mode.as_str(),
+            "steeringQueue": self.steering_queue.len(),
+            "steeringMode": self.steering_mode.as_str(),
+            "quietStartup": self.quiet_startup,
+            "enableSkillCommands": self.enable_skill_commands,
+            "autocompleteMaxVisible": self.autocomplete_max_visible,
+            "showHardwareCursor": self.show_hardware_cursor,
+            "doubleEscapeAction": self.double_escape_action.as_str(),
+            "treeFilterMode": self.tree_filter_mode.as_str(),
+            "showTerminalProgress": self.show_terminal_progress,
+            "terminalClearOnShrink": self.terminal_clear_on_shrink,
+            "editorPaddingX": self.editor_padding_x,
             "cursor": self.cursor,
             "activeTurnId": self.active_turn_id,
             "roleModels": self.role_models,
@@ -4381,6 +7886,8 @@ impl ShellSession {
         self.tool_calls.clear();
         self.background_summary = None;
         self.follow_up_queue.clear();
+        self.steering_queue.clear();
+        self.steered_turns.clear();
         self.ui.clear();
         self.load_thread_state(json_output)?;
         if json_output {
@@ -4396,6 +7903,8 @@ impl ShellSession {
 
     fn load_thread_state(&mut self, render_pauses: bool) -> Result<(), String> {
         self.current_goal = None;
+        self.usage_state = NativeUsageState::default();
+        self.memory_status = None;
         let listed = self.rpc.request(
             "events/list",
             json!({ "threadId": self.thread_id, "after": 0, "limit": 5000 }),
@@ -4416,6 +7925,12 @@ impl ShellSession {
                 }
                 EventKind::ThreadGoalCleared { .. } => {
                     self.current_goal = None;
+                }
+                EventKind::Diagnostic { diagnostic } => {
+                    self.usage_state.observe_provider_diagnostic(diagnostic);
+                }
+                EventKind::MemoryStatusChanged { status } => {
+                    self.memory_status = Some(status.clone());
                 }
                 EventKind::TodosUpdated { state } => self.todo_state = state.clone(),
                 EventKind::SuggestionOffered { suggestion } if suggestion.confidence >= 0.70 => {
@@ -4445,6 +7960,8 @@ impl ShellSession {
                     self.pending_question = Some(PendingQuestion {
                         turn_id: event.turn_id.clone().unwrap_or_default(),
                         request: request.clone(),
+                        requested_at: Instant::now(),
+                        deadline_at: ask_user_deadline_at(request),
                     });
                     if render_pauses {
                         println!("{}", format_ask_user_panel(request));
@@ -4462,6 +7979,9 @@ impl ShellSession {
                 EventKind::TurnCompleted { .. }
                 | EventKind::TurnAborted { .. }
                 | EventKind::TurnInterrupted { .. } => {
+                    if let Some(turn_id) = event.turn_id.as_ref() {
+                        self.steered_turns.remove(turn_id);
+                    }
                     if self.pending_approval.as_ref().is_some_and(|pending| {
                         Some(pending.turn_id.as_str()) == event.turn_id.as_deref()
                     }) {
@@ -4475,7 +7995,7 @@ impl ShellSession {
                 }
                 _ => {}
             }
-            if let Some(line) = render_event_line_themed(&event, &self.theme, &self.tool_calls) {
+            if let Some(line) = self.render_event_line(&event) {
                 self.ui
                     .push_event_transcript(&event, line, &self.tool_calls);
             }
@@ -4565,14 +8085,964 @@ impl ShellSession {
         )
     }
 
+    fn sync_permission_review_settings(&mut self) -> Result<(), String> {
+        self.rpc.request(
+            "permissions/settings/update",
+            json!({
+                "threadId": self.thread_id,
+                "settings": self.permission_review_settings,
+            }),
+        )?;
+        Ok(())
+    }
+
+    fn sync_ask_user_settings(&mut self) -> Result<(), String> {
+        self.rpc.request(
+            "ask-user/settings/update",
+            json!({
+                "threadId": self.thread_id,
+                "settings": self.ask_user_settings,
+            }),
+        )?;
+        Ok(())
+    }
+
+    fn handle_ask_user_command(&mut self, args: &str, json_output: bool) -> Result<(), String> {
+        match ask_user_command_route(args)? {
+            AskUserCommandRoute::Status => {
+                if json_output {
+                    return self.print_value(
+                        "askUser",
+                        json!({ "settings": self.ask_user_settings }),
+                        json_output,
+                    );
+                }
+                self.print_text(
+                    &format!(
+                        "ask_user: question timeout {}",
+                        format_ask_user_timeout_label(self.ask_user_settings.timeout_ms)
+                    ),
+                    json_output,
+                )
+            }
+            AskUserCommandRoute::SetTimeoutMs(timeout_ms) => {
+                self.ask_user_settings.timeout_ms = timeout_ms;
+                save_ask_user_settings(&self.role_profile_path, &self.ask_user_settings)?;
+                self.sync_ask_user_settings()?;
+                if json_output {
+                    return self.print_value(
+                        "askUser",
+                        json!({ "settings": self.ask_user_settings }),
+                        json_output,
+                    );
+                }
+                self.print_text(
+                    &format!(
+                        "ask_user: question timeout set to {}",
+                        format_ask_user_timeout_label(timeout_ms)
+                    ),
+                    json_output,
+                )
+            }
+        }
+    }
+
+    fn handle_follow_up_command(&mut self, args: &str, json_output: bool) -> Result<(), String> {
+        match follow_up_command_route(args)? {
+            FollowUpCommandRoute::Status => {
+                if json_output {
+                    return self.print_value(
+                        "followUp",
+                        json!({
+                            "mode": self.follow_up_mode.as_str(),
+                            "queued": self.follow_up_queue.len(),
+                        }),
+                        json_output,
+                    );
+                }
+                self.print_text(
+                    &format_follow_up_status(self.follow_up_mode, self.follow_up_queue.len()),
+                    json_output,
+                )
+            }
+            FollowUpCommandRoute::SetMode(mode) => {
+                self.follow_up_mode = mode;
+                save_follow_up_mode_setting(&self.role_profile_path, mode)?;
+                if json_output {
+                    return self.print_value(
+                        "followUp",
+                        json!({
+                            "mode": self.follow_up_mode.as_str(),
+                            "queued": self.follow_up_queue.len(),
+                        }),
+                        json_output,
+                    );
+                }
+                self.print_text(
+                    &format!("follow-up: mode set to {}", mode.as_str()),
+                    json_output,
+                )
+            }
+        }
+    }
+
+    fn handle_steer_command(&mut self, args: &str, json_output: bool) -> Result<(), String> {
+        match steer_command_route(args)? {
+            SteerCommandRoute::Status => {
+                if json_output {
+                    return self.print_value(
+                        "steer",
+                        json!({
+                            "mode": self.steering_mode.as_str(),
+                            "queued": self.steering_queue.len(),
+                        }),
+                        json_output,
+                    );
+                }
+                self.print_text(
+                    &format_steering_status(self.steering_mode, self.steering_queue.len()),
+                    json_output,
+                )
+            }
+            SteerCommandRoute::SetMode(mode) => {
+                self.steering_mode = mode;
+                save_steering_mode_setting(&self.role_profile_path, mode)?;
+                if json_output {
+                    return self.print_value(
+                        "steer",
+                        json!({
+                            "mode": self.steering_mode.as_str(),
+                            "queued": self.steering_queue.len(),
+                        }),
+                        json_output,
+                    );
+                }
+                self.print_text(
+                    &format!("steer: mode set to {}", mode.as_str()),
+                    json_output,
+                )
+            }
+            SteerCommandRoute::Send(input) => self.steer_active_turn(&input, json_output),
+        }
+    }
+
+    fn handle_startup_command(&mut self, args: &str, json_output: bool) -> Result<(), String> {
+        match startup_command_route(args)? {
+            StartupCommandRoute::Status => {
+                if json_output {
+                    return self.print_value(
+                        "startup",
+                        json!({ "quietStartup": self.quiet_startup }),
+                        json_output,
+                    );
+                }
+                self.print_text(&format_startup_status(self.quiet_startup), json_output)
+            }
+            StartupCommandRoute::SetQuietStartup(enabled) => {
+                self.quiet_startup = enabled;
+                save_quiet_startup_setting(&self.role_profile_path, enabled)?;
+                if json_output {
+                    return self.print_value(
+                        "startup",
+                        json!({ "quietStartup": self.quiet_startup }),
+                        json_output,
+                    );
+                }
+                self.print_text(
+                    &format!("startup: quiet {}", enabled_label(enabled)),
+                    json_output,
+                )
+            }
+        }
+    }
+
+    fn handle_autocomplete_command(&mut self, args: &str, json_output: bool) -> Result<(), String> {
+        match autocomplete_command_route(args)? {
+            AutocompleteCommandRoute::Status => {
+                if json_output {
+                    return self.print_value(
+                        "autocomplete",
+                        json!({ "autocompleteMaxVisible": self.autocomplete_max_visible }),
+                        json_output,
+                    );
+                }
+                self.print_text(
+                    &format_autocomplete_status(self.autocomplete_max_visible),
+                    json_output,
+                )
+            }
+            AutocompleteCommandRoute::SetMaxVisible(max_visible) => {
+                self.autocomplete_max_visible = max_visible;
+                save_autocomplete_max_visible_setting(&self.role_profile_path, max_visible)?;
+                if json_output {
+                    return self.print_value(
+                        "autocomplete",
+                        json!({ "autocompleteMaxVisible": self.autocomplete_max_visible }),
+                        json_output,
+                    );
+                }
+                self.print_text(
+                    &format!("autocomplete: visible items set to {max_visible}"),
+                    json_output,
+                )
+            }
+        }
+    }
+
+    fn handle_cursor_command(&mut self, args: &str, json_output: bool) -> Result<(), String> {
+        match cursor_command_route(args)? {
+            CursorCommandRoute::Status => {
+                if json_output {
+                    return self.print_value(
+                        "cursor",
+                        json!({ "showHardwareCursor": self.show_hardware_cursor }),
+                        json_output,
+                    );
+                }
+                self.print_text(
+                    &format_cursor_status(self.show_hardware_cursor),
+                    json_output,
+                )
+            }
+            CursorCommandRoute::SetHardwareCursor(enabled) => {
+                self.show_hardware_cursor = enabled;
+                save_show_hardware_cursor_setting(&self.role_profile_path, enabled)?;
+                if json_output {
+                    return self.print_value(
+                        "cursor",
+                        json!({ "showHardwareCursor": self.show_hardware_cursor }),
+                        json_output,
+                    );
+                }
+                self.print_text(
+                    &format!("cursor: hardware {}", enabled_label(enabled)),
+                    json_output,
+                )
+            }
+        }
+    }
+
+    fn handle_editor_command(&mut self, args: &str, json_output: bool) -> Result<(), String> {
+        match editor_command_route(args)? {
+            EditorCommandRoute::Status => {
+                if json_output {
+                    return self.print_value(
+                        "editor",
+                        json!({
+                            "editorPaddingX": self.editor_padding_x,
+                            "doubleEscapeAction": self.double_escape_action.as_str(),
+                        }),
+                        json_output,
+                    );
+                }
+                self.print_text(
+                    &format_editor_status(self.editor_padding_x, self.double_escape_action),
+                    json_output,
+                )
+            }
+            EditorCommandRoute::SetPaddingX(padding_x) => {
+                self.editor_padding_x = padding_x;
+                save_editor_padding_x_setting(&self.role_profile_path, padding_x)?;
+                if json_output {
+                    return self.print_value(
+                        "editor",
+                        json!({ "editorPaddingX": self.editor_padding_x }),
+                        json_output,
+                    );
+                }
+                self.print_text(&format!("editor: padding {padding_x}"), json_output)
+            }
+            EditorCommandRoute::SetDoubleEscapeAction(action) => {
+                self.double_escape_action = action;
+                save_double_escape_action_setting(&self.role_profile_path, action)?;
+                if json_output {
+                    return self.print_value(
+                        "editor",
+                        json!({ "doubleEscapeAction": self.double_escape_action.as_str() }),
+                        json_output,
+                    );
+                }
+                self.print_text(
+                    &format!("editor: double-escape {}", action.as_str()),
+                    json_output,
+                )
+            }
+        }
+    }
+
+    fn handle_terminal_command(&mut self, args: &str, json_output: bool) -> Result<(), String> {
+        match terminal_command_route(args)? {
+            TerminalCommandRoute::Status => {
+                if json_output {
+                    return self.print_value(
+                        "terminal",
+                        json!({
+                            "showTerminalProgress": self.show_terminal_progress,
+                            "clearOnShrink": self.terminal_clear_on_shrink,
+                        }),
+                        json_output,
+                    );
+                }
+                self.print_text(
+                    &format_terminal_status(
+                        self.show_terminal_progress,
+                        self.terminal_clear_on_shrink,
+                    ),
+                    json_output,
+                )
+            }
+            TerminalCommandRoute::SetProgress(enabled) => {
+                self.show_terminal_progress = enabled;
+                save_show_terminal_progress_setting(&self.role_profile_path, enabled)?;
+                if json_output {
+                    return self.print_value(
+                        "terminal",
+                        json!({ "showTerminalProgress": self.show_terminal_progress }),
+                        json_output,
+                    );
+                }
+                self.print_text(
+                    &format!("terminal: progress {}", enabled_label(enabled)),
+                    json_output,
+                )
+            }
+            TerminalCommandRoute::SetClearOnShrink(enabled) => {
+                self.terminal_clear_on_shrink = enabled;
+                save_terminal_clear_on_shrink_setting(&self.role_profile_path, enabled)?;
+                if json_output {
+                    return self.print_value(
+                        "terminal",
+                        json!({ "clearOnShrink": self.terminal_clear_on_shrink }),
+                        json_output,
+                    );
+                }
+                self.print_text(
+                    &format!("terminal: clear-on-shrink {}", enabled_label(enabled)),
+                    json_output,
+                )
+            }
+        }
+    }
+
+    fn handle_footer_command(&mut self, args: &str, json_output: bool) -> Result<(), String> {
+        match footer_command_route(args)? {
+            FooterCommandRoute::Status => {
+                if json_output {
+                    return self.print_value(
+                        "footer",
+                        json!({ "settings": footer_settings_json(&self.footer_settings) }),
+                        json_output,
+                    );
+                }
+                self.print_text(
+                    &format_footer_settings_status(&self.footer_settings),
+                    json_output,
+                )
+            }
+            FooterCommandRoute::SetBool(setting, shown) => {
+                setting.apply(&mut self.footer_settings, shown);
+                save_footer_settings(&self.role_profile_path, &self.footer_settings)?;
+                self.sync_ui_docks();
+                if json_output {
+                    return self.print_value(
+                        "footer",
+                        json!({ "settings": footer_settings_json(&self.footer_settings) }),
+                        json_output,
+                    );
+                }
+                self.print_text(
+                    &format!(
+                        "footer: {} {}",
+                        setting.label(),
+                        footer_visibility_label(shown)
+                    ),
+                    json_output,
+                )
+            }
+            FooterCommandRoute::SetUsageDisplay(display) => {
+                self.footer_settings.usage_display = display;
+                save_footer_settings(&self.role_profile_path, &self.footer_settings)?;
+                self.sync_ui_docks();
+                if json_output {
+                    return self.print_value(
+                        "footer",
+                        json!({ "settings": footer_settings_json(&self.footer_settings) }),
+                        json_output,
+                    );
+                }
+                self.print_text(
+                    &format!("footer: usage display {}", display.label()),
+                    json_output,
+                )
+            }
+        }
+    }
+
+    fn handle_images_command(&mut self, args: &str, json_output: bool) -> Result<(), String> {
+        match image_settings_command_route(args)? {
+            ImageSettingsCommandRoute::Status => {
+                if json_output {
+                    return self.print_value(
+                        "images",
+                        json!({ "settings": image_settings_json(&self.image_settings) }),
+                        json_output,
+                    );
+                }
+                self.print_text(
+                    &format_image_settings_status(&self.image_settings),
+                    json_output,
+                )
+            }
+            ImageSettingsCommandRoute::Capabilities => {
+                let capabilities = image_preview_capabilities_from_env(&self.image_settings);
+                if json_output {
+                    return self.print_value(
+                        "images",
+                        json!({
+                            "settings": image_settings_json(&self.image_settings),
+                            "capabilities": capabilities,
+                        }),
+                        json_output,
+                    );
+                }
+                self.print_text(
+                    &format_image_preview_capabilities(&capabilities),
+                    json_output,
+                )
+            }
+            ImageSettingsCommandRoute::SetShowImages(shown) => {
+                self.image_settings.show_images = shown;
+                save_image_settings(&self.role_profile_path, &self.image_settings)?;
+                if json_output {
+                    return self.print_value(
+                        "images",
+                        json!({ "settings": image_settings_json(&self.image_settings) }),
+                        json_output,
+                    );
+                }
+                self.print_text(
+                    &format!("images: previews {}", image_visibility_label(shown)),
+                    json_output,
+                )
+            }
+            ImageSettingsCommandRoute::SetImageWidthCells(width) => {
+                self.image_settings.image_width_cells = width;
+                save_image_settings(&self.role_profile_path, &self.image_settings)?;
+                if json_output {
+                    return self.print_value(
+                        "images",
+                        json!({ "settings": image_settings_json(&self.image_settings) }),
+                        json_output,
+                    );
+                }
+                self.print_text(&format!("images: width {width} cells"), json_output)
+            }
+            ImageSettingsCommandRoute::SetAutoResizeImages(enabled) => {
+                self.image_settings.auto_resize_images = enabled;
+                save_image_settings(&self.role_profile_path, &self.image_settings)?;
+                if json_output {
+                    return self.print_value(
+                        "images",
+                        json!({ "settings": image_settings_json(&self.image_settings) }),
+                        json_output,
+                    );
+                }
+                self.print_text(
+                    &format!("images: auto-resize {}", enabled_label(enabled)),
+                    json_output,
+                )
+            }
+            ImageSettingsCommandRoute::SetBlockImages(blocked) => {
+                self.image_settings.block_images = blocked;
+                save_image_settings(&self.role_profile_path, &self.image_settings)?;
+                if json_output {
+                    return self.print_value(
+                        "images",
+                        json!({ "settings": image_settings_json(&self.image_settings) }),
+                        json_output,
+                    );
+                }
+                self.print_text(
+                    &format!(
+                        "images: provider image sending {}",
+                        image_block_label(blocked)
+                    ),
+                    json_output,
+                )
+            }
+            ImageSettingsCommandRoute::SetPreviewProtocol(protocol) => {
+                self.image_settings.preview_protocol = protocol;
+                save_image_settings(&self.role_profile_path, &self.image_settings)?;
+                if json_output {
+                    return self.print_value(
+                        "images",
+                        json!({ "settings": image_settings_json(&self.image_settings) }),
+                        json_output,
+                    );
+                }
+                self.print_text(
+                    &format!("images: preview protocol {}", protocol.as_str()),
+                    json_output,
+                )
+            }
+        }
+    }
+
+    fn handle_compaction_command(
+        &mut self,
+        provider: &ProviderConfig,
+        args: &str,
+        json_output: bool,
+    ) -> Result<(), String> {
+        match compaction_command_route(args)? {
+            CompactionCommandRoute::Status => {
+                let telemetry = self.compaction_trigger_telemetry_for_provider(provider);
+                if json_output {
+                    return self.print_value(
+                        "compaction",
+                        json!({
+                            "settings": oppi_compact_settings_json(&self.compact_settings),
+                            "telemetry": compaction_trigger_telemetry_json(&telemetry),
+                        }),
+                        json_output,
+                    );
+                }
+                self.print_text(
+                    &format_oppi_compact_settings_status(&self.compact_settings, Some(&telemetry)),
+                    json_output,
+                )
+            }
+            CompactionCommandRoute::CompactNow => self.handle_memory_compact(&[], json_output),
+            CompactionCommandRoute::SetIdleEnabled(enabled) => {
+                self.compact_settings.idle_enabled = enabled;
+                save_oppi_compact_settings(&self.role_profile_path, &self.compact_settings)?;
+                self.sync_ui_docks();
+                if json_output {
+                    return self.print_value(
+                        "compaction",
+                        json!({ "settings": oppi_compact_settings_json(&self.compact_settings) }),
+                        json_output,
+                    );
+                }
+                self.print_text(
+                    &format!("compaction: idle {}", compaction_enabled_label(enabled)),
+                    json_output,
+                )
+            }
+            CompactionCommandRoute::SetIdleMinutes(minutes) => {
+                self.compact_settings.idle_minutes = minutes;
+                save_oppi_compact_settings(&self.role_profile_path, &self.compact_settings)?;
+                self.sync_ui_docks();
+                if json_output {
+                    return self.print_value(
+                        "compaction",
+                        json!({ "settings": oppi_compact_settings_json(&self.compact_settings) }),
+                        json_output,
+                    );
+                }
+                self.print_text(&format!("compaction: idle time {}m", minutes), json_output)
+            }
+            CompactionCommandRoute::SetIdleThresholdPercent(percent) => {
+                self.compact_settings.idle_threshold_percent = percent;
+                save_oppi_compact_settings(&self.role_profile_path, &self.compact_settings)?;
+                self.sync_ui_docks();
+                if json_output {
+                    return self.print_value(
+                        "compaction",
+                        json!({ "settings": oppi_compact_settings_json(&self.compact_settings) }),
+                        json_output,
+                    );
+                }
+                self.print_text(
+                    &format!("compaction: idle threshold {}%", percent),
+                    json_output,
+                )
+            }
+            CompactionCommandRoute::SetSmartThresholdPercent(percent) => {
+                self.compact_settings.smart_threshold_percent = percent;
+                save_oppi_compact_settings(&self.role_profile_path, &self.compact_settings)?;
+                self.sync_ui_docks();
+                if json_output {
+                    return self.print_value(
+                        "compaction",
+                        json!({ "settings": oppi_compact_settings_json(&self.compact_settings) }),
+                        json_output,
+                    );
+                }
+                self.print_text(
+                    &format!("compaction: smart threshold {}%", percent),
+                    json_output,
+                )
+            }
+        }
+    }
+
     fn handle_permissions_command(&mut self, args: &str, json_output: bool) -> Result<(), String> {
-        if !args.is_empty() {
-            let mode = parse_permission_mode(args).ok_or_else(|| {
-                "usage: /permissions [read-only|default|auto-review|full-access]".to_string()
-            })?;
-            self.permission_mode = mode;
-            self.permission_mode_source = "session/settings".to_string();
-            save_permission_mode_setting(&self.role_profile_path, mode)?;
+        match permissions_command_route(args)? {
+            PermissionCommandRoute::Status => {}
+            PermissionCommandRoute::History => {
+                let value = self.rpc.request(
+                    "permissions/history",
+                    json!({
+                        "threadId": self.thread_id,
+                        "limit": 20,
+                    }),
+                )?;
+                if json_output {
+                    return self.print_value("permissions", value, json_output);
+                }
+                return self.print_text(&format_permission_review_history(&value), json_output);
+            }
+            PermissionCommandRoute::ReviewContext => {
+                let value = self.rpc.request(
+                    "permissions/context",
+                    json!({
+                        "threadId": self.thread_id,
+                    }),
+                )?;
+                if json_output {
+                    return self.print_value("permissions", value, json_output);
+                }
+                return self.print_text(&format_permission_review_context(&value), json_output);
+            }
+            PermissionCommandRoute::ClearSession => {
+                let value = self.rpc.request(
+                    "permissions/clear-session",
+                    json!({ "threadId": self.thread_id }),
+                )?;
+                if json_output {
+                    return self.print_value("permissions", value, json_output);
+                }
+                return self.print_text(
+                    value
+                        .get("message")
+                        .and_then(Value::as_str)
+                        .unwrap_or("permission review session state cleared"),
+                    json_output,
+                );
+            }
+            PermissionCommandRoute::SetReviewTimeoutMs(timeout_ms) => {
+                self.permission_review_settings.timeout_ms = timeout_ms;
+                save_permission_review_settings(
+                    &self.role_profile_path,
+                    &self.permission_review_settings,
+                )?;
+                self.sync_permission_review_settings()?;
+                if json_output {
+                    return self.print_value(
+                        "permissions",
+                        json!({ "settings": self.permission_review_settings }),
+                        json_output,
+                    );
+                }
+                return self.print_text(
+                    &format!(
+                        "permissions: reviewer timeout set to {}s",
+                        timeout_ms / 1_000
+                    ),
+                    json_output,
+                );
+            }
+            PermissionCommandRoute::SetReviewerModel(reviewer_model) => {
+                self.permission_review_settings.reviewer_model = reviewer_model;
+                save_permission_review_settings(
+                    &self.role_profile_path,
+                    &self.permission_review_settings,
+                )?;
+                self.sync_permission_review_settings()?;
+                if json_output {
+                    return self.print_value(
+                        "permissions",
+                        json!({ "settings": self.permission_review_settings }),
+                        json_output,
+                    );
+                }
+                return self.print_text(
+                    &format!(
+                        "permissions: reviewer model set to {}",
+                        self.permission_review_settings
+                            .reviewer_model
+                            .as_deref()
+                            .unwrap_or("auto")
+                    ),
+                    json_output,
+                );
+            }
+            PermissionCommandRoute::ValidateSandbox => {
+                let validation = permission_sandbox_validation_value(
+                    self.permission_mode,
+                    &self.cwd,
+                    &self.permission_sandbox_settings,
+                );
+                if json_output {
+                    return self.print_value("permissions", validation, json_output);
+                }
+                return self.print_text(
+                    &format_permission_sandbox_validation(&validation),
+                    json_output,
+                );
+            }
+            PermissionCommandRoute::SetProtectedPatterns(protected_patterns) => {
+                self.permission_sandbox_settings.protected_patterns = protected_patterns;
+                save_permission_sandbox_settings(
+                    &self.role_profile_path,
+                    &self.permission_sandbox_settings,
+                )?;
+                if json_output {
+                    return self.print_value(
+                        "permissions",
+                        json!({
+                            "sandboxSettings": permission_sandbox_settings_json(
+                                &self.permission_sandbox_settings
+                            )
+                        }),
+                        json_output,
+                    );
+                }
+                return self.print_text(
+                    &format!(
+                        "permissions: protected patterns set to {}",
+                        format_protected_patterns_label(
+                            &self.permission_sandbox_settings.protected_patterns
+                        )
+                    ),
+                    json_output,
+                );
+            }
+            PermissionCommandRoute::SetSandboxInternet(allowed) => {
+                self.permission_sandbox_settings.allow_internet = allowed;
+                save_permission_sandbox_settings(
+                    &self.role_profile_path,
+                    &self.permission_sandbox_settings,
+                )?;
+                if json_output {
+                    return self.print_value(
+                        "permissions",
+                        json!({
+                            "sandboxSettings": permission_sandbox_settings_json(
+                                &self.permission_sandbox_settings
+                            )
+                        }),
+                        json_output,
+                    );
+                }
+                return self.print_text(
+                    &format!(
+                        "permissions: sandbox internet {}",
+                        if allowed { "allowed" } else { "blocked" }
+                    ),
+                    json_output,
+                );
+            }
+            PermissionCommandRoute::SetSandboxSsh(allowed) => {
+                self.permission_sandbox_settings.allow_ssh = allowed;
+                save_permission_sandbox_settings(
+                    &self.role_profile_path,
+                    &self.permission_sandbox_settings,
+                )?;
+                if json_output {
+                    return self.print_value(
+                        "permissions",
+                        json!({
+                            "sandboxSettings": permission_sandbox_settings_json(
+                                &self.permission_sandbox_settings
+                            )
+                        }),
+                        json_output,
+                    );
+                }
+                return self.print_text(
+                    &format!(
+                        "permissions: sandbox ssh {}",
+                        if allowed { "allowed" } else { "blocked" }
+                    ),
+                    json_output,
+                );
+            }
+            PermissionCommandRoute::SetSandboxRootsHere => {
+                apply_permission_sandbox_root_preset(
+                    &mut self.permission_sandbox_settings,
+                    PermissionSandboxRootPreset::Here,
+                    &self.cwd,
+                );
+                save_permission_sandbox_settings(
+                    &self.role_profile_path,
+                    &self.permission_sandbox_settings,
+                )?;
+                if json_output {
+                    return self.print_value(
+                        "permissions",
+                        json!({
+                            "sandboxSettings": permission_sandbox_settings_json(
+                                &self.permission_sandbox_settings
+                            )
+                        }),
+                        json_output,
+                    );
+                }
+                return self.print_text(
+                    &format!(
+                        "permissions: sandbox roots set to current workspace {}",
+                        self.cwd
+                    ),
+                    json_output,
+                );
+            }
+            PermissionCommandRoute::SetSandboxRootsDefault => {
+                apply_permission_sandbox_root_preset(
+                    &mut self.permission_sandbox_settings,
+                    PermissionSandboxRootPreset::Default,
+                    &self.cwd,
+                );
+                save_permission_sandbox_settings(
+                    &self.role_profile_path,
+                    &self.permission_sandbox_settings,
+                )?;
+                if json_output {
+                    return self.print_value(
+                        "permissions",
+                        json!({
+                            "sandboxSettings": permission_sandbox_settings_json(
+                                &self.permission_sandbox_settings
+                            )
+                        }),
+                        json_output,
+                    );
+                }
+                return self.print_text(
+                    "permissions: sandbox roots reset to default fallback behavior",
+                    json_output,
+                );
+            }
+            PermissionCommandRoute::SetSandboxProjectRoots(roots) => {
+                self.permission_sandbox_settings.project_roots = roots;
+                save_permission_sandbox_settings(
+                    &self.role_profile_path,
+                    &self.permission_sandbox_settings,
+                )?;
+                if json_output {
+                    return self.print_value(
+                        "permissions",
+                        json!({
+                            "sandboxSettings": permission_sandbox_settings_json(
+                                &self.permission_sandbox_settings
+                            )
+                        }),
+                        json_output,
+                    );
+                }
+                return self.print_text(
+                    &format!(
+                        "permissions: sandbox project roots set to {}",
+                        format_sandbox_roots_label(
+                            &self.permission_sandbox_settings.project_roots,
+                            "default"
+                        )
+                    ),
+                    json_output,
+                );
+            }
+            PermissionCommandRoute::SetSandboxReadableRoots(roots) => {
+                self.permission_sandbox_settings.readable_roots = roots;
+                save_permission_sandbox_settings(
+                    &self.role_profile_path,
+                    &self.permission_sandbox_settings,
+                )?;
+                if json_output {
+                    return self.print_value(
+                        "permissions",
+                        json!({
+                            "sandboxSettings": permission_sandbox_settings_json(
+                                &self.permission_sandbox_settings
+                            )
+                        }),
+                        json_output,
+                    );
+                }
+                return self.print_text(
+                    &format!(
+                        "permissions: sandbox readable roots set to {}",
+                        format_sandbox_roots_label(
+                            &self.permission_sandbox_settings.readable_roots,
+                            "project roots"
+                        )
+                    ),
+                    json_output,
+                );
+            }
+            PermissionCommandRoute::SetSandboxWritableRoots(roots) => {
+                self.permission_sandbox_settings.writable_roots = roots;
+                save_permission_sandbox_settings(
+                    &self.role_profile_path,
+                    &self.permission_sandbox_settings,
+                )?;
+                if json_output {
+                    return self.print_value(
+                        "permissions",
+                        json!({
+                            "sandboxSettings": permission_sandbox_settings_json(
+                                &self.permission_sandbox_settings
+                            )
+                        }),
+                        json_output,
+                    );
+                }
+                return self.print_text(
+                    &format!(
+                        "permissions: sandbox writable roots set to {}",
+                        format_sandbox_roots_label(
+                            &self.permission_sandbox_settings.writable_roots,
+                            "project roots"
+                        )
+                    ),
+                    json_output,
+                );
+            }
+            PermissionCommandRoute::EditSandboxRoots { kind, edit, roots } => {
+                let (label, fallback) = permission_sandbox_root_list_labels(kind);
+                let changed = apply_permission_sandbox_root_list_edit(
+                    permission_sandbox_root_list_mut(&mut self.permission_sandbox_settings, kind),
+                    edit,
+                    &roots,
+                );
+                save_permission_sandbox_settings(
+                    &self.role_profile_path,
+                    &self.permission_sandbox_settings,
+                )?;
+                if json_output {
+                    return self.print_value(
+                        "permissions",
+                        json!({
+                            "changed": changed,
+                            "sandboxSettings": permission_sandbox_settings_json(
+                                &self.permission_sandbox_settings
+                            )
+                        }),
+                        json_output,
+                    );
+                }
+                let roots_label = format_sandbox_roots_label(
+                    permission_sandbox_root_list_mut(&mut self.permission_sandbox_settings, kind),
+                    fallback,
+                );
+                return self.print_text(
+                    &format!(
+                        "permissions: sandbox {label} roots {} {}; now {}",
+                        match edit {
+                            PermissionSandboxRootListEdit::Add => "added",
+                            PermissionSandboxRootListEdit::Remove => "removed",
+                        },
+                        format_sandbox_roots_label(&roots, "nothing"),
+                        roots_label
+                    ),
+                    json_output,
+                );
+            }
+            PermissionCommandRoute::SetMode(mode) => {
+                self.permission_mode = mode;
+                self.permission_mode_source = "session/settings".to_string();
+                save_permission_mode_setting(&self.role_profile_path, mode)?;
+            }
         }
         let sandbox = self.rpc.request("sandbox/status", json!({}))?;
         if json_output {
@@ -4581,18 +9051,51 @@ impl ShellSession {
                 json!({
                     "mode": self.permission_mode,
                     "source": self.permission_mode_source.as_str(),
-                    "policy": sandbox_policy_json(self.permission_mode, &self.cwd),
+                    "policy": sandbox_policy_json_with_settings(
+                        self.permission_mode,
+                        &self.cwd,
+                        &self.permission_sandbox_settings,
+                    ),
+                    "reviewSettings": self.permission_review_settings,
+                    "sandboxSettings": permission_sandbox_settings_json(
+                        &self.permission_sandbox_settings
+                    ),
                     "sandbox": sandbox,
                 }),
                 json_output,
             )?;
         } else {
             let rendered = format!(
-                "permissions: {} (source: {})\npolicy: filesystem={}, network={}\nsandbox: {}",
+                "permissions: {} (source: {})\npolicy: filesystem={}, network={}\nreviewer: timeout={}s, model={}\nsandbox flags: internet={}, ssh={}\nsandbox roots: project={}, read={}, write={}\nprotected patterns: {}\nsandbox: {}",
                 self.permission_mode.as_str(),
                 self.permission_mode_source,
                 filesystem_policy_for_mode(self.permission_mode),
-                network_policy_for_mode(self.permission_mode),
+                network_policy_label_for_settings(
+                    self.permission_mode,
+                    &self.permission_sandbox_settings
+                ),
+                self.permission_review_settings.timeout_ms / 1_000,
+                self.permission_review_settings
+                    .reviewer_model
+                    .as_deref()
+                    .unwrap_or("auto"),
+                format_sandbox_flag_label(self.permission_sandbox_settings.allow_internet),
+                format_sandbox_flag_label(self.permission_sandbox_settings.allow_ssh),
+                format_sandbox_roots_label(
+                    &self.permission_sandbox_settings.project_roots,
+                    "default"
+                ),
+                format_sandbox_roots_label(
+                    &self.permission_sandbox_settings.readable_roots,
+                    "project roots"
+                ),
+                format_sandbox_roots_label(
+                    &self.permission_sandbox_settings.writable_roots,
+                    "project roots"
+                ),
+                format_protected_patterns_label(
+                    &self.permission_sandbox_settings.protected_patterns
+                ),
                 sandbox
                     .get("message")
                     .and_then(Value::as_str)
@@ -4603,14 +9106,280 @@ impl ShellSession {
         Ok(())
     }
 
-    fn handle_memory_command(&mut self, args: Vec<&str>, json_output: bool) -> Result<(), String> {
+    fn mcp_list_value(&mut self) -> Result<Value, String> {
+        self.rpc
+            .request("mcp/list", json!({ "threadId": self.thread_id }))
+    }
+
+    fn update_mcp_summary(&mut self, value: &Value) {
+        self.mcp_summary = Some(format_mcp_status_summary(value));
+        self.sync_ui_docks();
+    }
+
+    fn handle_mcp_action(
+        &mut self,
+        action: &str,
+        server_id: &str,
+        json_output: bool,
+    ) -> Result<(), String> {
+        let method = match action {
+            "connect" => "mcp/connect",
+            "test" => "mcp/test",
+            "reload" => "mcp/reload",
+            "auth" => "mcp/auth",
+            _ => return self.print_text(mcp_command_usage(), json_output),
+        };
+        let value = self.rpc.request(
+            method,
+            json!({
+                "threadId": self.thread_id,
+                "serverId": server_id,
+            }),
+        )?;
+        if json_output {
+            return self.print_value("mcp", value, json_output);
+        }
+        let listed = self.mcp_list_value()?;
+        self.update_mcp_summary(&listed);
+        let mut rendered = format_mcp_action_result(action, server_id, &value);
+        let status = format_mcp_status_list(&listed);
+        if !status.trim().is_empty() {
+            rendered.push('\n');
+            rendered.push_str(&status);
+        }
+        self.print_text(&rendered, json_output)
+    }
+
+    fn handle_mcp_resources(&mut self, server_id: &str, json_output: bool) -> Result<(), String> {
+        let value = self.rpc.request(
+            "mcp/resources/list",
+            json!({
+                "threadId": self.thread_id,
+                "serverId": server_id,
+            }),
+        )?;
+        if json_output {
+            self.print_value("mcp-resources", value, json_output)
+        } else {
+            self.print_text(&format_mcp_resources_list(&value), json_output)
+        }
+    }
+
+    fn handle_mcp_resource_templates(
+        &mut self,
+        server_id: &str,
+        cursor: Option<&str>,
+        json_output: bool,
+    ) -> Result<(), String> {
+        let value = self.rpc.request(
+            "mcp/resources/templates/list",
+            mcp_list_request_params_json(&self.thread_id, server_id, cursor),
+        )?;
+        if json_output {
+            self.print_value("mcp-resource-templates", value, json_output)
+        } else {
+            self.print_text(&format_mcp_resource_templates_list(&value), json_output)
+        }
+    }
+
+    fn handle_mcp_prompts(
+        &mut self,
+        server_id: &str,
+        cursor: Option<&str>,
+        json_output: bool,
+    ) -> Result<(), String> {
+        let value = self.rpc.request(
+            "mcp/prompts/list",
+            mcp_list_request_params_json(&self.thread_id, server_id, cursor),
+        )?;
+        if json_output {
+            self.print_value("mcp-prompts", value, json_output)
+        } else {
+            self.print_text(&format_mcp_prompts_list(&value), json_output)
+        }
+    }
+
+    fn handle_mcp_prompt_get(
+        &mut self,
+        server_id: &str,
+        name: &str,
+        rest: &[&str],
+        json_output: bool,
+    ) -> Result<(), String> {
+        let arguments = parse_mcp_prompt_arguments(rest)?;
+        let value = self.rpc.request(
+            "mcp/prompts/get",
+            json!({
+                "threadId": self.thread_id,
+                "serverId": server_id,
+                "name": name,
+                "arguments": arguments,
+            }),
+        )?;
+        if json_output {
+            self.print_value("mcp-prompt", value, json_output)
+        } else {
+            self.print_text(&format_mcp_prompt_get_result(&value), json_output)
+        }
+    }
+
+    fn handle_mcp_resource_read(
+        &mut self,
+        server_id: &str,
+        uri: &str,
+        json_output: bool,
+    ) -> Result<(), String> {
+        let value = self.rpc.request(
+            "mcp/resources/read",
+            json!({
+                "threadId": self.thread_id,
+                "serverId": server_id,
+                "uri": uri,
+            }),
+        )?;
+        if json_output {
+            self.print_value("mcp-resource", value, json_output)
+        } else {
+            self.print_text(&format_mcp_resource_read_result(&value), json_output)
+        }
+    }
+
+    fn handle_mcp_resource_subscription(
+        &mut self,
+        action: &str,
+        server_id: &str,
+        uri: &str,
+        json_output: bool,
+    ) -> Result<(), String> {
+        let method = match action {
+            "subscribe" => "mcp/resources/subscribe",
+            "unsubscribe" => "mcp/resources/unsubscribe",
+            _ => return self.print_text(mcp_command_usage(), json_output),
+        };
+        let value = self.rpc.request(
+            method,
+            json!({
+                "threadId": self.thread_id,
+                "serverId": server_id,
+                "uri": uri,
+            }),
+        )?;
+        if json_output {
+            self.print_value("mcp-resource-subscription", value, json_output)
+        } else {
+            self.print_text(
+                &format_mcp_resource_subscription_result(action, &value),
+                json_output,
+            )
+        }
+    }
+
+    fn handle_plugin_mcp_trust(
+        &mut self,
+        plugin_id: &str,
+        server_id: &str,
+        enabled: bool,
+        trusted: bool,
+        json_output: bool,
+    ) -> Result<(), String> {
+        let value = self.rpc.request(
+            "plugin/mcp/trust",
+            json!({
+                "threadId": self.thread_id,
+                "pluginId": plugin_id,
+                "serverId": server_id,
+                "enabled": enabled,
+                "trusted": trusted,
+            }),
+        )?;
+        if json_output {
+            return self.print_value("mcp", value, json_output);
+        }
+        self.update_mcp_summary(&value);
+        let action = if enabled && trusted {
+            "trust-plugin"
+        } else {
+            "disable-plugin"
+        };
+        let mut rendered = format!("mcp {action} {plugin_id}/{server_id}: ok");
+        let status = format_mcp_status_list(&value);
+        if !status.trim().is_empty() {
+            rendered.push('\n');
+            rendered.push_str(&status);
+        }
+        self.print_text(&rendered, json_output)
+    }
+
+    fn handle_mcp_command(&mut self, args: Vec<&str>, json_output: bool) -> Result<(), String> {
+        match args.as_slice() {
+            [] | ["list"] | ["status"] => {
+                let value = self.mcp_list_value()?;
+                self.update_mcp_summary(&value);
+                if json_output {
+                    self.print_value("mcp", value, json_output)
+                } else {
+                    self.print_text(&format_mcp_status_list(&value), json_output)
+                }
+            }
+            [action @ ("connect" | "test" | "reload" | "auth"), server_id] => {
+                self.handle_mcp_action(action, server_id, json_output)
+            }
+            ["resources", server_id] => self.handle_mcp_resources(server_id, json_output),
+            ["templates", server_id] => {
+                self.handle_mcp_resource_templates(server_id, None, json_output)
+            }
+            ["prompts", server_id] => self.handle_mcp_prompts(server_id, None, json_output),
+            ["prompt", server_id, name, rest @ ..] => {
+                self.handle_mcp_prompt_get(server_id, name, rest, json_output)
+            }
+            ["read", server_id, uri @ ..] if !uri.is_empty() => {
+                let uri = uri.join(" ");
+                self.handle_mcp_resource_read(server_id, &uri, json_output)
+            }
+            [action @ ("subscribe" | "unsubscribe"), server_id, uri @ ..] if !uri.is_empty() => {
+                let uri = uri.join(" ");
+                self.handle_mcp_resource_subscription(action, server_id, &uri, json_output)
+            }
+            ["trust-plugin", plugin_id, server_id] => {
+                self.handle_plugin_mcp_trust(plugin_id, server_id, true, true, json_output)
+            }
+            ["disable-plugin", plugin_id, server_id] => {
+                self.handle_plugin_mcp_trust(plugin_id, server_id, false, false, json_output)
+            }
+            ["help"] | ["--help"] | ["-h"] => self.print_text(mcp_command_usage(), json_output),
+            _ => self.print_text(mcp_command_usage(), json_output),
+        }
+    }
+
+    fn handle_memory_command(
+        &mut self,
+        provider: &ProviderConfig,
+        args: Vec<&str>,
+        json_output: bool,
+    ) -> Result<(), String> {
         match args.as_slice() {
             [] | ["status"] => {
                 let value = self.rpc.request("memory/status", json!({}))?;
-                self.print_value("memory", value, json_output)
+                if json_output {
+                    self.print_value(
+                        "memory",
+                        json!({ "runtime": value, "settings": memory_settings_json(&self.memory_settings) }),
+                        json_output,
+                    )
+                } else {
+                    let rendered = format!(
+                        "{}\n{}",
+                        format_memory_status_summary(&value),
+                        format_memory_settings_status(&self.memory_settings)
+                    );
+                    self.print_text(&rendered, json_output)
+                }
             }
             ["on"] | ["off"] => {
                 let enabled = args[0] == "on";
+                self.memory_settings.enabled = enabled;
+                self.reset_hoppi_background_sync_timer();
+                save_memory_settings(&self.role_profile_path, &self.memory_settings)?;
                 let value = self.rpc.request(
                     "memory/set",
                     json!({
@@ -4618,26 +9387,468 @@ impl ShellSession {
                         "status": { "enabled": enabled, "backend": if enabled { "client" } else { "none" }, "scope": "project", "memoryCount": 0 }
                     }),
                 )?;
-                self.print_value("memory", value, json_output)
+                if json_output {
+                    self.print_value(
+                        "memory",
+                        json!({ "runtime": value, "settings": memory_settings_json(&self.memory_settings) }),
+                        json_output,
+                    )
+                } else {
+                    self.print_text(&format!("memory: {}", enabled_label(enabled)), json_output)
+                }
             }
-            ["dashboard"] => self.handle_memory_control("dashboard", false, json_output),
+            ["startup-recall", value] | ["startup", "recall", value] => {
+                let enabled = parse_memory_settings_bool(value)?;
+                self.memory_settings.startup_recall = enabled;
+                save_memory_settings(&self.role_profile_path, &self.memory_settings)?;
+                self.print_memory_settings_update("startup recall", enabled, json_output)
+            }
+            ["task-start-recall", value] | ["task", "start", "recall", value] => {
+                let enabled = parse_memory_settings_bool(value)?;
+                self.memory_settings.task_start_recall = enabled;
+                save_memory_settings(&self.role_profile_path, &self.memory_settings)?;
+                self.print_memory_settings_update("task-start recall", enabled, json_output)
+            }
+            ["turn-summaries", value] | ["turn-summary", value] | ["summaries", value] => {
+                let enabled = parse_memory_settings_bool(value)?;
+                self.memory_settings.turn_summaries = enabled;
+                save_memory_settings(&self.role_profile_path, &self.memory_settings)?;
+                self.print_memory_settings_update("turn summaries", enabled, json_output)
+            }
+            ["agent-model", value] | ["memory-agent-model", value] => {
+                let model = parse_memory_agent_model(value)?;
+                self.memory_settings.agent_model = model.to_string();
+                save_memory_settings(&self.role_profile_path, &self.memory_settings)?;
+                self.print_memory_settings_value_update("agent model", model, json_output)
+            }
+            ["deep-model", value] | ["deep-dream-model", value] => {
+                let model = parse_deep_memory_model(value)?;
+                self.memory_settings.deep_model = model.to_string();
+                save_memory_settings(&self.role_profile_path, &self.memory_settings)?;
+                self.print_memory_settings_value_update("deep dream model", model, json_output)
+            }
+            ["idle-dream", value] | ["idle-consolidation", value] => {
+                let enabled = parse_memory_settings_bool(value)?;
+                self.memory_settings.idle_consolidation = enabled;
+                save_memory_settings(&self.role_profile_path, &self.memory_settings)?;
+                self.print_memory_settings_update("idle dream mode", enabled, json_output)
+            }
+            ["install-offer", value] | ["first-start-install-offer", value] => {
+                let offer = parse_hoppi_install_offer(value)?;
+                self.memory_settings.hoppi_install_offer = offer.to_string();
+                save_memory_settings(&self.role_profile_path, &self.memory_settings)?;
+                self.print_memory_settings_value_update(
+                    "first-start install offer",
+                    offer,
+                    json_output,
+                )
+            }
+            ["sync", value] => {
+                let enabled = parse_memory_settings_bool(value)?;
+                self.memory_settings.sync_enabled = enabled;
+                self.reset_hoppi_background_sync_timer();
+                save_memory_settings(&self.role_profile_path, &self.memory_settings)?;
+                self.print_memory_settings_update("sync", enabled, json_output)
+            }
+            ["sync", "repo", rest @ ..] | ["sync-repo", rest @ ..] => {
+                self.memory_settings.sync_repo_path = parse_memory_sync_optional_value(rest)?;
+                save_memory_settings(&self.role_profile_path, &self.memory_settings)?;
+                self.print_memory_settings_text_update(
+                    "sync repo",
+                    optional_memory_setting_label(self.memory_settings.sync_repo_path.as_deref()),
+                    json_output,
+                )
+            }
+            ["sync", "remote", rest @ ..]
+            | ["sync", "url", rest @ ..]
+            | ["sync-remote", rest @ ..]
+            | ["sync-url", rest @ ..] => {
+                self.memory_settings.sync_repo_url = parse_memory_sync_optional_value(rest)?;
+                save_memory_settings(&self.role_profile_path, &self.memory_settings)?;
+                self.print_memory_settings_text_update(
+                    "sync remote",
+                    optional_memory_setting_label(self.memory_settings.sync_repo_url.as_deref()),
+                    json_output,
+                )
+            }
+            ["sync", "pull-startup", value] | ["sync-pull-startup", value] => {
+                let enabled = parse_memory_settings_bool(value)?;
+                self.memory_settings.sync_pull_on_startup = enabled;
+                save_memory_settings(&self.role_profile_path, &self.memory_settings)?;
+                self.print_memory_settings_update("sync startup pull", enabled, json_output)
+            }
+            ["sync", "push-exit", value] | ["sync-push-exit", value] => {
+                let enabled = parse_memory_settings_bool(value)?;
+                self.memory_settings.sync_push_on_exit = enabled;
+                save_memory_settings(&self.role_profile_path, &self.memory_settings)?;
+                self.print_memory_settings_update("sync exit push", enabled, json_output)
+            }
+            ["sync", "background", value] | ["sync-background", value] => {
+                let value = parse_sync_background(value)?;
+                self.memory_settings.sync_background = value.to_string();
+                self.reset_hoppi_background_sync_timer();
+                save_memory_settings(&self.role_profile_path, &self.memory_settings)?;
+                self.print_memory_settings_value_update("sync background", value, json_output)
+            }
+            ["sync", "encryption", value] | ["sync-encryption", value] => {
+                let (encryption, source) = parse_sync_encryption(value)?;
+                self.memory_settings.sync_encryption = encryption.to_string();
+                self.memory_settings.sync_passphrase_source = source.to_string();
+                save_memory_settings(&self.role_profile_path, &self.memory_settings)?;
+                self.print_memory_settings_text_update(
+                    "sync encryption",
+                    format!("{encryption}/{source}"),
+                    json_output,
+                )
+            }
+            ["sync", "passphrase-env", value] | ["sync-passphrase-env", value] => {
+                let value = parse_sync_passphrase_env(value)?;
+                self.memory_settings.sync_encryption = "passphrase".to_string();
+                self.memory_settings.sync_passphrase_source = "env".to_string();
+                self.memory_settings.sync_passphrase_env = value.to_string();
+                save_memory_settings(&self.role_profile_path, &self.memory_settings)?;
+                self.print_memory_settings_value_update("sync passphrase env", value, json_output)
+            }
+            ["sync", "passphrase-file", rest @ ..] | ["sync-passphrase-file", rest @ ..] => {
+                self.memory_settings.sync_passphrase_file = parse_memory_sync_optional_value(rest)?;
+                if self.memory_settings.sync_passphrase_file.is_some() {
+                    self.memory_settings.sync_encryption = "passphrase".to_string();
+                    self.memory_settings.sync_passphrase_source = "file".to_string();
+                }
+                save_memory_settings(&self.role_profile_path, &self.memory_settings)?;
+                self.print_memory_settings_text_update(
+                    "sync passphrase file",
+                    optional_memory_setting_label(
+                        self.memory_settings.sync_passphrase_file.as_deref(),
+                    ),
+                    json_output,
+                )
+            }
+            ["sync", "conflict", value] | ["sync-conflict", value] => {
+                let value = parse_sync_conflict_mode(value)?;
+                self.memory_settings.sync_conflict_mode = value.to_string();
+                save_memory_settings(&self.role_profile_path, &self.memory_settings)?;
+                self.print_memory_settings_value_update("sync conflict mode", value, json_output)
+            }
+            ["list"] | ["memories"] => self.handle_memory_list(false, false, json_output),
+            ["list", "pinned"] | ["memories", "pinned"] => {
+                self.handle_memory_list(false, true, json_output)
+            }
+            ["list", "all"] | ["memories", "all"] => {
+                self.handle_memory_list(true, false, json_output)
+            }
+            ["jobs"] | ["queue"] => self.handle_memory_jobs(false, json_output),
+            ["jobs", "all"] | ["queue", "all"] => self.handle_memory_jobs(true, json_output),
+            ["jobs", "cancel", id] | ["queue", "cancel", id] => {
+                self.handle_memory_job_cancel(id, json_output)
+            }
+            ["forget", id, "--yes"] | ["delete", id, "--yes"] => {
+                self.handle_memory_forget(id, json_output)
+            }
+            ["forget", id] | ["delete", id] => self.print_text(
+                &format!(
+                    "Forgetting a memory requires explicit confirmation: /memory forget {id} --yes"
+                ),
+                json_output,
+            ),
+            ["pin", id, "--yes"] => self.handle_memory_pin(id, true, json_output),
+            ["unpin", id, "--yes"] => self.handle_memory_pin(id, false, json_output),
+            ["pin", id] => self.print_text(
+                &format!("Pinning a memory requires explicit confirmation: /memory pin {id} --yes"),
+                json_output,
+            ),
+            ["unpin", id] => self.print_text(
+                &format!(
+                    "Unpinning a memory requires explicit confirmation: /memory unpin {id} --yes"
+                ),
+                json_output,
+            ),
+            ["dashboard"] => self.handle_memory_dashboard(json_output),
             ["settings"] => self.handle_memory_control("settings", false, json_output),
-            ["maintain"] | ["maintenance"] | ["maintenance", "dry-run"] | ["maintain", "dry-run"] => {
+            ["maintain"]
+            | ["maintenance"]
+            | ["maintenance", "dry-run"]
+            | ["maintain", "dry-run"] => {
                 self.handle_memory_control("maintenance", false, json_output)
             }
             ["maintenance", "apply"] | ["maintain", "apply"] => {
                 self.handle_memory_control("maintenance", true, json_output)
             }
-            ["compact", rest @ ..] if !rest.is_empty() => {
-                let summary = rest.join(" ");
-                let value = self.rpc.request(
-                    "memory/compact",
-                    json!({ "threadId": self.thread_id, "summary": summary }),
-                )?;
-                self.print_value("memoryCompact", value, json_output)
+            ["compaction", rest @ ..] | ["compact-settings", rest @ ..] => {
+                self.handle_compaction_command(provider, &rest.join(" "), json_output)
             }
-            _ => self.print_text("usage: /memory [status|on|off|dashboard|settings|maintenance [dry-run|apply]|compact <summary>]", json_output),
+            ["compact", rest @ ..] => self.handle_memory_compact(rest, json_output),
+            _ => self.print_text(memory_settings_usage(), json_output),
         }
+    }
+
+    fn handle_memory_compact(&mut self, rest: &[&str], json_output: bool) -> Result<(), String> {
+        let summary = memory_compact_summary_arg(rest);
+        let value = self.rpc.request(
+            "memory/compact",
+            json!({ "threadId": self.thread_id, "summary": summary }),
+        )?;
+        self.print_value("memoryCompact", value, json_output)
+    }
+
+    fn handle_memory_dashboard(&mut self, json_output: bool) -> Result<(), String> {
+        let params =
+            memory_backend_dashboard_params_from_settings(&self.memory_settings, &self.thread_id)?;
+        let value = self.request_memory_backend_normalized("memory/backend/dashboard", params)?;
+        if json_output {
+            self.print_value("memoryDashboard", value, json_output)
+        } else {
+            let rendered = format_memory_dashboard(&value);
+            self.print_text(&rendered, json_output)
+        }
+    }
+
+    fn handle_memory_list(
+        &mut self,
+        include_superseded: bool,
+        pinned_only: bool,
+        json_output: bool,
+    ) -> Result<(), String> {
+        let params = memory_backend_list_params_from_settings(
+            &self.memory_settings,
+            &self.thread_id,
+            include_superseded,
+            pinned_only,
+            Some(50),
+        )?;
+        let value = self.request_memory_backend_normalized("memory/backend/list", params)?;
+        if json_output {
+            self.print_value("memoryList", value, json_output)
+        } else {
+            let rendered = format_memory_list(&value);
+            self.print_text(&rendered, json_output)
+        }
+    }
+
+    fn handle_memory_jobs(
+        &mut self,
+        include_finished: bool,
+        json_output: bool,
+    ) -> Result<(), String> {
+        let value = self.memory_jobs_list(include_finished)?;
+        if json_output {
+            self.print_value("memoryJobs", value, json_output)
+        } else {
+            let rendered = format_memory_jobs(&value);
+            self.print_text(&rendered, json_output)
+        }
+    }
+
+    fn handle_memory_job_cancel(&mut self, id: &str, json_output: bool) -> Result<(), String> {
+        let id = id.trim();
+        if id.is_empty() {
+            return Err(memory_settings_usage().to_string());
+        }
+        let value = self.rpc.request(
+            "memory/jobs/cancel",
+            json!({
+                "threadId": self.thread_id,
+                "jobId": id,
+                "reason": "user requested cancellation from native shell"
+            }),
+        )?;
+        if json_output {
+            self.print_value("memoryJobs", value, json_output)
+        } else {
+            let rendered = format_memory_jobs(&value);
+            self.print_text(&rendered, json_output)
+        }
+    }
+
+    fn handle_memory_forget(&mut self, id: &str, json_output: bool) -> Result<(), String> {
+        let params =
+            memory_backend_forget_params_from_settings(&self.memory_settings, &self.thread_id, id)?;
+        let value = self.request_memory_backend_normalized("memory/backend/forget", params)?;
+        if json_output {
+            self.print_value("memoryForget", value, json_output)
+        } else {
+            let rendered = format_memory_forget(&value);
+            self.print_text(&rendered, json_output)
+        }
+    }
+
+    fn handle_memory_pin(
+        &mut self,
+        id: &str,
+        pinned: bool,
+        json_output: bool,
+    ) -> Result<(), String> {
+        let params = memory_backend_pin_params_from_settings(
+            &self.memory_settings,
+            &self.thread_id,
+            id,
+            pinned,
+        )?;
+        let value = self.request_memory_backend_normalized("memory/backend/pin", params)?;
+        if json_output {
+            self.print_value("memoryPin", value, json_output)
+        } else {
+            let rendered = format_memory_pin(&value);
+            self.print_text(&rendered, json_output)
+        }
+    }
+
+    fn run_hoppi_sync_with_job_reporting(
+        &mut self,
+        direction: HoppiSyncDirection,
+        reason: &str,
+    ) -> Result<HoppiSyncRunResult, String> {
+        let invocation =
+            hoppi_sync_display_invocation_from_settings(&self.memory_settings, direction, reason)?;
+        let params = memory_backend_sync_params_from_settings(
+            &self.memory_settings,
+            &self.thread_id,
+            direction,
+            reason,
+        )?;
+        let value = self.request_memory_backend_normalized("memory/backend/sync", params)?;
+        let result = hoppi_sync_result_from_value(&value);
+        Ok(HoppiSyncRunResult { invocation, result })
+    }
+
+    fn handle_memory_sync(
+        &mut self,
+        direction: HoppiSyncDirection,
+        json_output: bool,
+    ) -> Result<(), String> {
+        let run = self.run_hoppi_sync_with_job_reporting(direction, "manual")?;
+        if json_output {
+            return self.print_value(
+                "memorySync",
+                json!({
+                    "summary": format_hoppi_sync_report(direction, &run.result),
+                    "direction": direction.as_str(),
+                    "repoPath": format_path_for_display(&run.invocation.repo_path),
+                    "remote": run.invocation.remote.clone(),
+                    "result": hoppi_sync_result_json(&run.result),
+                }),
+                json_output,
+            );
+        }
+        self.print_text(
+            &format_hoppi_sync_report(direction, &run.result),
+            json_output,
+        )
+    }
+
+    fn handle_memory_maintenance(
+        &mut self,
+        dry_run: bool,
+        json_output: bool,
+    ) -> Result<(), String> {
+        let params = memory_backend_consolidate_params_from_settings(
+            &self.memory_settings,
+            &self.thread_id,
+            dry_run,
+        )?;
+        let value = self.request_memory_backend_normalized("memory/backend/consolidate", params)?;
+        if json_output {
+            self.print_value("memoryConsolidate", value, json_output)
+        } else {
+            let rendered = format_memory_consolidate(&value);
+            self.print_text(&rendered, json_output)
+        }
+    }
+
+    fn request_memory_backend_normalized(
+        &mut self,
+        method: &str,
+        params: Value,
+    ) -> Result<Value, String> {
+        let value = self.rpc.request(method, params)?;
+        let normalized = memory_backend_normalized_value(value, method)?;
+        self.record_memory_status_from_value(&normalized);
+        Ok(normalized)
+    }
+
+    fn record_memory_status_from_value(&mut self, value: &Value) {
+        if let Some(status) = value
+            .get("status")
+            .cloned()
+            .and_then(|status| serde_json::from_value::<MemoryStatus>(status).ok())
+        {
+            self.memory_status = Some(status);
+            self.sync_ui_docks();
+        }
+    }
+
+    fn record_memory_job_update(&mut self, params: Value) {
+        if let Ok(value) = self.rpc.request("memory/jobs/update", params)
+            && let Some(status) = value
+                .get("status")
+                .cloned()
+                .and_then(|status| serde_json::from_value::<MemoryStatus>(status).ok())
+        {
+            self.memory_status = Some(status);
+            self.sync_ui_docks();
+        }
+    }
+
+    fn mark_hoppi_memory_dirty(&mut self) {
+        self.hoppi_dirty_version = self.hoppi_dirty_version.saturating_add(1);
+        self.hoppi_dirty_at = Some(Instant::now());
+    }
+
+    fn mark_hoppi_memory_consolidated(&mut self) {
+        self.hoppi_consolidated_version = self.hoppi_dirty_version;
+    }
+
+    fn maybe_drain_memory_jobs(&mut self, json_output: bool) -> Result<(), String> {
+        match self.wait_for_memory_jobs_idle(HOPPI_MEMORY_DRAIN_TIMEOUT) {
+            Ok(None) => Ok(()),
+            Ok(Some(message)) => self.print_text(&message, json_output),
+            Err(error) => self.print_text(&format!("memory: drain skipped: {error}"), json_output),
+        }
+    }
+
+    fn wait_for_memory_jobs_idle(&mut self, timeout: Duration) -> Result<Option<String>, String> {
+        let started = Instant::now();
+        let mut last = self.memory_jobs_list(false)?;
+        loop {
+            if memory_jobs_active_count(&last) == 0 {
+                return Ok(None);
+            }
+            if started.elapsed() >= timeout {
+                return Ok(Some(format_memory_drain_timeout(&last, timeout)));
+            }
+            std::thread::sleep(HOPPI_MEMORY_DRAIN_POLL);
+            last = self.memory_jobs_list(false)?;
+        }
+    }
+
+    fn memory_jobs_list(&mut self, include_finished: bool) -> Result<Value, String> {
+        self.rpc.request(
+            "memory/jobs/list",
+            json!({
+                "threadId": self.thread_id,
+                "includeFinished": include_finished,
+                "limit": 50
+            }),
+        )
+    }
+
+    fn print_memory_settings_update(
+        &mut self,
+        label: &str,
+        enabled: bool,
+        json_output: bool,
+    ) -> Result<(), String> {
+        if json_output {
+            return self.print_value(
+                "memory",
+                json!({ "settings": memory_settings_json(&self.memory_settings) }),
+                json_output,
+            );
+        }
+        self.print_text(
+            &format!("memory: {label} {}", enabled_label(enabled)),
+            json_output,
+        )
     }
 
     fn handle_memory_control(
@@ -4658,43 +9869,65 @@ impl ShellSession {
         }
     }
 
-    fn handle_skills_command(&mut self, json_output: bool) -> Result<(), String> {
+    fn handle_skills_command(&mut self, args: Vec<&str>, json_output: bool) -> Result<(), String> {
+        let route = skills_command_route(&args.join(" "))?;
+        match route {
+            SkillsCommandRoute::Status => {
+                if json_output {
+                    return self.print_value(
+                        "skills",
+                        json!({ "enableSkillCommands": self.enable_skill_commands }),
+                        json_output,
+                    );
+                }
+                return self.print_text(
+                    &format_skills_status(self.enable_skill_commands),
+                    json_output,
+                );
+            }
+            SkillsCommandRoute::SetCommands(enabled) => {
+                self.enable_skill_commands = enabled;
+                save_skill_commands_setting(&self.role_profile_path, enabled)?;
+                if enabled && self.skill_command_cache.is_empty() {
+                    self.refresh_skill_command_cache();
+                }
+                if json_output {
+                    return self.print_value(
+                        "skills",
+                        json!({ "enableSkillCommands": self.enable_skill_commands }),
+                        json_output,
+                    );
+                }
+                return self.print_text(
+                    &format_skills_status(self.enable_skill_commands),
+                    json_output,
+                );
+            }
+            SkillsCommandRoute::List => {}
+        }
         let value = self
             .rpc
             .request("skills/list", json!({ "threadId": self.thread_id }))?;
+        let result: RuntimeListResult<ResolvedSkill> = serde_json::from_value(value.clone())
+            .map_err(|error| format!("decode skills/list result: {error}"))?;
+        self.skill_command_cache = result.items.clone();
         if json_output {
+            let mut value = value;
+            value["enableSkillCommands"] = json!(self.enable_skill_commands);
             return self.print_value("skills", value, json_output);
         }
-        let items = value
-            .get("items")
-            .and_then(Value::as_array)
-            .cloned()
-            .unwrap_or_default();
-        if items.is_empty() {
+        if result.items.is_empty() {
             return self.print_text("no skills discovered", json_output);
         }
-        let mut rendered = "skills (active definitions; project > user > built-in):".to_string();
-        for item in items {
-            let Some(active) = item.get("active") else {
-                continue;
-            };
-            let name = active
-                .get("name")
-                .and_then(Value::as_str)
-                .unwrap_or("skill");
-            let source = active
-                .get("source")
-                .and_then(Value::as_str)
-                .unwrap_or("unknown");
-            let description = active
-                .get("description")
-                .and_then(Value::as_str)
-                .unwrap_or_default();
-            let shadowed = item
-                .get("shadowed")
-                .and_then(Value::as_array)
-                .map(Vec::len)
-                .unwrap_or(0);
+        let mut rendered = format!(
+            "skills (active definitions; project > user > built-in):\n{}",
+            format_skills_status(self.enable_skill_commands)
+        );
+        for item in result.items {
+            let name = item.active.name;
+            let source = skill_source_label(item.active.source);
+            let description = item.active.description;
+            let shadowed = item.shadowed.len();
             rendered.push_str(&format!("\n- {name} [{source}]: {description}"));
             if shadowed > 0 {
                 rendered.push_str(&format!(
@@ -4703,6 +9936,17 @@ impl ShellSession {
             }
         }
         self.print_text(&rendered, json_output)
+    }
+
+    fn handle_prompt_templates_command(&mut self, json_output: bool) -> Result<(), String> {
+        let value = self.rpc.request(
+            "prompt-template/list",
+            json!({ "threadId": self.thread_id }),
+        )?;
+        if json_output {
+            return self.print_value("prompts", value, json_output);
+        }
+        self.print_text(&format_prompt_templates(&value), json_output)
     }
 
     fn handle_graphify_command(
@@ -4731,9 +9975,13 @@ impl ShellSession {
         args: Vec<&str>,
         json_output: bool,
     ) -> Result<(), String> {
-        match args.as_slice() {
-            [] | ["list"] => {
-                let value = self.rpc.request("agents/list", json!({}))?;
+        let agent_dir = default_agent_dir();
+        let route = parse_agents_route_parts(&args, Path::new(&self.cwd), &agent_dir)?;
+        match route {
+            AgentsRoute::List => {
+                let value = self
+                    .rpc
+                    .request("agents/list", json!({ "threadId": self.thread_id }))?;
                 if !json_output {
                     self.print_text(
                         &format!(
@@ -4743,11 +9991,123 @@ impl ShellSession {
                         json_output,
                     )?;
                 }
-                self.print_value("agents", value, json_output)
+                if json_output {
+                    self.print_value("agents", value, json_output)
+                } else {
+                    let rendered = format_agents_list(&value)?;
+                    self.print_text(&rendered, json_output)
+                }
             }
-            ["dispatch", name, task @ ..] if !task.is_empty() => {
+            AgentsRoute::Show { name } => {
+                let value = self.rpc.request(
+                    "agents/show",
+                    json!({ "threadId": self.thread_id, "name": name }),
+                )?;
+                if json_output {
+                    self.print_value("agent", value, json_output)
+                } else {
+                    let resolved: ResolvedAgent = serde_json::from_value(value)
+                        .map_err(|error| format!("decode agents/show: {error}"))?;
+                    self.print_text(&format_agent_show(&resolved), json_output)
+                }
+            }
+            AgentsRoute::Create {
+                source,
+                name,
+                description,
+            } => {
+                let value = self.rpc.request(
+                    "agents/create",
+                    json!({
+                        "threadId": self.thread_id,
+                        "source": source,
+                        "definition": {
+                            "name": name,
+                            "description": description,
+                            "instructions": STARTER_AGENT_INSTRUCTIONS,
+                        }
+                    }),
+                )?;
+                if json_output {
+                    self.print_value("agentCreate", value, json_output)
+                } else {
+                    let created: AgentDefinition = serde_json::from_value(value)
+                        .map_err(|error| format!("decode agents/create: {error}"))?;
+                    let path = created
+                        .path
+                        .as_deref()
+                        .map(|path| format!(" at {path}"))
+                        .unwrap_or_default();
+                    self.print_text(
+                        &format!("created agent {}{}", created.name, path),
+                        json_output,
+                    )
+                }
+            }
+            AgentsRoute::Edit { name } => {
+                let value = self.rpc.request(
+                    "agents/show",
+                    json!({ "threadId": self.thread_id, "name": name }),
+                )?;
+                let resolved: ResolvedAgent = serde_json::from_value(value)
+                    .map_err(|error| format!("decode agents/show: {error}"))?;
+                let agent = resolved.active;
+                if agent.read_only || !agent_source_is_writable(agent.source) {
+                    return self.print_text(
+                        &format!("agent is read-only [{}]", agent_source_label(agent.source)),
+                        json_output,
+                    );
+                }
+                let Some(path) = agent.path.as_deref().filter(|path| !path.trim().is_empty())
+                else {
+                    return self.print_text("agent has no editable path", json_output);
+                };
+                if let Some(editor) = configured_agent_editor() {
+                    launch_agent_editor(&editor, Path::new(path))?;
+                    self.print_text(
+                        &format!("opened agent {} in {}", agent.name, editor),
+                        json_output,
+                    )
+                } else {
+                    let markdown = oppi_agents::format_agent_markdown(&agent);
+                    self.print_text(&format!("agent path: {path}\n\n{markdown}"), json_output)
+                }
+            }
+            AgentsRoute::Delete { name, confirmed } => {
+                if !confirmed {
+                    return self.print_text(
+                        &format!(
+                            "Refusing to delete without confirmation. Run `/agents delete {name} --yes`."
+                        ),
+                        json_output,
+                    );
+                }
+                let value = self.rpc.request(
+                    "agents/show",
+                    json!({ "threadId": self.thread_id, "name": name }),
+                )?;
+                let resolved: ResolvedAgent = serde_json::from_value(value)
+                    .map_err(|error| format!("decode agents/show: {error}"))?;
+                let source = resolved
+                    .active
+                    .source
+                    .ok_or_else(|| format!("agent {} has no source", resolved.active.name))?;
+                let value = self.rpc.request(
+                    "agents/delete",
+                    json!({
+                        "threadId": self.thread_id,
+                        "source": source,
+                        "name": resolved.active.name,
+                    }),
+                )?;
+                if json_output {
+                    self.print_value("agentDelete", value, json_output)
+                } else {
+                    self.print_text(&format!("deleted agent {name}"), json_output)
+                }
+            }
+            AgentsRoute::Dispatch { name, task } => {
                 let role = "subagent";
-                let task = task.join(" ");
                 let promoted = complex_subagent_task(&task);
                 let effective_provider =
                     self.provider_for_role_with_complexity(provider, Some(role), promoted);
@@ -4769,7 +10129,10 @@ impl ShellSession {
                     self.print_text(
                         &format!(
                             "agent dispatch profile: role={role} model={} ({source}) effort={}",
-                            model.as_deref().unwrap_or("provider default"),
+                            model
+                                .as_deref()
+                                .map(display_model_id)
+                                .unwrap_or("provider default"),
                             effort.as_deref().unwrap_or("off")
                         ),
                         json_output,
@@ -4789,25 +10152,37 @@ impl ShellSession {
                 )?;
                 self.print_value("agentDispatch", value, json_output)
             }
-            ["block", run_id, reason @ ..] if !reason.is_empty() => {
+            AgentsRoute::Poll { run_id } => {
+                let value = self.rpc.request(
+                    "agents/poll",
+                    json!({ "threadId": self.thread_id, "runId": run_id }),
+                )?;
+                if json_output {
+                    self.print_value("agentPoll", value, json_output)
+                } else {
+                    let result: AgentRunPollResult = serde_json::from_value(value)
+                        .map_err(|error| format!("decode agents/poll: {error}"))?;
+                    self.print_text(&format_agent_poll_result(&result), json_output)
+                }
+            }
+            AgentsRoute::Block { run_id, reason } => {
                 let value = self.rpc.request(
                     "agents/block",
-                    json!({ "threadId": self.thread_id, "runId": run_id, "reason": reason.join(" ") }),
+                    json!({ "threadId": self.thread_id, "runId": run_id, "reason": reason }),
                 )?;
                 self.print_value("agentBlock", value, json_output)
             }
-            ["complete", run_id, output @ ..] if !output.is_empty() => {
+            AgentsRoute::Complete { run_id, output } => {
                 let value = self.rpc.request(
                     "agents/complete",
-                    json!({ "threadId": self.thread_id, "runId": run_id, "output": output.join(" ") }),
+                    json!({ "threadId": self.thread_id, "runId": run_id, "output": output }),
                 )?;
                 self.print_value("agentComplete", value, json_output)
             }
-            ["import", rest @ ..] => {
-                let cwd = Path::new(&self.cwd);
-                let route = parse_agent_import_route(rest, cwd)?;
-                let raw = fs::read_to_string(&route.path)
-                    .map_err(|error| format!("read agent markdown {}: {error}", route.path.display()))?;
+            AgentsRoute::Import(route) => {
+                let raw = fs::read_to_string(&route.path).map_err(|error| {
+                    format!("read agent markdown {}: {error}", route.path.display())
+                })?;
                 let agent = parse_agent_markdown(&raw, route.source)?;
                 let value = self.rpc.request(
                     "agents/register",
@@ -4826,11 +10201,10 @@ impl ShellSession {
                     )
                 }
             }
-            ["export", rest @ ..] => {
-                let cwd = Path::new(&self.cwd);
-                let agent_dir = default_agent_dir();
-                let route = parse_agent_export_route(rest, cwd, &agent_dir)?;
-                let value = self.rpc.request("agents/list", json!({}))?;
+            AgentsRoute::Export(route) => {
+                let value = self
+                    .rpc
+                    .request("agents/list", json!({ "threadId": self.thread_id }))?;
                 let agent = active_agent_from_list(value, &route.agent_name)?;
                 let markdown = format_agent_markdown(&agent);
                 if let Some(parent) = route.path.parent() {
@@ -4838,8 +10212,9 @@ impl ShellSession {
                         format!("create agent markdown dir {}: {error}", parent.display())
                     })?;
                 }
-                fs::write(&route.path, markdown)
-                    .map_err(|error| format!("write agent markdown {}: {error}", route.path.display()))?;
+                fs::write(&route.path, markdown).map_err(|error| {
+                    format!("write agent markdown {}: {error}", route.path.display())
+                })?;
                 if json_output {
                     self.print_value(
                         "agentExport",
@@ -4857,7 +10232,6 @@ impl ShellSession {
                     )
                 }
             }
-            _ => self.print_text("usage: /agents [list|dispatch <name> <task>|block <run-id> <reason>|complete <run-id> <output>|import [project|user] <path>|export <name> [project|user|path]]", json_output),
         }
     }
 
@@ -4879,17 +10253,98 @@ impl ShellSession {
     }
 
     fn handle_theme_command(&mut self, theme: &str, json_output: bool) -> Result<(), String> {
+        let trimmed = theme.trim();
+        if trimmed == "preview" || trimmed.starts_with("preview ") {
+            let preview = trimmed.strip_prefix("preview").unwrap_or_default();
+            return self.handle_theme_preview_command(preview.trim(), json_output);
+        }
+        if theme.trim().is_empty() {
+            let list = self
+                .rpc
+                .request("theme/list", json!({ "threadId": self.thread_id }))?;
+            let rendered =
+                format_theme_status(&self.theme, self.loaded_theme.as_ref(), Some(&list));
+            return self.print_text(&rendered, json_output);
+        }
         if !theme.is_empty() {
+            let selection = if theme_preview_index_arg(trimmed) {
+                let list = self
+                    .rpc
+                    .request("theme/list", json!({ "threadId": self.thread_id }))?;
+                theme_preview_index_selection(Some(&list), trimmed).ok_or_else(|| {
+                    format!("theme index {trimmed} is out of range; run /theme preview")
+                })?
+            } else {
+                trimmed.to_string()
+            };
             if theme.trim().eq_ignore_ascii_case("reload") {
                 if let Some(loaded) = load_theme_file()? {
-                    self.theme = loaded;
+                    self.apply_theme_selection(&loaded)?;
                 }
             } else {
-                self.theme = normalize_theme_name(theme)
-                    .ok_or_else(|| "usage: /theme [oppi|dark|light|plain|reload]".to_string())?;
+                self.apply_theme_selection(&selection)?;
             }
         }
-        self.print_text(&format!("theme: {}", self.theme), json_output)
+        self.print_text(
+            &format_theme_status(&self.theme, self.loaded_theme.as_ref(), None),
+            json_output,
+        )
+    }
+
+    fn handle_theme_preview_command(
+        &mut self,
+        theme: &str,
+        json_output: bool,
+    ) -> Result<(), String> {
+        let theme = theme.trim();
+        if theme.is_empty() {
+            let list = self
+                .rpc
+                .request("theme/list", json!({ "threadId": self.thread_id }))?;
+            return self.print_text(
+                &format_theme_preview_index(&self.theme, Some(&list)),
+                json_output,
+            );
+        }
+        let theme = if theme_preview_index_arg(theme) {
+            let list = self
+                .rpc
+                .request("theme/list", json!({ "threadId": self.thread_id }))?;
+            theme_preview_index_selection(Some(&list), theme)
+                .ok_or_else(|| format!("theme index {theme} is out of range; run /theme preview"))?
+        } else {
+            theme.to_string()
+        };
+        if let Some(normalized) = normalize_theme_name(&theme) {
+            return self.print_text(
+                &format_theme_preview_detail(&normalized, "builtIn", theme_tokens(&normalized)),
+                json_output,
+            );
+        }
+        let value = self.rpc.request(
+            "theme/load",
+            theme_load_params_json(&self.thread_id, &theme),
+        )?;
+        let loaded = loaded_shell_theme_from_load_result(&value, &theme)?;
+        self.print_text(
+            &format_theme_preview_detail(&loaded.name, &loaded.source, loaded.line_tokens),
+            json_output,
+        )
+    }
+
+    fn apply_theme_selection(&mut self, theme: &str) -> Result<(), String> {
+        if let Some(normalized) = normalize_theme_name(theme) {
+            self.theme = normalized;
+            self.loaded_theme = None;
+            return Ok(());
+        }
+        let value = self
+            .rpc
+            .request("theme/load", theme_load_params_json(&self.thread_id, theme))?;
+        let loaded = loaded_shell_theme_from_load_result(&value, theme)?;
+        self.theme = loaded.name.clone();
+        self.loaded_theme = Some(loaded);
+        Ok(())
     }
 
     fn prepare_and_run_command(
@@ -4900,18 +10355,19 @@ impl ShellSession {
         json_output: bool,
     ) -> Result<(), String> {
         let role = role_for_command(command);
+        let role_model = self.effective_model_for_role(role, provider);
+        let role_effort = self.effective_effort_for_role(role, provider);
         let prepared = self.rpc.request(
             "command/prepare",
-            json!({
-                "command": command.trim_start_matches('/'),
-                "args": args,
-                "context": {
-                    "role": role,
-                    "roleModel": self.effective_model_for_role(role, provider),
-                    "roleEffort": self.effective_effort_for_role(role, provider),
-                },
-                "promptVariantAppend": prompt_variant_append(&self.prompt_variant),
-            }),
+            command_prepare_params_json(
+                &self.thread_id,
+                command,
+                args,
+                role,
+                role_model,
+                role_effort,
+                prompt_variant_append(&self.prompt_variant),
+            ),
         )?;
         if !json_output {
             let mut rendered = format!(
@@ -5030,22 +10486,32 @@ impl ShellSession {
         }
     }
 
-    fn handle_btw_command(&mut self, question: &str, json_output: bool) -> Result<(), String> {
+    fn handle_btw_command(
+        &mut self,
+        question: &str,
+        provider: &ProviderConfig,
+        json_output: bool,
+    ) -> Result<(), String> {
         if question.is_empty() {
             return self.print_text("usage: /btw <question>", json_output);
         }
         let value = self.rpc.request(
             "side-question/ask",
-            json!({ "threadId": self.thread_id, "question": question }),
+            side_question_request_params(
+                &self.thread_id,
+                question,
+                provider,
+                &self.cwd,
+                self.permission_mode,
+                &self.permission_sandbox_settings,
+                &self.prompt_variant,
+            ),
         )?;
         if json_output {
             self.print_value("sideQuestion", value, json_output)
         } else {
-            let answer = value
-                .get("answer")
-                .and_then(Value::as_str)
-                .unwrap_or("side question answered");
-            self.print_text(answer, json_output)
+            let rendered = format_side_question_result(&value)?;
+            self.print_text(&rendered, json_output)
         }
     }
 
@@ -5116,31 +10582,27 @@ impl ShellSession {
             .pending_question
             .take()
             .ok_or_else(|| "no pending ask_user question".to_string())?;
-        let answers = pending
-            .request
-            .questions
-            .iter()
-            .map(|question| {
-                if let Some(option) = question.options.iter().find(|option| option.id == answer) {
-                    json!({
-                        "questionId": question.id,
-                        "optionId": option.id,
-                        "label": option.label,
-                    })
-                } else {
-                    json!({
-                        "questionId": question.id,
-                        "text": answer,
-                    })
-                }
-            })
-            .collect::<Vec<_>>();
+        let answers = ask_user_input_answers(&pending.request, answer);
+        self.resume_pending_question(pending, answers, false, provider)?;
+        self.print_text("answered pending question", json_output)?;
+        let _ = self.poll_until_turn_boundary(json_output)?;
+        Ok(())
+    }
+
+    fn resume_pending_question(
+        &mut self,
+        pending: PendingQuestion,
+        answers: Vec<AskUserAnswer>,
+        timed_out: bool,
+        provider: &ProviderConfig,
+    ) -> Result<(), String> {
         let mut params = json!({
             "threadId": self.thread_id,
             "turnId": pending.turn_id,
             "askUserResponse": {
                 "requestId": pending.request.id,
                 "answers": answers,
+                "timedOut": timed_out,
             },
         });
         match provider {
@@ -5156,9 +10618,34 @@ impl ShellSession {
             }
         }
         self.rpc.request("turn/resume-agentic", params)?;
-        self.print_text("answered pending question", json_output)?;
-        let _ = self.poll_until_turn_boundary(json_output)?;
         Ok(())
+    }
+
+    fn maybe_timeout_pending_question(
+        &mut self,
+        provider: &ProviderConfig,
+        json_output: bool,
+    ) -> Result<bool, String> {
+        let expired = self
+            .pending_question
+            .as_ref()
+            .and_then(|pending| pending.deadline_at)
+            .is_some_and(|deadline| Instant::now() >= deadline);
+        if !expired {
+            return Ok(false);
+        }
+        let pending = self
+            .pending_question
+            .take()
+            .ok_or_else(|| "no pending ask_user question".to_string())?;
+        let answers = ask_user_timeout_answers(&pending.request);
+        self.resume_pending_question(pending, answers, true, provider)?;
+        self.print_text(
+            "question timed out; used recommended/default answers",
+            json_output,
+        )?;
+        let _ = self.poll_until_turn_boundary(json_output)?;
+        Ok(true)
     }
 
     fn poll_turn_events(&mut self, json_output: bool) -> Result<Option<TurnOutcome>, String> {
@@ -5193,7 +10680,7 @@ impl ShellSession {
             let event: Event = serde_json::from_value(raw.clone())
                 .map_err(|error| format!("decode event: {error}"))?;
             self.cursor = self.cursor.max(event.id);
-            let rendered = render_event_line_themed(&event, &self.theme, &self.tool_calls);
+            let rendered = self.render_event_line(&event);
             match output {
                 EventOutputMode::Json => println!(
                     "{}",
@@ -5213,17 +10700,29 @@ impl ShellSession {
             match &event.kind {
                 EventKind::TurnStarted { turn } => {
                     self.active_turn_id = Some(turn.id.clone());
+                    self.emit_terminal_progress(true, matches!(output, EventOutputMode::Json));
                 }
-                EventKind::TurnCompleted { .. } => {
+                EventKind::TurnCompleted { turn_id } => {
+                    self.maybe_remember_hoppi_turn(turn_id);
+                    self.steered_turns.remove(turn_id);
                     self.active_turn_id = None;
+                    self.emit_terminal_progress(false, matches!(output, EventOutputMode::Json));
                     outcome = Some(TurnOutcome::Completed);
                 }
                 EventKind::TurnAborted { reason } => {
+                    if let Some(turn_id) = event.turn_id.as_ref() {
+                        self.steered_turns.remove(turn_id);
+                    }
                     self.active_turn_id = None;
+                    self.emit_terminal_progress(false, matches!(output, EventOutputMode::Json));
                     outcome = Some(TurnOutcome::Aborted(reason.clone()));
                 }
                 EventKind::TurnInterrupted { reason } => {
+                    if let Some(turn_id) = event.turn_id.as_ref() {
+                        self.steered_turns.remove(turn_id);
+                    }
                     self.active_turn_id = None;
+                    self.emit_terminal_progress(false, matches!(output, EventOutputMode::Json));
                     outcome = Some(TurnOutcome::Interrupted(reason.clone()));
                 }
                 EventKind::ApprovalRequested { request } => {
@@ -5234,12 +10733,15 @@ impl ShellSession {
                         tool_call: request.tool_call.clone(),
                     });
                     self.active_turn_id = None;
+                    self.emit_terminal_progress(false, matches!(output, EventOutputMode::Json));
                     outcome = Some(TurnOutcome::Paused);
                 }
                 EventKind::AskUserRequested { request } => {
                     self.pending_question = Some(PendingQuestion {
                         turn_id: event.turn_id.clone().unwrap_or_default(),
                         request: request.clone(),
+                        requested_at: Instant::now(),
+                        deadline_at: ask_user_deadline_at(request),
                     });
                     self.active_turn_id = None;
                     outcome = Some(TurnOutcome::Paused);
@@ -5255,6 +10757,12 @@ impl ShellSession {
                 }
                 EventKind::TodosUpdated { state } => {
                     self.todo_state = state.clone();
+                }
+                EventKind::Diagnostic { diagnostic } => {
+                    self.usage_state.observe_provider_diagnostic(diagnostic);
+                }
+                EventKind::MemoryStatusChanged { status } => {
+                    self.memory_status = Some(status.clone());
                 }
                 EventKind::SuggestionOffered { suggestion } => {
                     if suggestion.confidence >= 0.70 {
@@ -5306,15 +10814,19 @@ impl ShellSession {
 
     fn steer_active_turn(&mut self, input: &str, json_output: bool) -> Result<(), String> {
         if input.trim().is_empty() {
-            return Err("usage: /steer <text> or Ctrl+Enter with editor text".to_string());
+            return Err(steer_usage().to_string());
         }
         let turn_id = self
             .mutable_turn_id()
             .ok_or_else(|| "no active or paused turn to steer".to_string())?;
+        if self.steering_mode == SteeringMode::OneAtATime && self.steered_turns.contains(&turn_id) {
+            return self.queue_steering(input, json_output);
+        }
         let value = self.rpc.request(
             "turn/steer",
             json!({ "threadId": self.thread_id, "turnId": turn_id, "input": input }),
         )?;
+        self.steered_turns.insert(turn_id);
         if json_output {
             self.print_value("steer", value, json_output)
         } else {
@@ -5337,6 +10849,7 @@ impl ShellSession {
         self.active_turn_id = None;
         self.pending_approval = None;
         self.pending_question = None;
+        self.emit_terminal_progress(false, json_output);
         self.sync_ui_docks();
         if json_output {
             self.print_value("interrupt", value, json_output)
@@ -5346,9 +10859,25 @@ impl ShellSession {
     }
 
     fn restore_latest_follow_up(&mut self) -> Option<String> {
-        let restored = self.follow_up_queue.pop_back();
+        let restored = self
+            .steering_queue
+            .pop_back()
+            .or_else(|| self.follow_up_queue.pop_back());
         self.sync_ui_docks();
         restored
+    }
+
+    fn queue_steering(&mut self, prompt: &str, json_output: bool) -> Result<(), String> {
+        let prompt = prompt.trim();
+        if prompt.is_empty() {
+            return Ok(());
+        }
+        self.steering_queue.push_back(prompt.to_string());
+        self.sync_ui_docks();
+        self.print_text(
+            &format!("queued steering #{}", self.steering_queue.len()),
+            json_output,
+        )
     }
 
     fn queue_follow_up(&mut self, prompt: &str, json_output: bool) -> Result<(), String> {
@@ -5364,6 +10893,26 @@ impl ShellSession {
         )
     }
 
+    fn start_next_queued_steering(
+        &mut self,
+        provider: &ProviderConfig,
+        json_output: bool,
+    ) -> Result<bool, String> {
+        if self.is_turn_running() || self.has_pending_pause() {
+            return Ok(false);
+        }
+        let prompts = take_steering_batch(&mut self.steering_queue, self.steering_mode);
+        if prompts.is_empty() {
+            self.sync_ui_docks();
+            return Ok(false);
+        };
+        let prompt = format_steering_batch_prompt(&prompts);
+        self.sync_ui_docks();
+        self.print_text(&format_steering_run_message(&prompts), json_output)?;
+        self.start_turn_for_role(&prompt, provider, json_output, Some("executor"))?;
+        Ok(true)
+    }
+
     fn start_next_queued_follow_up(
         &mut self,
         provider: &ProviderConfig,
@@ -5372,12 +10921,14 @@ impl ShellSession {
         if self.is_turn_running() || self.has_pending_pause() {
             return Ok(false);
         }
-        let Some(prompt) = self.follow_up_queue.pop_front() else {
+        let prompts = take_follow_up_batch(&mut self.follow_up_queue, self.follow_up_mode);
+        if prompts.is_empty() {
             self.sync_ui_docks();
             return Ok(false);
         };
+        let prompt = format_follow_up_batch_prompt(&prompts);
         self.sync_ui_docks();
-        self.print_text(&format!("running queued follow-up: {prompt}"), json_output)?;
+        self.print_text(&format_follow_up_run_message(&prompts), json_output)?;
         self.start_turn_for_role(&prompt, provider, json_output, Some("executor"))?;
         Ok(true)
     }
@@ -5387,6 +10938,9 @@ impl ShellSession {
         provider: &ProviderConfig,
         json_output: bool,
     ) -> Result<(), String> {
+        if self.start_next_queued_steering(provider, json_output)? {
+            return Ok(());
+        }
         if self.start_next_queued_follow_up(provider, json_output)? {
             return Ok(());
         }
@@ -5400,12 +10954,50 @@ impl ShellSession {
         json_output: bool,
     ) -> Result<(), String> {
         while !self.has_pending_pause() {
-            let Some(prompt) = self.follow_up_queue.pop_front() else {
+            let prompts = take_steering_batch(&mut self.steering_queue, self.steering_mode);
+            if prompts.is_empty() {
                 break;
             };
-            self.print_text(&format!("running queued follow-up: {prompt}"), json_output)?;
+            let prompt = format_steering_batch_prompt(&prompts);
+            self.sync_ui_docks();
+            self.print_text(&format_steering_run_message(&prompts), json_output)?;
             let outcome =
                 self.run_turn_for_role(&prompt, provider, json_output, Some("executor"))?;
+            if !matches!(outcome, TurnOutcome::Completed) {
+                break;
+            }
+        }
+        while !self.has_pending_pause() {
+            let prompts = take_follow_up_batch(&mut self.follow_up_queue, self.follow_up_mode);
+            if prompts.is_empty() {
+                break;
+            };
+            let prompt = format_follow_up_batch_prompt(&prompts);
+            self.sync_ui_docks();
+            self.print_text(&format_follow_up_run_message(&prompts), json_output)?;
+            let outcome =
+                self.run_turn_for_role(&prompt, provider, json_output, Some("executor"))?;
+            if !matches!(outcome, TurnOutcome::Completed) {
+                break;
+            }
+        }
+        while !self.has_pending_pause()
+            && !self.is_turn_running()
+            && self.steering_queue.is_empty()
+            && self.follow_up_queue.is_empty()
+        {
+            let Some((prompt, continuation)) = self.claim_goal_continuation_prompt(json_output)?
+            else {
+                break;
+            };
+            self.print_text(&format!("continuing goal #{continuation}"), json_output)?;
+            let outcome = self.run_turn_for_role_with_system_append(
+                GOAL_CONTINUATION_INPUT,
+                provider,
+                json_output,
+                Some("executor"),
+                Some(&prompt),
+            )?;
             if !matches!(outcome, TurnOutcome::Completed) {
                 break;
             }
@@ -5458,6 +11050,7 @@ impl ShellSession {
     ) -> Result<Option<(String, u32)>, String> {
         if self.is_turn_running()
             || self.has_pending_pause()
+            || !self.steering_queue.is_empty()
             || !self.follow_up_queue.is_empty()
             || !self
                 .current_goal
@@ -5518,17 +11111,31 @@ impl ShellSession {
             .map(|suggestion| suggestion.message.clone());
         let active_todo_count = active.len();
         let goal = self.goal_status_label();
-        let footer = format!(
-            "status: role=executor model={} permissions={} memory=client-hosted todos={} queued={} goal={} diagnostics=line-mode/raw-deferred variant={} theme={} thread={}",
-            self.selected_model.as_deref().unwrap_or("none"),
-            self.permission_mode.as_str(),
-            active_todo_count,
-            self.follow_up_queue.len(),
-            goal,
-            self.prompt_variant,
-            self.theme,
-            self.thread_id
-        );
+        let usage = self.usage_state.session_footer_label();
+        let weekly = self.usage_state.weekly_footer_label();
+        let context = self.usage_state.context_footer_label();
+        let memory = self.memory_footer_label();
+        let model = self
+            .selected_model
+            .as_deref()
+            .map(display_model_id)
+            .unwrap_or("none");
+        let footer = format_footer_status_line(FooterStatusParts {
+            settings: &self.footer_settings,
+            cwd: &self.cwd,
+            model,
+            permission: self.permission_mode.as_str(),
+            usage: &usage,
+            weekly: weekly.as_deref(),
+            context: &context,
+            memory: &memory,
+            todos: active_todo_count,
+            queued: self.follow_up_queue.len() + self.steering_queue.len(),
+            goal: &goal,
+            variant: &self.prompt_variant,
+            theme: &self.theme,
+            thread: &self.thread_id,
+        });
         self.ui.update_docks(DockState {
             todos: active,
             approval,
@@ -5544,6 +11151,9 @@ impl ShellSession {
     }
 
     fn goal_header_label(&self) -> Option<String> {
+        if let Some(steering) = self.steering_queue.front() {
+            return Some(steering.clone());
+        }
         if let Some(follow_up) = self.follow_up_queue.front() {
             return Some(follow_up.clone());
         }
@@ -5559,6 +11169,319 @@ impl ShellSession {
             println!("{rendered}");
         }
         self.ui.clear_dirty();
+    }
+
+    fn prepare_hoppi_recall_for_prompt(
+        &mut self,
+        prompt: &str,
+    ) -> Option<HoppiRecallCommandResult> {
+        let params = memory_backend_recall_params_from_settings(
+            &self.memory_settings,
+            &self.thread_id,
+            prompt,
+        )
+        .ok()?;
+        let value = self
+            .request_memory_backend_normalized("memory/backend/recall", params)
+            .ok()?;
+        let recalled = serde_json::from_value::<MemoryRecallResult>(value).ok()?;
+        Some(HoppiRecallCommandResult {
+            context_markdown: recalled.context_markdown,
+            context_bytes: recalled.context_bytes,
+            memory_count: recalled.status.memory_count.max(recalled.total_count),
+            pinned_count: Some(recalled.status.pinned_count),
+            store_path: recalled.status.store_path,
+            records: recalled.items,
+            omitted_reason: recalled.omitted_reason,
+            truncated: recalled.truncated,
+        })
+    }
+
+    fn hoppi_thread_events(&mut self) -> Option<Vec<Event>> {
+        let listed = match self.rpc.request(
+            "events/list",
+            json!({ "threadId": self.thread_id, "after": 0, "limit": 5000 }),
+        ) {
+            Ok(value) => value,
+            Err(_error) => return None,
+        };
+        let Some(raw_events) = listed["events"].as_array() else {
+            return None;
+        };
+        Some(
+            raw_events
+                .iter()
+                .filter_map(|raw| serde_json::from_value::<Event>(raw.clone()).ok())
+                .collect::<Vec<_>>(),
+        )
+    }
+
+    fn maybe_remember_hoppi_turn(&mut self, turn_id: &str) {
+        let Some(events) = self.hoppi_thread_events() else {
+            return;
+        };
+        let Some(summary) = build_hoppi_turn_summary_from_events(
+            &events,
+            &self.thread_id,
+            turn_id,
+            self.last_prompt.as_deref(),
+            &hoppi_turn_summary_timestamp(),
+        ) else {
+            return;
+        };
+        let params = memory_backend_turn_remember_params_from_settings(
+            &self.memory_settings,
+            &summary,
+            &self.thread_id,
+            turn_id,
+        );
+        if let Ok(params) = params
+            && let Ok(value) =
+                self.request_memory_backend_normalized("memory/backend/remember", params)
+            && let Ok(remembered) = serde_json::from_value::<MemoryRememberResult>(value)
+            && remembered.backend_applied
+        {
+            self.mark_hoppi_memory_dirty();
+        }
+    }
+
+    fn maybe_remember_hoppi_exit_recap(&mut self) {
+        let _ = self.maybe_remember_hoppi_session_recap(HoppiSessionRecapReason::Exit);
+    }
+
+    fn maybe_remember_hoppi_clear_recap(&mut self) -> bool {
+        self.maybe_remember_hoppi_session_recap(HoppiSessionRecapReason::Clear)
+    }
+
+    fn maybe_remember_hoppi_session_recap(&mut self, reason: HoppiSessionRecapReason) -> bool {
+        let Some(events) = self.hoppi_thread_events() else {
+            return false;
+        };
+        let Some(recap) = build_hoppi_session_recap_from_events(
+            &events,
+            &self.thread_id,
+            &hoppi_turn_summary_timestamp(),
+        ) else {
+            return false;
+        };
+        let params = memory_backend_session_recap_params_from_settings(
+            &self.memory_settings,
+            &recap,
+            &self.thread_id,
+            reason,
+        );
+        if let Ok(params) = params
+            && let Ok(value) =
+                self.request_memory_backend_normalized("memory/backend/remember", params)
+            && let Ok(remembered) = serde_json::from_value::<MemoryRememberResult>(value)
+            && remembered.backend_applied
+        {
+            self.mark_hoppi_memory_dirty();
+            return true;
+        }
+        false
+    }
+
+    fn record_hoppi_memory_status(&mut self, enabled: bool, memory_count: u64) {
+        let status = MemoryStatus {
+            enabled,
+            initialized: enabled,
+            backend: "hoppi".to_string(),
+            scope: "project".to_string(),
+            memory_count,
+            ..MemoryStatus::default()
+        };
+        self.memory_status = Some(status.clone());
+        let _ = self.rpc.request(
+            "memory/set",
+            json!({
+                "threadId": self.thread_id,
+                "status": status,
+            }),
+        );
+        self.sync_ui_docks();
+    }
+
+    fn record_hoppi_dashboard_status(&mut self, result: &HoppiDashboardCommandResult) {
+        let status = MemoryStatus {
+            enabled: true,
+            initialized: true,
+            backend: "hoppi".to_string(),
+            scope: "project".to_string(),
+            store_path: result.store_path.clone(),
+            memory_count: result.memory_count,
+            pinned_count: result.pinned_count,
+            dashboard_url: Some(result.url.clone()),
+            ..MemoryStatus::default()
+        };
+        self.memory_status = Some(status.clone());
+        let _ = self.rpc.request(
+            "memory/set",
+            json!({
+                "threadId": self.thread_id,
+                "status": status,
+            }),
+        );
+        self.sync_ui_docks();
+    }
+
+    fn record_hoppi_list_records(&mut self, result: &HoppiListCommandResult) {
+        let status = MemoryStatus {
+            enabled: true,
+            initialized: true,
+            backend: "hoppi".to_string(),
+            scope: "project".to_string(),
+            store_path: result.store_path.clone(),
+            memory_count: result.memory_count.max(result.records.len() as u64),
+            pinned_count: result.pinned_count.max(
+                result
+                    .records
+                    .iter()
+                    .filter(|record| record.pinned || record.starred)
+                    .count() as u64,
+            ),
+            ..MemoryStatus::default()
+        };
+        self.memory_status = Some(status.clone());
+        let _ = self.rpc.request(
+            "memory/records/set",
+            json!({
+                "threadId": self.thread_id,
+                "source": "hoppi-list",
+                "status": status,
+                "records": result.records,
+            }),
+        );
+        self.sync_ui_docks();
+    }
+
+    fn reset_hoppi_background_sync_timer(&mut self) {
+        self.next_hoppi_background_sync_at =
+            hoppi_next_background_sync_at(&self.memory_settings, Instant::now());
+    }
+
+    fn is_idle_for_hoppi_background_sync(&self) -> bool {
+        !self.is_turn_running() && !self.has_pending_pause() && self.follow_up_queue.is_empty()
+    }
+
+    fn is_idle_for_compaction_offer(&self) -> bool {
+        !self.is_turn_running() && !self.has_pending_pause() && self.follow_up_queue.is_empty()
+    }
+
+    fn refresh_compaction_idle_timer(&mut self) {
+        if self.is_idle_for_compaction_offer() {
+            if self.compaction_idle_since.is_none() {
+                self.compaction_idle_since = Some(Instant::now());
+            }
+        } else {
+            self.compaction_idle_since = None;
+        }
+    }
+
+    fn maybe_offer_compaction(
+        &mut self,
+        provider: &ProviderConfig,
+        json_output: bool,
+    ) -> Result<(), String> {
+        self.refresh_compaction_idle_timer();
+        if !self.is_idle_for_compaction_offer() {
+            return Ok(());
+        }
+        let idle_elapsed = self.compaction_idle_since.map(|started| started.elapsed());
+        let telemetry = self.compaction_trigger_telemetry_for_provider(provider);
+        let Some(offer) = compaction_offer_plan(&self.compact_settings, &telemetry, idle_elapsed)
+        else {
+            return Ok(());
+        };
+        if self.last_compaction_offer_key.as_deref() == Some(offer.key.as_str()) {
+            return Ok(());
+        }
+        self.last_compaction_offer_key = Some(offer.key);
+        self.print_text(&offer.message, json_output)
+    }
+
+    fn maybe_run_hoppi_background_sync(&mut self, json_output: bool) -> Result<(), String> {
+        let now = Instant::now();
+        if self.next_hoppi_background_sync_at.is_none() {
+            self.reset_hoppi_background_sync_timer();
+        }
+        if !hoppi_background_sync_due(
+            &self.memory_settings,
+            self.next_hoppi_background_sync_at,
+            self.is_idle_for_hoppi_background_sync(),
+            now,
+        ) {
+            return Ok(());
+        }
+
+        self.next_hoppi_background_sync_at =
+            hoppi_next_background_sync_at(&self.memory_settings, now);
+        match self.run_hoppi_sync_with_job_reporting(HoppiSyncDirection::Both, "idle") {
+            Ok(run) => self.print_text(
+                &format!(
+                    "memory: background sync {}",
+                    format_hoppi_sync_report(HoppiSyncDirection::Both, &run.result)
+                ),
+                json_output,
+            ),
+            Err(error) => self.print_text(
+                &format!("memory: background sync skipped: {error}"),
+                json_output,
+            ),
+        }
+    }
+
+    fn maybe_run_hoppi_idle_consolidation(&mut self, json_output: bool) -> Result<(), String> {
+        let now = Instant::now();
+        if self.hoppi_idle_consolidating
+            || self.hoppi_idle_consolidation_attempted_version == self.hoppi_dirty_version
+            || !hoppi_idle_consolidation_due(
+                &self.memory_settings,
+                self.hoppi_dirty_version,
+                self.hoppi_consolidated_version,
+                self.hoppi_dirty_at,
+                self.is_idle_for_hoppi_background_sync(),
+                now,
+            )
+        {
+            return Ok(());
+        }
+
+        self.hoppi_idle_consolidation_attempted_version = self.hoppi_dirty_version;
+        self.hoppi_idle_consolidating = true;
+        let params = memory_backend_idle_consolidate_params_from_settings(
+            &self.memory_settings,
+            &self.thread_id,
+        );
+        let result = match params.and_then(|params| {
+            self.request_memory_backend_normalized("memory/backend/consolidate", params)
+        }) {
+            Ok(value) => match serde_json::from_value::<MemoryConsolidateResult>(value.clone()) {
+                Ok(consolidated) => {
+                    if !consolidated.dry_run && consolidated.backend_applied {
+                        self.mark_hoppi_memory_consolidated();
+                    }
+                    if json_output {
+                        self.print_value("memoryConsolidate", json!(consolidated), json_output)
+                    } else {
+                        self.print_text(
+                            &format!(
+                                "memory: idle consolidation\n{}",
+                                format_memory_consolidate(&json!(consolidated))
+                            ),
+                            json_output,
+                        )
+                    }
+                }
+                Err(error) => Err(format!("decode memory/backend/consolidate: {error}")),
+            },
+            Err(error) => self.print_text(
+                &format!("memory: idle consolidation skipped: {error}"),
+                json_output,
+            ),
+        };
+        self.hoppi_idle_consolidating = false;
+        result
     }
 
     fn print_exit_requested(&mut self, json_output: bool) -> Result<(), String> {
@@ -5609,6 +11532,10 @@ impl ShellSession {
     }
 
     fn shutdown(&mut self) {
+        if let Some(mut process) = self.hoppi_dashboard_process.take() {
+            let _ = process.child.kill();
+            let _ = process.child.wait();
+        }
         if let Some(mut child) = self.meridian_child.take() {
             let _ = child.kill();
         }
@@ -5690,6 +11617,1618 @@ fn permission_mode_from_env() -> Option<PermissionMode> {
         .and_then(parse_permission_mode)
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum PermissionCommandRoute {
+    Status,
+    History,
+    ReviewContext,
+    ClearSession,
+    ValidateSandbox,
+    SetSandboxRootsHere,
+    SetSandboxRootsDefault,
+    SetMode(PermissionMode),
+    SetReviewTimeoutMs(u64),
+    SetReviewerModel(Option<String>),
+    SetSandboxInternet(bool),
+    SetSandboxSsh(bool),
+    SetSandboxProjectRoots(Vec<String>),
+    SetSandboxReadableRoots(Vec<String>),
+    SetSandboxWritableRoots(Vec<String>),
+    EditSandboxRoots {
+        kind: PermissionSandboxRootListKind,
+        edit: PermissionSandboxRootListEdit,
+        roots: Vec<String>,
+    },
+    SetProtectedPatterns(Vec<String>),
+}
+
+fn permissions_usage() -> &'static str {
+    "usage: /permissions [status|history|context|timeout <seconds>|reviewer-model <auto|provider/model>|sandbox validate|sandbox roots <here|default>|sandbox internet <on|off>|sandbox ssh <on|off>|sandbox project <paths|default>|sandbox project add|remove <paths>|sandbox read <paths|default>|sandbox read add|remove <paths>|sandbox write <paths|default>|sandbox write add|remove <paths>|sandbox protected <patterns|default>|clear-session|read-only|default|auto-review|full-access]"
+}
+
+fn permissions_command_route(args: &str) -> Result<PermissionCommandRoute, String> {
+    let parts = args.split_whitespace().collect::<Vec<_>>();
+    match parts.as_slice() {
+        [] | ["status"] => Ok(PermissionCommandRoute::Status),
+        ["history"] => Ok(PermissionCommandRoute::History),
+        ["context"] | ["review-context"] | ["guardian-context"] => {
+            Ok(PermissionCommandRoute::ReviewContext)
+        }
+        ["clear-session"] | ["clear"] => Ok(PermissionCommandRoute::ClearSession),
+        ["sandbox"] | ["sandbox", "status"] => Ok(PermissionCommandRoute::Status),
+        ["sandbox", "validate"] | ["sandbox", "check"] => {
+            Ok(PermissionCommandRoute::ValidateSandbox)
+        }
+        ["sandbox", "roots", "here" | "cwd" | "current" | "workspace"] => {
+            Ok(PermissionCommandRoute::SetSandboxRootsHere)
+        }
+        ["sandbox", "roots", "default" | "clear" | "reset"] => {
+            Ok(PermissionCommandRoute::SetSandboxRootsDefault)
+        }
+        ["sandbox", "internet", value] => Ok(PermissionCommandRoute::SetSandboxInternet(
+            parse_sandbox_bool(value)?,
+        )),
+        ["sandbox", "ssh", value] => Ok(PermissionCommandRoute::SetSandboxSsh(parse_sandbox_bool(
+            value,
+        )?)),
+        [
+            "sandbox",
+            "project",
+            edit @ ("add" | "append" | "remove" | "rm" | "delete"),
+            rest @ ..,
+        ] => Ok(PermissionCommandRoute::EditSandboxRoots {
+            kind: PermissionSandboxRootListKind::Project,
+            edit: parse_sandbox_root_list_edit(edit)?,
+            roots: parse_sandbox_root_edit_paths(&rest.join(" "))?,
+        }),
+        ["sandbox", "project", rest @ ..] => Ok(PermissionCommandRoute::SetSandboxProjectRoots(
+            parse_sandbox_roots(&rest.join(" "))?,
+        )),
+        [
+            "sandbox",
+            "read" | "readable",
+            edit @ ("add" | "append" | "remove" | "rm" | "delete"),
+            rest @ ..,
+        ] => Ok(PermissionCommandRoute::EditSandboxRoots {
+            kind: PermissionSandboxRootListKind::Readable,
+            edit: parse_sandbox_root_list_edit(edit)?,
+            roots: parse_sandbox_root_edit_paths(&rest.join(" "))?,
+        }),
+        ["sandbox", "read" | "readable", rest @ ..] => Ok(
+            PermissionCommandRoute::SetSandboxReadableRoots(parse_sandbox_roots(&rest.join(" "))?),
+        ),
+        [
+            "sandbox",
+            "write" | "writable",
+            edit @ ("add" | "append" | "remove" | "rm" | "delete"),
+            rest @ ..,
+        ] => Ok(PermissionCommandRoute::EditSandboxRoots {
+            kind: PermissionSandboxRootListKind::Writable,
+            edit: parse_sandbox_root_list_edit(edit)?,
+            roots: parse_sandbox_root_edit_paths(&rest.join(" "))?,
+        }),
+        ["sandbox", "write" | "writable", rest @ ..] => Ok(
+            PermissionCommandRoute::SetSandboxWritableRoots(parse_sandbox_roots(&rest.join(" "))?),
+        ),
+        ["sandbox", "protected"] => Ok(PermissionCommandRoute::SetProtectedPatterns(Vec::new())),
+        ["sandbox", "protected", rest @ ..] => Ok(PermissionCommandRoute::SetProtectedPatterns(
+            parse_protected_patterns(&rest.join(" "))?,
+        )),
+        ["protected", rest @ ..] => Ok(PermissionCommandRoute::SetProtectedPatterns(
+            parse_protected_patterns(&rest.join(" "))?,
+        )),
+        ["timeout", seconds] => {
+            let seconds = seconds
+                .parse::<u64>()
+                .ok()
+                .filter(|value| *value > 0)
+                .ok_or_else(|| permissions_usage().to_string())?;
+            let timeout_ms = seconds
+                .checked_mul(1_000)
+                .ok_or_else(|| permissions_usage().to_string())?;
+            Ok(PermissionCommandRoute::SetReviewTimeoutMs(timeout_ms))
+        }
+        ["reviewer-model", "auto"] => Ok(PermissionCommandRoute::SetReviewerModel(None)),
+        ["reviewer-model", model] => {
+            let model = model.trim();
+            let valid_provider_model = model.split_once('/').is_some_and(|(provider, model)| {
+                !provider.trim().is_empty() && !model.trim().is_empty()
+            });
+            if valid_provider_model {
+                Ok(PermissionCommandRoute::SetReviewerModel(Some(
+                    model.to_string(),
+                )))
+            } else {
+                Err(permissions_usage().to_string())
+            }
+        }
+        [mode] => parse_permission_mode(mode)
+            .map(PermissionCommandRoute::SetMode)
+            .ok_or_else(|| permissions_usage().to_string()),
+        _ => Err(permissions_usage().to_string()),
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PermissionSandboxRootListKind {
+    Project,
+    Readable,
+    Writable,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PermissionSandboxRootListEdit {
+    Add,
+    Remove,
+}
+
+fn parse_sandbox_bool(raw: &str) -> Result<bool, String> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "on" | "true" | "allow" | "allowed" | "yes" => Ok(true),
+        "off" | "false" | "block" | "blocked" | "no" => Ok(false),
+        _ => Err(permissions_usage().to_string()),
+    }
+}
+
+fn parse_sandbox_root_list_edit(raw: &str) -> Result<PermissionSandboxRootListEdit, String> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "add" | "append" => Ok(PermissionSandboxRootListEdit::Add),
+        "remove" | "rm" | "delete" => Ok(PermissionSandboxRootListEdit::Remove),
+        _ => Err(permissions_usage().to_string()),
+    }
+}
+
+fn parse_sandbox_roots(raw: &str) -> Result<Vec<String>, String> {
+    let raw = raw.trim();
+    if raw.is_empty() || raw.eq_ignore_ascii_case("default") || raw.eq_ignore_ascii_case("clear") {
+        return Ok(Vec::new());
+    }
+    parse_csv_or_whitespace_list(raw)
+}
+
+fn parse_sandbox_root_edit_paths(raw: &str) -> Result<Vec<String>, String> {
+    let roots = parse_sandbox_roots(raw)?;
+    if roots.is_empty() {
+        Err(permissions_usage().to_string())
+    } else {
+        Ok(roots)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PermissionSandboxRootPreset {
+    Here,
+    Default,
+}
+
+fn apply_permission_sandbox_root_preset(
+    settings: &mut PermissionSandboxSettings,
+    preset: PermissionSandboxRootPreset,
+    cwd: &str,
+) {
+    match preset {
+        PermissionSandboxRootPreset::Here => {
+            let roots = vec![cwd.to_string()];
+            settings.project_roots = roots.clone();
+            settings.readable_roots = roots.clone();
+            settings.writable_roots = roots;
+        }
+        PermissionSandboxRootPreset::Default => {
+            settings.project_roots.clear();
+            settings.readable_roots.clear();
+            settings.writable_roots.clear();
+        }
+    }
+}
+
+fn apply_permission_sandbox_root_list_edit(
+    roots: &mut Vec<String>,
+    edit: PermissionSandboxRootListEdit,
+    requested: &[String],
+) -> bool {
+    let requested = normalize_string_slice(requested);
+    let mut next = normalize_string_slice(roots);
+    match edit {
+        PermissionSandboxRootListEdit::Add => {
+            for root in requested {
+                if !next.contains(&root) {
+                    next.push(root);
+                }
+            }
+        }
+        PermissionSandboxRootListEdit::Remove => {
+            next.retain(|root| !requested.contains(root));
+        }
+    }
+    let changed = roots.as_slice() != next.as_slice();
+    *roots = next;
+    changed
+}
+
+fn permission_sandbox_root_list_mut(
+    settings: &mut PermissionSandboxSettings,
+    kind: PermissionSandboxRootListKind,
+) -> &mut Vec<String> {
+    match kind {
+        PermissionSandboxRootListKind::Project => &mut settings.project_roots,
+        PermissionSandboxRootListKind::Readable => &mut settings.readable_roots,
+        PermissionSandboxRootListKind::Writable => &mut settings.writable_roots,
+    }
+}
+
+fn permission_sandbox_root_list_labels(
+    kind: PermissionSandboxRootListKind,
+) -> (&'static str, &'static str) {
+    match kind {
+        PermissionSandboxRootListKind::Project => ("project", "default"),
+        PermissionSandboxRootListKind::Readable => ("readable", "project roots"),
+        PermissionSandboxRootListKind::Writable => ("writable", "project roots"),
+    }
+}
+
+fn parse_protected_patterns(raw: &str) -> Result<Vec<String>, String> {
+    let raw = raw.trim();
+    if raw.is_empty() || raw.eq_ignore_ascii_case("default") || raw.eq_ignore_ascii_case("clear") {
+        return Ok(Vec::new());
+    }
+    parse_csv_or_whitespace_list(raw)
+}
+
+fn parse_csv_or_whitespace_list(raw: &str) -> Result<Vec<String>, String> {
+    let parts = if raw.contains(',') {
+        raw.split(',').collect::<Vec<_>>()
+    } else {
+        raw.split_whitespace().collect::<Vec<_>>()
+    };
+    let mut patterns = Vec::new();
+    for part in parts {
+        let item = part.trim();
+        if item.is_empty() {
+            continue;
+        }
+        if item.len() > 240 || item.contains('\0') {
+            return Err(permissions_usage().to_string());
+        }
+        let item = item.to_string();
+        if !patterns.contains(&item) {
+            patterns.push(item);
+        }
+    }
+    Ok(patterns)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum AskUserCommandRoute {
+    Status,
+    SetTimeoutMs(u64),
+}
+
+fn ask_user_usage() -> &'static str {
+    "usage: /ask-user [status|timeout <off|1|2|5|10>]"
+}
+
+fn ask_user_timeout_minutes_to_ms(minutes: u64) -> Option<u64> {
+    ASK_USER_ALLOWED_TIMEOUT_MINUTES
+        .contains(&minutes)
+        .then(|| minutes.saturating_mul(60_000))
+}
+
+fn ask_user_timeout_ms_to_minutes(timeout_ms: u64) -> Option<u64> {
+    if timeout_ms == 0 {
+        return Some(0);
+    }
+    (timeout_ms % 60_000 == 0)
+        .then_some(timeout_ms / 60_000)
+        .filter(|minutes| ASK_USER_ALLOWED_TIMEOUT_MINUTES.contains(minutes))
+}
+
+fn ask_user_command_route(args: &str) -> Result<AskUserCommandRoute, String> {
+    let parts = args.split_whitespace().collect::<Vec<_>>();
+    match parts.as_slice() {
+        [] | ["status"] => Ok(AskUserCommandRoute::Status),
+        ["timeout", "off"] => Ok(AskUserCommandRoute::SetTimeoutMs(0)),
+        ["timeout", minutes] => {
+            let minutes = minutes
+                .parse::<u64>()
+                .ok()
+                .and_then(ask_user_timeout_minutes_to_ms)
+                .ok_or_else(|| ask_user_usage().to_string())?;
+            Ok(AskUserCommandRoute::SetTimeoutMs(minutes))
+        }
+        _ => Err(ask_user_usage().to_string()),
+    }
+}
+
+fn follow_up_usage() -> &'static str {
+    "usage: /follow-up [status|mode <all|one-at-a-time>]"
+}
+
+fn parse_follow_up_mode(raw: &str) -> Option<FollowUpMode> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "all" => Some(FollowUpMode::All),
+        "one" | "one-at-a-time" | "one_at_a_time" | "one-at-time" => Some(FollowUpMode::OneAtATime),
+        _ => None,
+    }
+}
+
+fn follow_up_command_route(args: &str) -> Result<FollowUpCommandRoute, String> {
+    let parts = args.split_whitespace().collect::<Vec<_>>();
+    match parts.as_slice() {
+        [] | ["status"] => Ok(FollowUpCommandRoute::Status),
+        ["mode", mode] => parse_follow_up_mode(mode)
+            .map(FollowUpCommandRoute::SetMode)
+            .ok_or_else(|| follow_up_usage().to_string()),
+        [mode] => parse_follow_up_mode(mode)
+            .map(FollowUpCommandRoute::SetMode)
+            .ok_or_else(|| follow_up_usage().to_string()),
+        _ => Err(follow_up_usage().to_string()),
+    }
+}
+
+fn format_follow_up_status(mode: FollowUpMode, queued: usize) -> String {
+    format!("follow-up: mode {}; queued {}", mode.as_str(), queued)
+}
+
+fn follow_up_mode_toggle_arg(mode: FollowUpMode) -> &'static str {
+    match mode {
+        FollowUpMode::All => "one-at-a-time",
+        FollowUpMode::OneAtATime => "all",
+    }
+}
+
+fn steer_usage() -> &'static str {
+    "usage: /steer [status|mode <all|one-at-a-time>|<text>]"
+}
+
+fn parse_steering_mode(raw: &str) -> Option<SteeringMode> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "all" => Some(SteeringMode::All),
+        "one" | "one-at-a-time" | "one_at_a_time" | "one-at-time" => Some(SteeringMode::OneAtATime),
+        _ => None,
+    }
+}
+
+fn steer_command_route(args: &str) -> Result<SteerCommandRoute, String> {
+    let trimmed = args.trim();
+    let parts = trimmed.split_whitespace().collect::<Vec<_>>();
+    match parts.as_slice() {
+        [] | ["status"] => Ok(SteerCommandRoute::Status),
+        ["mode", mode] => parse_steering_mode(mode)
+            .map(SteerCommandRoute::SetMode)
+            .ok_or_else(|| steer_usage().to_string()),
+        ["mode", ..] => Err(steer_usage().to_string()),
+        _ => Ok(SteerCommandRoute::Send(trimmed.to_string())),
+    }
+}
+
+fn format_steering_status(mode: SteeringMode, queued: usize) -> String {
+    format!("steer: mode {}; queued {}", mode.as_str(), queued)
+}
+
+fn steering_mode_toggle_arg(mode: SteeringMode) -> &'static str {
+    match mode {
+        SteeringMode::All => "one-at-a-time",
+        SteeringMode::OneAtATime => "all",
+    }
+}
+
+fn startup_usage() -> &'static str {
+    "usage: /startup [status|quiet <on|off>]"
+}
+
+fn startup_command_route(args: &str) -> Result<StartupCommandRoute, String> {
+    let parts = args.split_whitespace().collect::<Vec<_>>();
+    match parts.as_slice() {
+        [] | ["status"] => Ok(StartupCommandRoute::Status),
+        ["quiet", value] => parse_footer_bool(value)
+            .map(StartupCommandRoute::SetQuietStartup)
+            .map_err(|_| startup_usage().to_string()),
+        _ => Err(startup_usage().to_string()),
+    }
+}
+
+fn format_startup_status(quiet_startup: bool) -> String {
+    format!("startup: quiet {}", enabled_label(quiet_startup))
+}
+
+fn quiet_startup_toggle_arg(quiet_startup: bool) -> &'static str {
+    if quiet_startup { "off" } else { "on" }
+}
+
+fn cursor_usage() -> &'static str {
+    "usage: /cursor [status|hardware <on|off>]"
+}
+
+fn cursor_command_route(args: &str) -> Result<CursorCommandRoute, String> {
+    let parts = args.split_whitespace().collect::<Vec<_>>();
+    match parts.as_slice() {
+        [] | ["status"] | ["settings"] => Ok(CursorCommandRoute::Status),
+        ["hardware", value] | ["hardware-cursor", value] | ["cursor", value] => {
+            parse_footer_bool(value)
+                .map(CursorCommandRoute::SetHardwareCursor)
+                .map_err(|_| cursor_usage().to_string())
+        }
+        _ => Err(cursor_usage().to_string()),
+    }
+}
+
+fn format_cursor_status(show_hardware_cursor: bool) -> String {
+    format!("cursor: hardware {}", enabled_label(show_hardware_cursor))
+}
+
+fn hardware_cursor_toggle_arg(show_hardware_cursor: bool) -> &'static str {
+    if show_hardware_cursor { "off" } else { "on" }
+}
+
+fn terminal_cursor_setup_sequence(show_hardware_cursor: bool) -> &'static str {
+    if show_hardware_cursor {
+        ""
+    } else {
+        "\x1b[?25l"
+    }
+}
+
+fn terminal_usage() -> &'static str {
+    "usage: /terminal [status|progress <on|off>|clear-on-shrink <on|off>]"
+}
+
+fn terminal_command_route(args: &str) -> Result<TerminalCommandRoute, String> {
+    let parts = args.split_whitespace().collect::<Vec<_>>();
+    match parts.as_slice() {
+        [] | ["status"] | ["settings"] => Ok(TerminalCommandRoute::Status),
+        ["progress", value] | ["terminal-progress", value] => parse_footer_bool(value)
+            .map(TerminalCommandRoute::SetProgress)
+            .map_err(|_| terminal_usage().to_string()),
+        ["clear-on-shrink", value] | ["shrink", value] => parse_footer_bool(value)
+            .map(TerminalCommandRoute::SetClearOnShrink)
+            .map_err(|_| terminal_usage().to_string()),
+        _ => Err(terminal_usage().to_string()),
+    }
+}
+
+fn format_terminal_status(show_terminal_progress: bool, clear_on_shrink: bool) -> String {
+    format!(
+        "terminal: progress {}, clear-on-shrink {}",
+        enabled_label(show_terminal_progress),
+        enabled_label(clear_on_shrink)
+    )
+}
+
+fn terminal_progress_toggle_arg(show_terminal_progress: bool) -> &'static str {
+    if show_terminal_progress { "off" } else { "on" }
+}
+
+fn terminal_clear_on_shrink_toggle_arg(clear_on_shrink: bool) -> &'static str {
+    if clear_on_shrink { "off" } else { "on" }
+}
+
+fn terminal_progress_sequence(active: bool) -> &'static str {
+    if active {
+        "\x1b]9;4;3\x07"
+    } else {
+        "\x1b]9;4;0;\x07"
+    }
+}
+
+fn terminal_progress_output(
+    enabled: bool,
+    active: bool,
+    json_output: bool,
+) -> Option<&'static str> {
+    if enabled && !json_output {
+        Some(terminal_progress_sequence(active))
+    } else {
+        None
+    }
+}
+
+fn editor_usage() -> &'static str {
+    "usage: /editor [status|padding <0|1|2|3>|double-escape <tree|fork|none>]"
+}
+
+fn editor_command_route(args: &str) -> Result<EditorCommandRoute, String> {
+    let parts = args.split_whitespace().collect::<Vec<_>>();
+    match parts.as_slice() {
+        [] | ["status"] | ["settings"] => Ok(EditorCommandRoute::Status),
+        ["padding", value] | ["padding-x", value] | ["pad", value] => parse_editor_padding_x(value)
+            .map(EditorCommandRoute::SetPaddingX)
+            .map_err(|_| editor_usage().to_string()),
+        ["double-escape", value] | ["double_escape", value] | ["escape", value] => {
+            parse_double_escape_action(value).map(EditorCommandRoute::SetDoubleEscapeAction)
+        }
+        _ => Err(editor_usage().to_string()),
+    }
+}
+
+fn parse_editor_padding_x(raw: &str) -> Result<usize, String> {
+    raw.parse::<usize>()
+        .ok()
+        .and_then(normalize_editor_padding_x)
+        .ok_or_else(|| editor_usage().to_string())
+}
+
+fn normalize_editor_padding_x(value: usize) -> Option<usize> {
+    EDITOR_PADDING_X_VALUES
+        .iter()
+        .copied()
+        .find(|allowed| *allowed == value)
+}
+
+fn parse_double_escape_action(raw: &str) -> Result<DoubleEscapeAction, String> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "tree" => Ok(DoubleEscapeAction::Tree),
+        "fork" | "branch" => Ok(DoubleEscapeAction::Fork),
+        "none" | "off" | "disabled" => Ok(DoubleEscapeAction::None),
+        _ => Err(editor_usage().to_string()),
+    }
+}
+
+fn format_editor_status(padding_x: usize, double_escape_action: DoubleEscapeAction) -> String {
+    format!(
+        "editor: padding {padding_x}, double-escape {}",
+        double_escape_action.as_str()
+    )
+}
+
+fn editor_padding_x_toggle_arg(current: usize) -> usize {
+    EDITOR_PADDING_X_VALUES
+        .iter()
+        .copied()
+        .find(|value| *value > current)
+        .unwrap_or(EDITOR_PADDING_X_VALUES[0])
+}
+
+fn double_escape_action_toggle_arg(current: DoubleEscapeAction) -> &'static str {
+    match current {
+        DoubleEscapeAction::Tree => "fork",
+        DoubleEscapeAction::Fork => "none",
+        DoubleEscapeAction::None => "tree",
+    }
+}
+
+const TREE_ENTRY_DEFAULT_LIMIT: usize = 5_000;
+const TREE_ENTRY_MAX_LIMIT: usize = 5_000;
+
+fn tree_usage() -> &'static str {
+    "usage: /tree [entries [after|--after <event-id>] [limit|--limit <1..5000>]|status|filter <default|no-tools|user-only|labeled-only|all>|fork <event-id> [title]|edit <event-id> <replacement>|resubmit <event-id> <replacement>|label <event-id> <label>[,<label>...]|unlabel <event-id>|fold <thread-id>|unfold <thread-id>|toggle <thread-id>|rename <thread-id> <title>|delete <thread-id>]"
+}
+
+fn parse_tree_filter_mode(raw: &str) -> Result<TreeFilterMode, String> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "default" => Ok(TreeFilterMode::Default),
+        "no-tools" | "notools" | "no_tools" => Ok(TreeFilterMode::NoTools),
+        "user-only" | "user" | "user_only" => Ok(TreeFilterMode::UserOnly),
+        "labeled-only" | "labeled" | "label" | "labels" | "labeled_only" => {
+            Ok(TreeFilterMode::LabeledOnly)
+        }
+        "all" => Ok(TreeFilterMode::All),
+        _ => Err(tree_usage().to_string()),
+    }
+}
+
+fn tree_filter_mode_toggle_arg(current: TreeFilterMode) -> &'static str {
+    let index = TREE_FILTER_MODES
+        .iter()
+        .position(|mode| *mode == current)
+        .unwrap_or(0);
+    TREE_FILTER_MODES[(index + 1) % TREE_FILTER_MODES.len()].as_str()
+}
+
+fn tree_command_route_for_command(
+    command: &str,
+    args: &[&str],
+) -> Result<TreeCommandRoute, String> {
+    match command {
+        "/tree" => match args {
+            [] => Ok(TreeCommandRoute::Entries {
+                after: 0,
+                limit: None,
+            }),
+            ["sessions"] | ["threads"] => Ok(TreeCommandRoute::Show),
+            ["sessions", rest @ ..] | ["threads", rest @ ..] => tree_command_route(rest),
+            _ => tree_command_route(args),
+        },
+        _ => tree_command_route(args),
+    }
+}
+
+fn tree_command_route(args: &[&str]) -> Result<TreeCommandRoute, String> {
+    match args {
+        [] => Ok(TreeCommandRoute::Show),
+        ["status"] | ["settings"] => Ok(TreeCommandRoute::Status),
+        [head, rest @ ..] if matches!(*head, "entries" | "messages" | "items") => {
+            parse_tree_entries_args(rest)
+        }
+        ["filter", value] | ["tree-filter", value] => {
+            parse_tree_filter_mode(value).map(TreeCommandRoute::SetFilter)
+        }
+        ["fork" | "branch", event_id, title @ ..] => {
+            let title = if title.is_empty() {
+                None
+            } else {
+                let title = title.join(" ");
+                if title.trim().is_empty() {
+                    return Err(tree_usage().to_string());
+                }
+                Some(title)
+            };
+            Ok(TreeCommandRoute::Fork {
+                event_id: parse_tree_entry_cursor(event_id)?,
+                title,
+            })
+        }
+        ["edit" | "resubmit" | "rewrite", event_id, input @ ..] if !input.is_empty() => {
+            let input = input.join(" ");
+            if input.trim().is_empty() {
+                Err(tree_usage().to_string())
+            } else {
+                Ok(TreeCommandRoute::Edit {
+                    event_id: parse_tree_entry_cursor(event_id)?,
+                    input,
+                })
+            }
+        }
+        ["label", event_id, labels @ ..] if !labels.is_empty() => Ok(TreeCommandRoute::Label {
+            event_id: parse_tree_entry_cursor(event_id)?,
+            labels: parse_tree_labels(labels)?,
+        }),
+        ["unlabel", event_id] | ["clear-label", event_id] | ["clear-labels", event_id] => {
+            Ok(TreeCommandRoute::Label {
+                event_id: parse_tree_entry_cursor(event_id)?,
+                labels: Vec::new(),
+            })
+        }
+        ["fold", thread_id] => Ok(TreeCommandRoute::Fold((*thread_id).to_string())),
+        ["unfold", thread_id] => Ok(TreeCommandRoute::Unfold((*thread_id).to_string())),
+        ["toggle", thread_id] => Ok(TreeCommandRoute::Toggle((*thread_id).to_string())),
+        ["rename", thread_id, title @ ..] if !title.is_empty() => {
+            let title = title.join(" ");
+            if title.trim().is_empty() {
+                Err(tree_usage().to_string())
+            } else {
+                Ok(TreeCommandRoute::Rename {
+                    thread_id: (*thread_id).to_string(),
+                    title,
+                })
+            }
+        }
+        ["delete", thread_id] | ["archive", thread_id] => {
+            Ok(TreeCommandRoute::Archive((*thread_id).to_string()))
+        }
+        _ => Err(tree_usage().to_string()),
+    }
+}
+
+fn parse_tree_entries_args(args: &[&str]) -> Result<TreeCommandRoute, String> {
+    let mut after = 0;
+    let mut limit = None;
+    let mut index = 0;
+    while index < args.len() {
+        match args[index] {
+            "after" | "--after" => {
+                index += 1;
+                let Some(event_id) = args.get(index) else {
+                    return Err(tree_usage().to_string());
+                };
+                after = parse_tree_entry_cursor(event_id)?;
+            }
+            "limit" | "--limit" => {
+                index += 1;
+                let Some(raw_limit) = args.get(index) else {
+                    return Err(tree_usage().to_string());
+                };
+                limit = Some(parse_tree_entry_limit(raw_limit)?);
+            }
+            _ => return Err(tree_usage().to_string()),
+        }
+        index += 1;
+    }
+    Ok(TreeCommandRoute::Entries { after, limit })
+}
+
+fn parse_tree_entry_cursor(raw: &str) -> Result<u64, String> {
+    raw.parse::<u64>().map_err(|_| tree_usage().to_string())
+}
+
+fn parse_tree_entry_limit(raw: &str) -> Result<usize, String> {
+    match raw.parse::<usize>() {
+        Ok(value) if (1..=TREE_ENTRY_MAX_LIMIT).contains(&value) => Ok(value),
+        _ => Err(tree_usage().to_string()),
+    }
+}
+
+fn parse_tree_labels(raw_labels: &[&str]) -> Result<Vec<String>, String> {
+    let labels = raw_labels
+        .iter()
+        .flat_map(|raw| raw.split(','))
+        .map(str::trim)
+        .filter(|label| !label.is_empty())
+        .map(ToString::to_string)
+        .collect::<Vec<_>>();
+    if labels.is_empty() {
+        Err(tree_usage().to_string())
+    } else {
+        Ok(labels)
+    }
+}
+
+fn format_tree_status(mode: TreeFilterMode) -> String {
+    format!("tree: filter {}", mode.as_str())
+}
+
+fn tree_item_visible(entry: &ThreadItemEntry, filter_mode: TreeFilterMode) -> bool {
+    match filter_mode {
+        TreeFilterMode::All => true,
+        TreeFilterMode::UserOnly => matches!(entry.item.kind, ItemKind::UserMessage { .. }),
+        TreeFilterMode::LabeledOnly => !entry.labels.is_empty(),
+        TreeFilterMode::Default | TreeFilterMode::NoTools => !matches!(
+            entry.item.kind,
+            ItemKind::ToolCall(_) | ItemKind::ToolResult(_)
+        ),
+    }
+}
+
+fn tool_result_status_label(status: ToolResultStatus) -> &'static str {
+    match status {
+        ToolResultStatus::Ok => "ok",
+        ToolResultStatus::Denied => "denied",
+        ToolResultStatus::Error => "error",
+        ToolResultStatus::Aborted => "aborted",
+    }
+}
+
+fn tree_item_kind_name(kind: &ItemKind) -> &'static str {
+    match kind {
+        ItemKind::UserMessage { .. } => "user",
+        ItemKind::AssistantMessage { .. } => "assistant",
+        ItemKind::Reasoning { .. } => "reasoning",
+        ItemKind::ToolCall(_) => "tool",
+        ItemKind::ToolResult(_) => "toolResult",
+        ItemKind::ApprovalRequest(_) => "approvalRequest",
+        ItemKind::ApprovalDecision(_) => "approvalDecision",
+        ItemKind::QuestionRequest(_) => "questionRequest",
+        ItemKind::QuestionResponse(_) => "questionResponse",
+        ItemKind::Diagnostic(_) => "diagnostic",
+        ItemKind::HandoffSummary { .. } => "handoffSummary",
+    }
+}
+
+fn tree_item_label(kind: &ItemKind) -> String {
+    match kind {
+        ItemKind::UserMessage { .. } => "user".to_string(),
+        ItemKind::AssistantMessage { .. } => "assistant".to_string(),
+        ItemKind::Reasoning { .. } => "reasoning".to_string(),
+        ItemKind::ToolCall(call) => format!("tool {}", call.name),
+        ItemKind::ToolResult(result) => format!("tool-result {}", result.call_id),
+        ItemKind::ApprovalRequest(request) => format!("approval-request {}", request.id),
+        ItemKind::ApprovalDecision(decision) => {
+            format!("approval-decision {}", decision.request_id)
+        }
+        ItemKind::QuestionRequest(request) => format!("question-request {}", request.id),
+        ItemKind::QuestionResponse(response) => {
+            format!("question-response {}", response.request_id)
+        }
+        ItemKind::Diagnostic(diagnostic) => format!("diagnostic {:?}", diagnostic.level),
+        ItemKind::HandoffSummary { .. } => "handoff-summary".to_string(),
+    }
+}
+
+fn compact_tree_preview(raw: &str) -> String {
+    let mut preview = raw.split_whitespace().collect::<Vec<_>>().join(" ");
+    if preview.chars().count() > 96 {
+        preview = preview.chars().take(93).collect::<String>();
+        preview.push_str("...");
+    }
+    preview
+}
+
+fn tree_item_preview(kind: &ItemKind) -> String {
+    match kind {
+        ItemKind::UserMessage { text }
+        | ItemKind::AssistantMessage { text }
+        | ItemKind::Reasoning { text } => compact_tree_preview(text),
+        ItemKind::ToolCall(call) => compact_tree_preview(&call.arguments.to_string()),
+        ItemKind::ToolResult(result) => result
+            .error
+            .as_deref()
+            .or(result.output.as_deref())
+            .map(compact_tree_preview)
+            .filter(|preview| !preview.is_empty())
+            .unwrap_or_else(|| tool_result_status_label(result.status).to_string()),
+        ItemKind::ApprovalRequest(request) => compact_tree_preview(&request.reason),
+        ItemKind::ApprovalDecision(decision) => decision
+            .message
+            .as_deref()
+            .map(compact_tree_preview)
+            .filter(|preview| !preview.is_empty())
+            .unwrap_or_else(|| format!("{:?}", decision.decision).to_ascii_lowercase()),
+        ItemKind::QuestionRequest(request) => compact_tree_preview(&request.prompt),
+        ItemKind::QuestionResponse(response) => compact_tree_preview(&response.answer),
+        ItemKind::Diagnostic(diagnostic) => compact_tree_preview(&diagnostic.message),
+        ItemKind::HandoffSummary { summary } => compact_tree_preview(summary),
+    }
+}
+
+fn thread_item_tree_json_from_entries(entries: &[ThreadItemEntry]) -> Vec<Value> {
+    entries
+        .iter()
+        .map(|entry| {
+            let item = &entry.item;
+            json!({
+                "eventId": entry.event_id,
+                "parentEventId": entry.parent_event_id,
+                "childEventIds": entry.child_event_ids,
+                "completedAtMs": entry.completed_at_ms,
+                "id": item.id.clone(),
+                "turnId": item.turn_id.clone(),
+                "kind": tree_item_kind_name(&item.kind),
+                "label": tree_item_label(&item.kind),
+                "labels": entry.labels,
+                "preview": tree_item_preview(&item.kind),
+            })
+        })
+        .collect()
+}
+
+fn thread_item_tree_next_after(entries: &[ThreadItemEntry], total_count: u64) -> Option<u64> {
+    if entries.len() as u64 >= total_count {
+        return None;
+    }
+    entries.last().map(|entry| entry.event_id)
+}
+
+fn format_thread_item_branch(branch: &ThreadItemBranch) -> String {
+    let mut parts = vec![format!(
+        "branch: {} depth {}",
+        branch.thread_id, branch.depth
+    )];
+    if !branch.path.is_empty() {
+        parts.push(format!("path {}", branch.path.join(" > ")));
+    }
+    if let Some(parent_thread_id) = &branch.parent_thread_id {
+        parts.push(format!("parent {parent_thread_id}"));
+    }
+    if !branch.child_thread_ids.is_empty() {
+        parts.push(format!("children {}", branch.child_thread_ids.join(",")));
+    }
+    if !branch.sibling_thread_ids.is_empty() {
+        parts.push(format!("siblings {}", branch.sibling_thread_ids.join(",")));
+    }
+    parts.join(" ")
+}
+
+fn format_thread_item_labels_result(result: &ThreadItemLabelsResult) -> String {
+    if result.labels.is_empty() {
+        format!("tree label: event {} cleared", result.event_id)
+    } else {
+        format!(
+            "tree label: event {} labels {}",
+            result.event_id,
+            result.labels.join(",")
+        )
+    }
+}
+
+fn format_thread_item_tree_from_entries(
+    entries: &[ThreadItemEntry],
+    branch: Option<&ThreadItemBranch>,
+    filter_mode: TreeFilterMode,
+    after: u64,
+    total_count: u64,
+    next_after: Option<u64>,
+) -> String {
+    let mut lines = vec![
+        "entries:".to_string(),
+        format!("filter: {}", filter_mode.as_str()),
+        format!("shown: {}/{}", entries.len(), total_count),
+    ];
+    if let Some(branch) = branch {
+        lines.push(format_thread_item_branch(branch));
+    }
+    if after > 0 {
+        lines.push(format!("after: {after}"));
+    }
+    if let Some(next_after) = next_after {
+        lines.push(format!("next: /tree entries after {next_after}"));
+    }
+
+    let mut count = 0;
+    for entry in entries
+        .iter()
+        .filter(|entry| tree_item_visible(entry, filter_mode))
+    {
+        count += 1;
+        let item = &entry.item;
+        let suffix = tree_item_preview(&item.kind);
+        let suffix = if suffix.is_empty() {
+            String::new()
+        } else {
+            format!(" - {suffix}")
+        };
+        let timestamp_suffix = if entry.completed_at_ms == 0 {
+            String::new()
+        } else {
+            format!(" @{}", entry.completed_at_ms)
+        };
+        let parent_suffix = entry
+            .parent_event_id
+            .map(|parent| format!(" parent {parent}"))
+            .unwrap_or_default();
+        let children_suffix = if entry.child_event_ids.is_empty() {
+            String::new()
+        } else {
+            let children = entry
+                .child_event_ids
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(",");
+            format!(" children {children}")
+        };
+        let labels_suffix = if entry.labels.is_empty() {
+            String::new()
+        } else {
+            format!(" labels {}", entry.labels.join(","))
+        };
+        lines.push(format!(
+            "  {} {} {}{}{}{}{}{}",
+            tree_item_label(&item.kind),
+            item.id,
+            item.turn_id,
+            suffix,
+            timestamp_suffix,
+            parent_suffix,
+            children_suffix,
+            labels_suffix
+        ));
+    }
+    if count == 0 {
+        lines.push("  none".to_string());
+    }
+    lines.join("\n")
+}
+
+#[cfg(test)]
+fn format_thread_item_tree_from_items(
+    items: &[oppi_protocol::Item],
+    filter_mode: TreeFilterMode,
+) -> String {
+    let entries = items
+        .iter()
+        .enumerate()
+        .map(|(index, item)| ThreadItemEntry {
+            event_id: (index as u64) + 1,
+            parent_event_id: None,
+            child_event_ids: Vec::new(),
+            completed_at_ms: 0,
+            labels: Vec::new(),
+            item: item.clone(),
+        })
+        .collect::<Vec<_>>();
+    format_thread_item_tree_from_entries(&entries, None, filter_mode, 0, entries.len() as u64, None)
+}
+
+fn autocomplete_usage() -> &'static str {
+    "usage: /autocomplete [status|items <3..20>]"
+}
+
+fn autocomplete_command_route(args: &str) -> Result<AutocompleteCommandRoute, String> {
+    let parts = args.split_whitespace().collect::<Vec<_>>();
+    match parts.as_slice() {
+        [] | ["status"] | ["settings"] => Ok(AutocompleteCommandRoute::Status),
+        ["items", value]
+        | ["item", value]
+        | ["visible", value]
+        | ["max-visible", value]
+        | ["max", value] => parse_autocomplete_max_visible(value)
+            .map(AutocompleteCommandRoute::SetMaxVisible)
+            .map_err(|_| autocomplete_usage().to_string()),
+        _ => Err(autocomplete_usage().to_string()),
+    }
+}
+
+fn parse_autocomplete_max_visible(raw: &str) -> Result<usize, String> {
+    raw.parse::<usize>()
+        .ok()
+        .filter(|value| {
+            *value >= MIN_AUTOCOMPLETE_MAX_VISIBLE && *value <= MAX_AUTOCOMPLETE_MAX_VISIBLE
+        })
+        .ok_or_else(|| autocomplete_usage().to_string())
+}
+
+fn normalize_autocomplete_max_visible(value: usize) -> Option<usize> {
+    (MIN_AUTOCOMPLETE_MAX_VISIBLE..=MAX_AUTOCOMPLETE_MAX_VISIBLE)
+        .contains(&value)
+        .then_some(value)
+}
+
+fn format_autocomplete_status(max_visible: usize) -> String {
+    format!("autocomplete: visible items {max_visible}")
+}
+
+fn autocomplete_max_visible_toggle_arg(current: usize) -> usize {
+    AUTOCOMPLETE_VISIBLE_CYCLE_VALUES
+        .iter()
+        .copied()
+        .find(|value| *value > current)
+        .unwrap_or(AUTOCOMPLETE_VISIBLE_CYCLE_VALUES[0])
+}
+
+fn skills_usage() -> &'static str {
+    "usage: /skills [list|status|commands <on|off>]"
+}
+
+fn skills_command_route(args: &str) -> Result<SkillsCommandRoute, String> {
+    let parts = args.split_whitespace().collect::<Vec<_>>();
+    match parts.as_slice() {
+        [] | ["list"] => Ok(SkillsCommandRoute::List),
+        ["status"] | ["commands"] => Ok(SkillsCommandRoute::Status),
+        ["commands", value] => parse_footer_bool(value)
+            .map(SkillsCommandRoute::SetCommands)
+            .map_err(|_| skills_usage().to_string()),
+        _ => Err(skills_usage().to_string()),
+    }
+}
+
+fn format_skills_status(enable_skill_commands: bool) -> String {
+    format!(
+        "skills: /skill:name commands {}",
+        enabled_label(enable_skill_commands)
+    )
+}
+
+fn skill_commands_toggle_arg(enable_skill_commands: bool) -> &'static str {
+    if enable_skill_commands { "off" } else { "on" }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CompactionCommandRoute {
+    Status,
+    CompactNow,
+    SetIdleEnabled(bool),
+    SetIdleMinutes(u64),
+    SetIdleThresholdPercent(u64),
+    SetSmartThresholdPercent(u64),
+}
+
+fn compaction_usage() -> String {
+    format!(
+        "usage: /idle-compact [status|compact|on|off|idle-time <{}>|idle-threshold <{}>|smart-threshold <{}>]",
+        allowed_values_label(&VALID_IDLE_COMPACT_MINUTES),
+        allowed_values_label(&VALID_IDLE_COMPACT_THRESHOLDS),
+        allowed_values_label(&VALID_SMART_COMPACT_THRESHOLDS)
+    )
+}
+
+fn compaction_command_route(args: &str) -> Result<CompactionCommandRoute, String> {
+    let parts = args.split_whitespace().collect::<Vec<_>>();
+    match parts.as_slice() {
+        [] | ["status"] | ["settings"] => Ok(CompactionCommandRoute::Status),
+        ["compact"] | ["compact-now"] | ["now"] => Ok(CompactionCommandRoute::CompactNow),
+        ["on"] | ["enable"] | ["enabled"] => Ok(CompactionCommandRoute::SetIdleEnabled(true)),
+        ["off"] | ["disable"] | ["disabled"] => Ok(CompactionCommandRoute::SetIdleEnabled(false)),
+        ["idle", value] | ["idle-compaction", value] => Ok(CompactionCommandRoute::SetIdleEnabled(
+            parse_compaction_bool(value)?,
+        )),
+        ["idle-time", value] | ["idle", "time", value] => {
+            Ok(CompactionCommandRoute::SetIdleMinutes(
+                parse_allowed_compaction_value(value, &VALID_IDLE_COMPACT_MINUTES)?,
+            ))
+        }
+        ["idle-threshold", value] | ["idle", "threshold", value] | ["threshold", value] => {
+            Ok(CompactionCommandRoute::SetIdleThresholdPercent(
+                parse_allowed_compaction_value(value, &VALID_IDLE_COMPACT_THRESHOLDS)?,
+            ))
+        }
+        ["smart-threshold", value] | ["smart", "threshold", value] => {
+            Ok(CompactionCommandRoute::SetSmartThresholdPercent(
+                parse_allowed_compaction_value(value, &VALID_SMART_COMPACT_THRESHOLDS)?,
+            ))
+        }
+        _ => Err(compaction_usage()),
+    }
+}
+
+fn parse_compaction_bool(raw: &str) -> Result<bool, String> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "on" | "true" | "enabled" | "enable" | "yes" => Ok(true),
+        "off" | "false" | "disabled" | "disable" | "no" => Ok(false),
+        _ => Err(compaction_usage()),
+    }
+}
+
+fn parse_allowed_compaction_value(raw: &str, allowed: &[u64]) -> Result<u64, String> {
+    raw.parse::<u64>()
+        .ok()
+        .filter(|value| allowed.contains(value))
+        .ok_or_else(compaction_usage)
+}
+
+fn allowed_values_label(values: &[u64]) -> String {
+    values
+        .iter()
+        .map(u64::to_string)
+        .collect::<Vec<_>>()
+        .join("|")
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FooterSettingBool {
+    ShowPath,
+    ShowHelpBar,
+    ShowModel,
+    ShowPermission,
+    ShowMemory,
+    ShowContext,
+}
+
+impl FooterSettingBool {
+    fn label(self) -> &'static str {
+        match self {
+            Self::ShowPath => "workspace path",
+            Self::ShowHelpBar => "hotkey help",
+            Self::ShowModel => "model chip",
+            Self::ShowPermission => "permission chip",
+            Self::ShowMemory => "memory chip",
+            Self::ShowContext => "context chip",
+        }
+    }
+
+    fn apply(self, settings: &mut FooterSettings, shown: bool) {
+        match self {
+            Self::ShowPath => settings.show_path = shown,
+            Self::ShowHelpBar => settings.show_help_bar = shown,
+            Self::ShowModel => settings.show_model = shown,
+            Self::ShowPermission => settings.show_permission = shown,
+            Self::ShowMemory => settings.show_memory = shown,
+            Self::ShowContext => settings.show_context = shown,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FooterCommandRoute {
+    Status,
+    SetBool(FooterSettingBool, bool),
+    SetUsageDisplay(FooterUsageDisplay),
+}
+
+fn footer_usage() -> &'static str {
+    "usage: /footer [status|path <on|off>|help <on|off>|usage <session-weekly|session|weekly|off>|model <on|off>|permission <on|off>|memory <on|off>|context <on|off>]"
+}
+
+fn footer_command_route(args: &str) -> Result<FooterCommandRoute, String> {
+    let parts = args.split_whitespace().collect::<Vec<_>>();
+    match parts.as_slice() {
+        [] | ["status"] => Ok(FooterCommandRoute::Status),
+        ["path" | "workspace", value] => Ok(FooterCommandRoute::SetBool(
+            FooterSettingBool::ShowPath,
+            parse_footer_bool(value)?,
+        )),
+        ["help" | "hotkeys", value] => Ok(FooterCommandRoute::SetBool(
+            FooterSettingBool::ShowHelpBar,
+            parse_footer_bool(value)?,
+        )),
+        ["model", value] => Ok(FooterCommandRoute::SetBool(
+            FooterSettingBool::ShowModel,
+            parse_footer_bool(value)?,
+        )),
+        ["permission" | "permissions" | "perm", value] => Ok(FooterCommandRoute::SetBool(
+            FooterSettingBool::ShowPermission,
+            parse_footer_bool(value)?,
+        )),
+        ["memory", value] => Ok(FooterCommandRoute::SetBool(
+            FooterSettingBool::ShowMemory,
+            parse_footer_bool(value)?,
+        )),
+        ["context" | "ctx", value] => Ok(FooterCommandRoute::SetBool(
+            FooterSettingBool::ShowContext,
+            parse_footer_bool(value)?,
+        )),
+        ["usage", value] => Ok(FooterCommandRoute::SetUsageDisplay(
+            parse_footer_usage_display(value)?,
+        )),
+        _ => Err(footer_usage().to_string()),
+    }
+}
+
+fn parse_footer_bool(raw: &str) -> Result<bool, String> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "on" | "show" | "shown" | "true" | "enabled" | "enable" | "allow" | "allowed" | "yes" => {
+            Ok(true)
+        }
+        "off" | "hide" | "hidden" | "false" | "disabled" | "disable" | "block" | "blocked"
+        | "deny" | "denied" | "no" => Ok(false),
+        _ => Err(footer_usage().to_string()),
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ImageSettingsCommandRoute {
+    Status,
+    Capabilities,
+    SetShowImages(bool),
+    SetImageWidthCells(u64),
+    SetAutoResizeImages(bool),
+    SetBlockImages(bool),
+    SetPreviewProtocol(ImagePreviewProtocolOverride),
+}
+
+fn image_settings_usage() -> String {
+    format!(
+        "usage: /images [status|capabilities|show <on|off>|width <{}>|auto-resize <on|off>|block <on|off>|protocol <{}>]",
+        allowed_values_label(&VALID_IMAGE_WIDTH_CELLS),
+        IMAGE_PREVIEW_PROTOCOL_VALUES_LABEL
+    )
+}
+
+fn image_settings_command_route(args: &str) -> Result<ImageSettingsCommandRoute, String> {
+    let parts = args.split_whitespace().collect::<Vec<_>>();
+    match parts.as_slice() {
+        [] | ["status"] | ["settings"] => Ok(ImageSettingsCommandRoute::Status),
+        ["capabilities"] | ["caps"] | ["detect"] => Ok(ImageSettingsCommandRoute::Capabilities),
+        ["show" | "preview" | "previews", value] => Ok(ImageSettingsCommandRoute::SetShowImages(
+            parse_image_settings_bool(value)?,
+        )),
+        ["width", value] | ["image-width", value] => Ok(
+            ImageSettingsCommandRoute::SetImageWidthCells(parse_allowed_image_width(value)?),
+        ),
+        ["auto-resize", value] | ["resize", value] | ["auto", "resize", value] => Ok(
+            ImageSettingsCommandRoute::SetAutoResizeImages(parse_image_settings_bool(value)?),
+        ),
+        ["block", value] | ["block-images", value] => Ok(
+            ImageSettingsCommandRoute::SetBlockImages(parse_image_settings_bool(value)?),
+        ),
+        ["protocol", value] | ["preview-protocol", value] | ["terminal-protocol", value] => {
+            Ok(ImageSettingsCommandRoute::SetPreviewProtocol(
+                parse_image_preview_protocol_override(value)?,
+            ))
+        }
+        _ => Err(image_settings_usage()),
+    }
+}
+
+fn parse_image_settings_bool(raw: &str) -> Result<bool, String> {
+    parse_footer_bool(raw).map_err(|_| image_settings_usage())
+}
+
+fn parse_allowed_image_width(raw: &str) -> Result<u64, String> {
+    raw.parse::<u64>()
+        .ok()
+        .filter(|value| VALID_IMAGE_WIDTH_CELLS.contains(value))
+        .ok_or_else(image_settings_usage)
+}
+
+fn parse_image_preview_protocol_override(
+    raw: &str,
+) -> Result<ImagePreviewProtocolOverride, String> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "auto" | "detect" | "default" => Ok(ImagePreviewProtocolOverride::Auto),
+        "kitty" | "kitty-local-file" => Ok(ImagePreviewProtocolOverride::Kitty),
+        "wezterm" => Ok(ImagePreviewProtocolOverride::Wezterm),
+        "iterm" | "iterm2" | "iterm2-inline-file" => Ok(ImagePreviewProtocolOverride::Iterm2),
+        "sixel" => Ok(ImagePreviewProtocolOverride::Sixel),
+        "off" | "none" | "disabled" | "disable" => Ok(ImagePreviewProtocolOverride::Off),
+        _ => Err(image_settings_usage()),
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum MemorySettingsCommandRoute {
+    Status,
+    SetEnabled(bool),
+    SetStartupRecall(bool),
+    SetTaskStartRecall(bool),
+    SetTurnSummaries(bool),
+    SetAgentModel(&'static str),
+    SetDeepModel(&'static str),
+    SetIdleConsolidation(bool),
+    SetHoppiInstallOffer(&'static str),
+    InstallHoppi(bool),
+    SetSyncEnabled(bool),
+    SetSyncRepoPath(Option<String>),
+    SetSyncRepoUrl(Option<String>),
+    SetSyncPullOnStartup(bool),
+    SetSyncPushOnExit(bool),
+    SetSyncBackground(&'static str),
+    SetSyncEncryption {
+        encryption: &'static str,
+        passphrase_source: &'static str,
+    },
+    SetSyncPassphraseEnv(String),
+    SetSyncPassphraseFile(Option<String>),
+    SetSyncConflictMode(&'static str),
+    RunSync(HoppiSyncDirection),
+}
+
+fn memory_settings_usage() -> &'static str {
+    "usage: /memory [status|jobs|jobs all|jobs cancel <id>|on|off|startup-recall <on|off>|task-start-recall <on|off>|turn-summaries <on|off>|agent-model <auto|claude|gpt>|deep-model <auto|sonnet|gpt-5.5>|idle-dream <on|off>|install-offer <ask|dismissed>|install-hoppi [--yes]|sync <on|off>|sync now|sync pull|sync push|sync repo <path|none>|sync remote <url|none>|sync pull-startup <on|off>|sync push-exit <on|off>|sync background <off|15m|30m|60m>|sync encryption <none|env|file>|sync passphrase-env <ENV>|sync passphrase-file <path|none>|sync conflict <keep-both|keep-local|overwrite-local>|dashboard|list|forget <id> --yes|edit <id> content <text> --yes|edit <id> content=<text> tags=a,b confidence=verified supersededBy=<id> --yes|supersede <old-id> <new-id> --yes|pin <id> --yes|unpin <id> --yes|settings|compaction|maintenance [dry-run|apply]|compact [summary]]"
+}
+
+fn parse_memory_update_patch_args(args: &[&str]) -> Result<Value, String> {
+    if args.is_empty() {
+        return Err(memory_settings_usage().to_string());
+    }
+    let mut patch = serde_json::Map::new();
+    if args[0].eq_ignore_ascii_case("content") {
+        let content = args[1..].join(" ");
+        let content = content.trim();
+        if content.is_empty() {
+            return Err(memory_settings_usage().to_string());
+        }
+        patch.insert("content".to_string(), json!(content));
+        return Ok(Value::Object(patch));
+    }
+
+    for arg in args {
+        let Some((key, raw_value)) = arg.split_once('=') else {
+            return Err(memory_settings_usage().to_string());
+        };
+        let key = key.trim().to_ascii_lowercase();
+        let value = raw_value.trim();
+        match key.as_str() {
+            "content" => {
+                if value.is_empty() {
+                    return Err(memory_settings_usage().to_string());
+                }
+                patch.insert("content".to_string(), json!(value));
+            }
+            "tags" => {
+                patch.insert(
+                    "tags".to_string(),
+                    json!(parse_csv_or_whitespace_list(value)?),
+                );
+            }
+            "confidence" => {
+                if value.is_empty() {
+                    return Err(memory_settings_usage().to_string());
+                }
+                patch.insert("confidence".to_string(), json!(value));
+            }
+            "source" => {
+                if value.is_empty() {
+                    return Err(memory_settings_usage().to_string());
+                }
+                patch.insert("source".to_string(), json!(value));
+            }
+            "pinned" | "pin" => {
+                patch.insert(
+                    "pinned".to_string(),
+                    json!(parse_memory_update_bool(value)?),
+                );
+            }
+            "starred" | "star" => {
+                patch.insert(
+                    "starred".to_string(),
+                    json!(parse_memory_update_bool(value)?),
+                );
+            }
+            "supersededby" | "superseded-by" | "supersedes" => {
+                if value.is_empty() {
+                    return Err(memory_settings_usage().to_string());
+                }
+                patch.insert("supersededBy".to_string(), json!(value));
+            }
+            _ => return Err(memory_settings_usage().to_string()),
+        };
+    }
+    if patch.is_empty() {
+        return Err(memory_settings_usage().to_string());
+    }
+    Ok(Value::Object(patch))
+}
+
+fn parse_memory_update_bool(raw: &str) -> Result<bool, String> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "true" | "on" | "yes" | "1" => Ok(true),
+        "false" | "off" | "no" | "0" => Ok(false),
+        _ => Err(memory_settings_usage().to_string()),
+    }
+}
+
+fn memory_settings_command_route(args: &str) -> Result<MemorySettingsCommandRoute, String> {
+    let parts = args.split_whitespace().collect::<Vec<_>>();
+    match parts.as_slice() {
+        [] | ["status"] => Ok(MemorySettingsCommandRoute::Status),
+        ["on"] | ["enable"] | ["enabled"] => Ok(MemorySettingsCommandRoute::SetEnabled(true)),
+        ["off"] | ["disable"] | ["disabled"] => Ok(MemorySettingsCommandRoute::SetEnabled(false)),
+        ["startup-recall", value] | ["startup", "recall", value] => Ok(
+            MemorySettingsCommandRoute::SetStartupRecall(parse_memory_settings_bool(value)?),
+        ),
+        ["task-start-recall", value] | ["task", "start", "recall", value] => Ok(
+            MemorySettingsCommandRoute::SetTaskStartRecall(parse_memory_settings_bool(value)?),
+        ),
+        ["turn-summaries", value] | ["turn-summary", value] | ["summaries", value] => Ok(
+            MemorySettingsCommandRoute::SetTurnSummaries(parse_memory_settings_bool(value)?),
+        ),
+        ["agent-model", value] | ["memory-agent-model", value] => Ok(
+            MemorySettingsCommandRoute::SetAgentModel(parse_memory_agent_model(value)?),
+        ),
+        ["deep-model", value] | ["deep-dream-model", value] => Ok(
+            MemorySettingsCommandRoute::SetDeepModel(parse_deep_memory_model(value)?),
+        ),
+        ["idle-dream", value] | ["idle-consolidation", value] => Ok(
+            MemorySettingsCommandRoute::SetIdleConsolidation(parse_memory_settings_bool(value)?),
+        ),
+        ["install-offer", value] | ["first-start-install-offer", value] => Ok(
+            MemorySettingsCommandRoute::SetHoppiInstallOffer(parse_hoppi_install_offer(value)?),
+        ),
+        ["install-hoppi", flags @ ..]
+        | ["install", flags @ ..]
+        | ["backend", "install", flags @ ..] => Ok(MemorySettingsCommandRoute::InstallHoppi(
+            memory_action_approved(flags),
+        )),
+        ["sync", "now"] => Ok(MemorySettingsCommandRoute::RunSync(
+            HoppiSyncDirection::Both,
+        )),
+        ["sync", "pull"] => Ok(MemorySettingsCommandRoute::RunSync(
+            HoppiSyncDirection::Pull,
+        )),
+        ["sync", "push"] => Ok(MemorySettingsCommandRoute::RunSync(
+            HoppiSyncDirection::Push,
+        )),
+        ["sync", value] => Ok(MemorySettingsCommandRoute::SetSyncEnabled(
+            parse_memory_settings_bool(value)?,
+        )),
+        ["sync", "repo", rest @ ..] | ["sync-repo", rest @ ..] => Ok(
+            MemorySettingsCommandRoute::SetSyncRepoPath(parse_memory_sync_optional_value(rest)?),
+        ),
+        ["sync", "remote", rest @ ..]
+        | ["sync", "url", rest @ ..]
+        | ["sync-remote", rest @ ..]
+        | ["sync-url", rest @ ..] => Ok(MemorySettingsCommandRoute::SetSyncRepoUrl(
+            parse_memory_sync_optional_value(rest)?,
+        )),
+        ["sync", "pull-startup", value] | ["sync-pull-startup", value] => Ok(
+            MemorySettingsCommandRoute::SetSyncPullOnStartup(parse_memory_settings_bool(value)?),
+        ),
+        ["sync", "push-exit", value] | ["sync-push-exit", value] => Ok(
+            MemorySettingsCommandRoute::SetSyncPushOnExit(parse_memory_settings_bool(value)?),
+        ),
+        ["sync", "background", value] | ["sync-background", value] => Ok(
+            MemorySettingsCommandRoute::SetSyncBackground(parse_sync_background(value)?),
+        ),
+        ["sync", "encryption", value] | ["sync-encryption", value] => {
+            let (encryption, passphrase_source) = parse_sync_encryption(value)?;
+            Ok(MemorySettingsCommandRoute::SetSyncEncryption {
+                encryption,
+                passphrase_source,
+            })
+        }
+        ["sync", "passphrase-env", value] | ["sync-passphrase-env", value] => {
+            Ok(MemorySettingsCommandRoute::SetSyncPassphraseEnv(
+                parse_sync_passphrase_env(value)?.to_string(),
+            ))
+        }
+        ["sync", "passphrase-file", rest @ ..] | ["sync-passphrase-file", rest @ ..] => {
+            Ok(MemorySettingsCommandRoute::SetSyncPassphraseFile(
+                parse_memory_sync_optional_value(rest)?,
+            ))
+        }
+        ["sync", "conflict", value] | ["sync-conflict", value] => Ok(
+            MemorySettingsCommandRoute::SetSyncConflictMode(parse_sync_conflict_mode(value)?),
+        ),
+        _ => Err(memory_settings_usage().to_string()),
+    }
+}
+
+fn parse_memory_settings_bool(raw: &str) -> Result<bool, String> {
+    parse_footer_bool(raw).map_err(|_| memory_settings_usage().to_string())
+}
+
+fn parse_memory_agent_model(raw: &str) -> Result<&'static str, String> {
+    let normalized = raw.trim().to_ascii_lowercase();
+    VALID_MEMORY_AGENT_MODELS
+        .iter()
+        .copied()
+        .find(|value| *value == normalized)
+        .ok_or_else(|| memory_settings_usage().to_string())
+}
+
+fn memory_action_approved(flags: &[&str]) -> bool {
+    flags.iter().any(|flag| {
+        matches!(
+            flag.trim().to_ascii_lowercase().as_str(),
+            "--yes" | "yes" | "--approve" | "approve" | "--i-understand"
+        )
+    })
+}
+
+fn parse_hoppi_install_offer(raw: &str) -> Result<&'static str, String> {
+    let normalized = raw.trim().to_ascii_lowercase();
+    VALID_HOPPI_INSTALL_OFFERS
+        .iter()
+        .copied()
+        .find(|value| *value == normalized)
+        .ok_or_else(|| memory_settings_usage().to_string())
+}
+
+fn parse_memory_sync_optional_value(parts: &[&str]) -> Result<Option<String>, String> {
+    let value = parts.join(" ");
+    let value = value.trim();
+    if value.is_empty() {
+        return Err(memory_settings_usage().to_string());
+    }
+    if matches!(
+        value.to_ascii_lowercase().as_str(),
+        "none" | "unset" | "default" | "off"
+    ) {
+        Ok(None)
+    } else {
+        Ok(Some(value.to_string()))
+    }
+}
+
+fn parse_sync_background(raw: &str) -> Result<&'static str, String> {
+    let normalized = raw.trim().to_ascii_lowercase();
+    VALID_SYNC_BACKGROUND
+        .iter()
+        .copied()
+        .find(|value| *value == normalized)
+        .ok_or_else(|| memory_settings_usage().to_string())
+}
+
+fn parse_sync_encryption(raw: &str) -> Result<(&'static str, &'static str), String> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "none" | "off" => Ok(("none", "env")),
+        "env" | "passphrase-env" => Ok(("passphrase", "env")),
+        "file" | "passphrase-file" => Ok(("passphrase", "file")),
+        _ => Err(memory_settings_usage().to_string()),
+    }
+}
+
+fn parse_sync_passphrase_env(raw: &str) -> Result<&str, String> {
+    let value = raw.trim();
+    if value.is_empty()
+        || !value
+            .chars()
+            .all(|ch| ch.is_ascii_uppercase() || ch.is_ascii_digit() || ch == '_')
+        || value.chars().next().is_some_and(|ch| ch.is_ascii_digit())
+    {
+        Err(memory_settings_usage().to_string())
+    } else {
+        Ok(value)
+    }
+}
+
+fn parse_sync_conflict_mode(raw: &str) -> Result<&'static str, String> {
+    let normalized = raw.trim().to_ascii_lowercase();
+    VALID_SYNC_CONFLICT_MODES
+        .iter()
+        .copied()
+        .find(|value| *value == normalized)
+        .ok_or_else(|| memory_settings_usage().to_string())
+}
+
+fn parse_deep_memory_model(raw: &str) -> Result<&'static str, String> {
+    let normalized = raw.trim().to_ascii_lowercase();
+    VALID_DEEP_MEMORY_MODELS
+        .iter()
+        .copied()
+        .find(|value| *value == normalized)
+        .ok_or_else(|| memory_settings_usage().to_string())
+}
+
+fn parse_footer_usage_display(raw: &str) -> Result<FooterUsageDisplay, String> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "session-weekly" | "session+weekly" | "session_weekly" | "both" | "all" => {
+            Ok(FooterUsageDisplay::SessionWeekly)
+        }
+        "session" | "sessions" => Ok(FooterUsageDisplay::Session),
+        "weekly" | "week" => Ok(FooterUsageDisplay::Weekly),
+        "off" | "none" | "hide" | "hidden" => Ok(FooterUsageDisplay::Off),
+        _ => Err(footer_usage().to_string()),
+    }
+}
+
+fn format_ask_user_timeout_label(timeout_ms: u64) -> String {
+    match ask_user_timeout_ms_to_minutes(timeout_ms) {
+        Some(0) => "off".to_string(),
+        Some(minutes) => format!("{minutes}m"),
+        None => format!("{timeout_ms}ms"),
+    }
+}
+
 fn parse_permission_mode(raw: &str) -> Option<PermissionMode> {
     match raw.trim().to_ascii_lowercase().as_str() {
         "read-only" | "readonly" | "ro" => Some(PermissionMode::ReadOnly),
@@ -5700,10 +13239,14 @@ fn parse_permission_mode(raw: &str) -> Option<PermissionMode> {
     }
 }
 
-fn network_policy_for_mode(mode: PermissionMode) -> &'static str {
-    match mode {
-        PermissionMode::FullAccess => "enabled",
-        _ => "disabled",
+fn network_policy_label_for_settings(
+    mode: PermissionMode,
+    settings: &PermissionSandboxSettings,
+) -> &'static str {
+    if mode == PermissionMode::FullAccess || settings.allow_internet || settings.allow_ssh {
+        "enabled"
+    } else {
+        "disabled"
     }
 }
 
@@ -5715,27 +13258,1144 @@ fn filesystem_policy_for_mode(mode: PermissionMode) -> &'static str {
     }
 }
 
+#[cfg(test)]
 fn sandbox_policy_json(mode: PermissionMode, cwd: &str) -> Value {
+    sandbox_policy_json_with_protected_patterns(mode, cwd, &[])
+}
+
+fn sandbox_policy_json_with_settings(
+    mode: PermissionMode,
+    cwd: &str,
+    settings: &PermissionSandboxSettings,
+) -> Value {
+    let project_roots = effective_project_roots(settings, cwd);
+    let readable_roots = effective_readable_roots(settings, &project_roots);
     let writable_roots = if mode == PermissionMode::ReadOnly {
         Vec::<String>::new()
     } else {
-        vec![cwd.to_string()]
+        effective_writable_roots(settings, &project_roots)
     };
     json!({
         "permissionProfile": {
             "mode": mode,
-            "readableRoots": [cwd],
+            "readableRoots": readable_roots,
             "writableRoots": writable_roots,
             "filesystemRules": [],
-            "protectedPatterns": [".env*", ".ssh/", "*.pem", "*.key", ".git/config", ".git/hooks/", ".npmrc", ".pypirc", ".mcp.json", ".claude.json"],
+            "protectedPatterns": protected_patterns_for_policy(&settings.protected_patterns),
         },
-        "network": if mode == PermissionMode::FullAccess { NetworkPolicy::Enabled } else { NetworkPolicy::Disabled },
+        "network": if network_policy_label_for_settings(mode, settings) == "enabled" { NetworkPolicy::Enabled } else { NetworkPolicy::Disabled },
         "filesystem": match mode {
             PermissionMode::ReadOnly => FilesystemPolicy::ReadOnly,
             PermissionMode::FullAccess => FilesystemPolicy::Unrestricted,
             PermissionMode::Default | PermissionMode::AutoReview => FilesystemPolicy::WorkspaceWrite,
         },
     })
+}
+
+fn protected_patterns_for_policy(additional: &[String]) -> Vec<String> {
+    let mut patterns = DEFAULT_TURN_PROTECTED_PATTERNS
+        .iter()
+        .map(|pattern| (*pattern).to_string())
+        .collect::<Vec<_>>();
+    for pattern in normalize_string_slice(additional) {
+        if !patterns.contains(&pattern) {
+            patterns.push(pattern);
+        }
+    }
+    patterns
+}
+
+fn format_protected_patterns_label(patterns: &[String]) -> String {
+    let patterns = normalize_string_slice(patterns);
+    if patterns.is_empty() {
+        "default".to_string()
+    } else {
+        patterns.join(", ")
+    }
+}
+
+fn format_sandbox_roots_label(roots: &[String], fallback: &str) -> String {
+    let roots = normalize_string_slice(roots);
+    if roots.is_empty() {
+        fallback.to_string()
+    } else {
+        roots.join(", ")
+    }
+}
+
+fn format_sandbox_flag_label(allowed: bool) -> &'static str {
+    if allowed { "allowed" } else { "blocked" }
+}
+
+fn permission_sandbox_settings_json(settings: &PermissionSandboxSettings) -> Value {
+    json!({
+        "allowInternet": settings.allow_internet,
+        "allowSsh": settings.allow_ssh,
+        "projectRoots": normalize_string_slice(&settings.project_roots),
+        "readableRoots": normalize_string_slice(&settings.readable_roots),
+        "writableRoots": normalize_string_slice(&settings.writable_roots),
+        "protectedPatterns": normalize_string_slice(&settings.protected_patterns),
+    })
+}
+
+fn permission_sandbox_validation_value(
+    mode: PermissionMode,
+    cwd: &str,
+    settings: &PermissionSandboxSettings,
+) -> Value {
+    let project_roots = effective_project_roots(settings, cwd);
+    let readable_roots = effective_readable_roots(settings, &project_roots);
+    let writable_roots = if mode == PermissionMode::ReadOnly {
+        Vec::<String>::new()
+    } else {
+        effective_writable_roots(settings, &project_roots)
+    };
+    let project_source = if normalize_string_slice(&settings.project_roots).is_empty() {
+        "default"
+    } else {
+        "configured"
+    };
+    let readable_source = if normalize_string_slice(&settings.readable_roots).is_empty() {
+        "default"
+    } else {
+        "configured"
+    };
+    let writable_source = if mode == PermissionMode::ReadOnly {
+        "read-only"
+    } else if normalize_string_slice(&settings.writable_roots).is_empty() {
+        "default"
+    } else {
+        "configured"
+    };
+    let project_entries = sandbox_root_validation_entries(cwd, &project_roots, project_source);
+    let readable_entries = sandbox_root_validation_entries(cwd, &readable_roots, readable_source);
+    let writable_entries = sandbox_root_validation_entries(cwd, &writable_roots, writable_source);
+    let issue_count = [&project_entries, &readable_entries, &writable_entries]
+        .into_iter()
+        .flat_map(|entries| entries.iter())
+        .filter(|entry| entry.get("status").and_then(Value::as_str) != Some("ok"))
+        .count();
+    json!({
+        "ok": issue_count == 0,
+        "issueCount": issue_count,
+        "mode": mode,
+        "filesystem": filesystem_policy_for_mode(mode),
+        "network": network_policy_label_for_settings(mode, settings),
+        "roots": {
+            "project": project_entries,
+            "readable": readable_entries,
+            "writable": writable_entries,
+        },
+        "protectedPatterns": protected_patterns_for_policy(&settings.protected_patterns),
+    })
+}
+
+fn sandbox_root_validation_entries(cwd: &str, roots: &[String], source: &str) -> Vec<Value> {
+    roots
+        .iter()
+        .map(|root| {
+            json!({
+                "path": root,
+                "status": sandbox_root_status(cwd, root),
+                "source": source,
+            })
+        })
+        .collect()
+}
+
+fn sandbox_root_status(cwd: &str, root: &str) -> &'static str {
+    let path = Path::new(root);
+    let check_path = if path.is_absolute() {
+        PathBuf::from(path)
+    } else {
+        Path::new(cwd).join(path)
+    };
+    if !check_path.exists() {
+        "missing"
+    } else if !check_path.is_dir() {
+        "not-directory"
+    } else {
+        "ok"
+    }
+}
+
+fn format_permission_sandbox_validation(value: &Value) -> String {
+    let issue_count = value.get("issueCount").and_then(Value::as_u64).unwrap_or(0);
+    let issue_label = match issue_count {
+        0 => "ok".to_string(),
+        1 => "1 issue".to_string(),
+        count => format!("{count} issues"),
+    };
+    let filesystem = value
+        .get("filesystem")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown");
+    let network = value
+        .get("network")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown");
+    let protected_count = value
+        .get("protectedPatterns")
+        .and_then(Value::as_array)
+        .map(Vec::len)
+        .unwrap_or(0);
+    let mut lines = vec![
+        format!("sandbox validation: {issue_label}"),
+        format!("effective policy: filesystem={filesystem}, network={network}"),
+        format!("protected patterns: {protected_count} active"),
+    ];
+    lines.extend(format_sandbox_validation_roots(
+        value,
+        "project",
+        "project roots",
+    ));
+    lines.extend(format_sandbox_validation_roots(
+        value,
+        "readable",
+        "readable roots",
+    ));
+    lines.extend(format_sandbox_validation_roots(
+        value,
+        "writable",
+        "writable roots",
+    ));
+    lines.join("\n")
+}
+
+fn format_sandbox_validation_roots(value: &Value, key: &str, label: &str) -> Vec<String> {
+    let entries = value
+        .get("roots")
+        .and_then(|roots| roots.get(key))
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let mut lines = vec![format!("{label}:")];
+    if entries.is_empty() {
+        lines.push("- none".to_string());
+        return lines;
+    }
+    for entry in entries {
+        let status = entry
+            .get("status")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown");
+        let path = entry.get("path").and_then(Value::as_str).unwrap_or("");
+        let source = entry
+            .get("source")
+            .and_then(Value::as_str)
+            .unwrap_or("configured");
+        lines.push(format!("- {status} {path} ({source})"));
+    }
+    lines
+}
+
+fn side_question_request_params(
+    thread_id: &str,
+    question: &str,
+    provider: &ProviderConfig,
+    cwd: &str,
+    permission_mode: PermissionMode,
+    sandbox_settings: &PermissionSandboxSettings,
+    prompt_variant: &str,
+) -> Value {
+    let mut params = json!({
+        "threadId": thread_id,
+        "question": question,
+        "executionMode": "blocking",
+        "sandboxPolicy": sandbox_policy_json_with_settings(
+            permission_mode,
+            cwd,
+            sandbox_settings,
+        ),
+    });
+    match provider {
+        ProviderConfig::Mock => {
+            params["modelSteps"] = mock_model_steps_for_prompt(question, cwd);
+            if let Some(tool_definitions) = mock_tool_definitions_for_prompt(question) {
+                params["toolDefinitions"] = tool_definitions;
+            }
+        }
+        ProviderConfig::OpenAiCompatible(config) => {
+            let mut provider_json = openai_provider_json(config);
+            apply_feature_routing_to_provider(&mut provider_json, prompt_variant);
+            apply_prompt_variant_to_provider(&mut provider_json, prompt_variant);
+            params["modelProvider"] = provider_json;
+            params["maxContinuations"] = json!(8);
+        }
+    }
+    params
+}
+
+fn memory_compact_summary_arg(rest: &[&str]) -> String {
+    rest.join(" ")
+}
+
+fn parse_mcp_prompt_arguments(rest: &[&str]) -> Result<BTreeMap<String, String>, String> {
+    let mut arguments = BTreeMap::new();
+    for raw in rest {
+        let Some((key, value)) = raw.split_once('=') else {
+            return Err(format!(
+                "mcp prompt arguments must use key=value: {}",
+                compact_mcp_text(raw, 80)
+            ));
+        };
+        let key = key.trim();
+        if key.is_empty() {
+            return Err("mcp prompt argument key cannot be empty".to_string());
+        }
+        arguments.insert(key.to_string(), value.to_string());
+    }
+    Ok(arguments)
+}
+
+fn parse_mcp_list_cursor_arg(command: &str, rest: &[&str]) -> Result<Option<String>, String> {
+    let usage = || format!("usage: /mcp {command} <id> [cursor]");
+    let cursor = match rest {
+        [] => return Ok(None),
+        ["--cursor"] | ["cursor"] => return Err(usage()),
+        ["--cursor", cursor] | ["cursor", cursor] | [cursor] => *cursor,
+        _ => return Err(usage()),
+    };
+    let cursor = cursor.trim();
+    if cursor.is_empty() {
+        return Err(format!("{}; cursor cannot be empty", usage()));
+    }
+    Ok(Some(cursor.to_string()))
+}
+
+fn mcp_list_request_params_json(thread_id: &str, server_id: &str, cursor: Option<&str>) -> Value {
+    let mut params = json!({
+        "threadId": thread_id,
+        "serverId": server_id,
+    });
+    if let Some(cursor) = cursor.map(str::trim).filter(|cursor| !cursor.is_empty()) {
+        params["cursor"] = json!(cursor);
+    }
+    params
+}
+
+fn mcp_command_usage() -> &'static str {
+    "usage: /mcp [list|connect <id>|test <id>|reload <id>|auth <id>|resources <id> [cursor]|templates <id> [cursor]|read <id> <uri>|subscribe <id> <uri>|unsubscribe <id> <uri>|prompts <id> [cursor]|prompt <id> <name> [key=value...]|trust-plugin <plugin-id> <server-id>|disable-plugin <plugin-id> <server-id>]"
+}
+
+fn mcp_transport_kind(item: &Value) -> &str {
+    item.get("transport")
+        .and_then(|transport| transport.get("kind"))
+        .and_then(Value::as_str)
+        .unwrap_or("unknown")
+}
+
+fn mcp_tool_names(item: &Value) -> Vec<String> {
+    let mut names = item
+        .get("tools")
+        .and_then(Value::as_array)
+        .map(|tools| {
+            tools
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    if names.is_empty() {
+        names = item
+            .get("toolRefs")
+            .and_then(Value::as_array)
+            .map(|tools| {
+                tools
+                    .iter()
+                    .filter_map(|tool| tool.get("name").and_then(Value::as_str))
+                    .map(str::to_string)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+    }
+    names
+}
+
+fn mcp_capability_flag_label(
+    capabilities: &Value,
+    section: &str,
+    flag: &str,
+    label: &str,
+) -> Option<String> {
+    let value = capabilities
+        .get(section)
+        .and_then(|section| section.get(flag))
+        .and_then(Value::as_bool)?;
+    if value {
+        Some(label.to_string())
+    } else {
+        Some(format!("{label}=false"))
+    }
+}
+
+fn mcp_server_capability_labels(item: &Value) -> Vec<String> {
+    let Some(capabilities) = item.get("capabilities").and_then(Value::as_object) else {
+        return Vec::new();
+    };
+    let capabilities = Value::Object(capabilities.clone());
+    let mut labels = Vec::new();
+    for (section, flag, label) in [
+        ("tools", "listChanged", "tools.listChanged"),
+        ("resources", "subscribe", "resources.subscribe"),
+        ("resources", "listChanged", "resources.listChanged"),
+        ("prompts", "listChanged", "prompts.listChanged"),
+    ] {
+        if let Some(label) = mcp_capability_flag_label(&capabilities, section, flag, label) {
+            labels.push(label);
+        }
+    }
+    for key in ["sampling", "elicitation", "tasks"] {
+        if capabilities.get(key).is_some_and(|value| !value.is_null()) {
+            labels.push(format!("{key}(deferred)"));
+        }
+    }
+    labels
+}
+
+fn compact_mcp_text(text: &str, max_chars: usize) -> String {
+    if text.chars().count() <= max_chars {
+        return text.to_string();
+    }
+    let keep = max_chars.saturating_sub(3);
+    let mut rendered = text.chars().take(keep).collect::<String>();
+    rendered.push_str("...");
+    rendered
+}
+
+fn mcp_status_summary_counts(value: &Value) -> (usize, usize, usize, usize) {
+    let Some(items) = value.get("items").and_then(Value::as_array) else {
+        return (0, 0, 0, 0);
+    };
+    let mut enabled = 0usize;
+    let mut tools = 0usize;
+    let mut diagnostics = 0usize;
+    for item in items {
+        if item
+            .get("status")
+            .and_then(Value::as_str)
+            .is_some_and(|status| status == "enabled")
+        {
+            enabled += 1;
+        }
+        tools += mcp_tool_names(item).len();
+        diagnostics += item
+            .get("diagnostics")
+            .and_then(Value::as_array)
+            .map(Vec::len)
+            .unwrap_or(0);
+    }
+    (items.len(), enabled, tools, diagnostics)
+}
+
+fn format_mcp_status_summary(value: &Value) -> String {
+    let (servers, enabled, tools, diagnostics) = mcp_status_summary_counts(value);
+    if servers == 0 {
+        return "none".to_string();
+    }
+    let mut parts = vec![format!(
+        "{servers} server{}",
+        if servers == 1 { "" } else { "s" }
+    )];
+    if enabled > 0 {
+        parts.push(format!("{enabled} enabled"));
+    }
+    parts.push(format!("{tools} tools"));
+    if diagnostics > 0 {
+        parts.push(format!("{diagnostics} diagnostics"));
+    }
+    parts.join(", ")
+}
+
+fn format_mcp_status_list(value: &Value) -> String {
+    let Some(items) = value.get("items").and_then(Value::as_array) else {
+        return "mcp: status unavailable".to_string();
+    };
+    if items.is_empty() {
+        return "mcp: no servers configured".to_string();
+    }
+    let mut lines = Vec::new();
+    for item in items {
+        let id = item.get("id").and_then(Value::as_str).unwrap_or("mcp");
+        let source = item
+            .get("source")
+            .and_then(Value::as_str)
+            .unwrap_or("runtime");
+        let status = item
+            .get("status")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown");
+        let transport = mcp_transport_kind(item);
+        let tools = mcp_tool_names(item);
+        lines.push(format!(
+            "{id} [{source} {transport} {status}] tools={}",
+            tools.len()
+        ));
+        if !tools.is_empty() {
+            let shown = tools.iter().take(5).cloned().collect::<Vec<_>>();
+            let more = tools.len().saturating_sub(shown.len());
+            let suffix = if more > 0 {
+                format!(" (+{more} more)")
+            } else {
+                String::new()
+            };
+            lines.push(format!("  {}", shown.join(", ") + &suffix));
+        }
+        let capability_labels = mcp_server_capability_labels(item);
+        if !capability_labels.is_empty() {
+            lines.push(format!("  capabilities={}", capability_labels.join(", ")));
+        }
+        let refresh_labels = mcp_list_refresh_hint_labels(item);
+        if !refresh_labels.is_empty() {
+            lines.push(format!("  refresh={}", refresh_labels.join(", ")));
+        }
+        if let Some(subscriptions) = item
+            .get("resourceSubscriptions")
+            .and_then(Value::as_array)
+            .filter(|subscriptions| !subscriptions.is_empty())
+        {
+            lines.push(format!("  subscriptions={}", subscriptions.len()));
+            for subscription in subscriptions.iter().take(5) {
+                if let Some(uri) = subscription.get("uri").and_then(Value::as_str) {
+                    let mut suffix = String::new();
+                    let update_count = subscription
+                        .get("updateCount")
+                        .and_then(Value::as_u64)
+                        .unwrap_or(0);
+                    let last_updated_at = subscription
+                        .get("lastUpdatedAt")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .trim();
+                    if update_count > 0 {
+                        suffix = format!(" (updates={update_count}");
+                        if !last_updated_at.is_empty() {
+                            suffix.push_str(", last=");
+                            suffix.push_str(&compact_mcp_text(last_updated_at, 80));
+                        }
+                        suffix.push(')');
+                    }
+                    lines.push(format!(
+                        "    {}{}",
+                        compact_mcp_text(uri.trim(), 160),
+                        suffix
+                    ));
+                }
+            }
+            let more = subscriptions.len().saturating_sub(5);
+            if more > 0 {
+                lines.push(format!("    +{more} more"));
+            }
+        }
+        if let Some(diagnostics) = item.get("diagnostics").and_then(Value::as_array) {
+            for diagnostic in diagnostics {
+                let code = diagnostic
+                    .get("code")
+                    .and_then(Value::as_str)
+                    .unwrap_or("mcp_diagnostic");
+                let message = diagnostic
+                    .get("message")
+                    .and_then(Value::as_str)
+                    .unwrap_or("diagnostic");
+                lines.push(format!(
+                    "  {code}: {}",
+                    compact_mcp_text(message.trim(), 180)
+                ));
+            }
+        }
+    }
+    lines.join("\n")
+}
+
+fn mcp_list_refresh_hint_labels(item: &Value) -> Vec<String> {
+    let Some(hints) = item.get("listRefreshHints").and_then(Value::as_object) else {
+        return Vec::new();
+    };
+    ["tools", "resources", "prompts"]
+        .into_iter()
+        .filter_map(|kind| {
+            let refresh_count = hints
+                .get(kind)
+                .and_then(|hint| hint.get("refreshCount"))
+                .and_then(Value::as_u64)
+                .unwrap_or(0);
+            (refresh_count > 0).then(|| format!("{kind}:{refresh_count}"))
+        })
+        .collect()
+}
+
+fn format_mcp_resources_list(value: &Value) -> String {
+    let server_id = value
+        .get("serverId")
+        .and_then(Value::as_str)
+        .unwrap_or("mcp");
+    let status = value
+        .get("status")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown");
+    if status != "ok" {
+        let error = value
+            .get("error")
+            .and_then(Value::as_str)
+            .unwrap_or("resource listing failed");
+        return format!(
+            "mcp resources {server_id}: {status}\n  {}",
+            compact_mcp_text(error.trim(), 180)
+        );
+    }
+    let Some(resources) = value.get("resources").and_then(Value::as_array) else {
+        return format!("mcp resources {server_id}: unavailable");
+    };
+    let mut lines = vec![format!(
+        "mcp resources {server_id}: {} resource{}",
+        resources.len(),
+        if resources.len() == 1 { "" } else { "s" }
+    )];
+    for resource in resources.iter().take(10) {
+        let uri = resource.get("uri").and_then(Value::as_str).unwrap_or("-");
+        let name = resource
+            .get("title")
+            .or_else(|| resource.get("name"))
+            .and_then(Value::as_str)
+            .unwrap_or("resource");
+        lines.push(format!(
+            "  {} <{}>",
+            compact_mcp_text(name.trim(), 80),
+            compact_mcp_text(uri.trim(), 140)
+        ));
+        let mut details = Vec::new();
+        if let Some(mime) = resource.get("mimeType").and_then(Value::as_str) {
+            details.push(mime.to_string());
+        }
+        if let Some(size) = resource.get("size").and_then(Value::as_u64) {
+            details.push(format!("{size} bytes"));
+        }
+        if !details.is_empty() {
+            lines.push(format!("    {}", details.join(", ")));
+        }
+    }
+    let hidden = resources.len().saturating_sub(10);
+    if hidden > 0 {
+        lines.push(format!("  (+{hidden} more)"));
+    }
+    if let Some(next_cursor) = value
+        .get("nextCursor")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        lines.push(format!(
+            "  next cursor: {}",
+            compact_mcp_text(next_cursor, 80)
+        ));
+    }
+    lines.join("\n")
+}
+
+fn format_mcp_resource_templates_list(value: &Value) -> String {
+    let server_id = value
+        .get("serverId")
+        .and_then(Value::as_str)
+        .unwrap_or("mcp");
+    let status = value
+        .get("status")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown");
+    if status != "ok" {
+        let error = value
+            .get("error")
+            .and_then(Value::as_str)
+            .unwrap_or("resource template listing failed");
+        return format!(
+            "mcp templates {server_id}: {status}\n  {}",
+            compact_mcp_text(error.trim(), 180)
+        );
+    }
+    let Some(templates) = value.get("resourceTemplates").and_then(Value::as_array) else {
+        return format!("mcp templates {server_id}: unavailable");
+    };
+    let mut lines = vec![format!(
+        "mcp templates {server_id}: {} template{}",
+        templates.len(),
+        if templates.len() == 1 { "" } else { "s" }
+    )];
+    for template in templates.iter().take(10) {
+        let uri_template = template
+            .get("uriTemplate")
+            .and_then(Value::as_str)
+            .unwrap_or("-");
+        let name = template
+            .get("title")
+            .or_else(|| template.get("name"))
+            .and_then(Value::as_str)
+            .unwrap_or("template");
+        lines.push(format!(
+            "  {} <{}>",
+            compact_mcp_text(name.trim(), 80),
+            compact_mcp_text(uri_template.trim(), 140)
+        ));
+        let mut details = Vec::new();
+        if let Some(mime) = template.get("mimeType").and_then(Value::as_str) {
+            details.push(mime.to_string());
+        }
+        if !details.is_empty() {
+            lines.push(format!("    {}", details.join(", ")));
+        }
+    }
+    let hidden = templates.len().saturating_sub(10);
+    if hidden > 0 {
+        lines.push(format!("  (+{hidden} more)"));
+    }
+    if let Some(next_cursor) = value
+        .get("nextCursor")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        lines.push(format!(
+            "  next cursor: {}",
+            compact_mcp_text(next_cursor, 80)
+        ));
+    }
+    lines.join("\n")
+}
+
+fn format_mcp_prompts_list(value: &Value) -> String {
+    let server_id = value
+        .get("serverId")
+        .and_then(Value::as_str)
+        .unwrap_or("mcp");
+    let status = value
+        .get("status")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown");
+    if status != "ok" {
+        let error = value
+            .get("error")
+            .and_then(Value::as_str)
+            .unwrap_or("prompt listing failed");
+        return format!(
+            "mcp prompts {server_id}: {status}\n  {}",
+            compact_mcp_text(error.trim(), 180)
+        );
+    }
+    let Some(prompts) = value.get("prompts").and_then(Value::as_array) else {
+        return format!("mcp prompts {server_id}: unavailable");
+    };
+    let mut lines = vec![format!(
+        "mcp prompts {server_id}: {} prompt{}",
+        prompts.len(),
+        if prompts.len() == 1 { "" } else { "s" }
+    )];
+    for prompt in prompts.iter().take(10) {
+        let name = prompt.get("name").and_then(Value::as_str).unwrap_or("-");
+        let title = prompt.get("title").and_then(Value::as_str).unwrap_or(name);
+        lines.push(format!(
+            "  {} <{}>",
+            compact_mcp_text(title.trim(), 80),
+            compact_mcp_text(name.trim(), 80)
+        ));
+        let args = prompt
+            .get("arguments")
+            .and_then(Value::as_array)
+            .map(|items| {
+                items
+                    .iter()
+                    .take(6)
+                    .filter_map(|item| {
+                        let name = item.get("name").and_then(Value::as_str)?;
+                        let suffix = if item
+                            .get("required")
+                            .and_then(Value::as_bool)
+                            .unwrap_or(false)
+                        {
+                            " required"
+                        } else {
+                            ""
+                        };
+                        Some(format!("{}{}", compact_mcp_text(name.trim(), 40), suffix))
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        if !args.is_empty() {
+            lines.push(format!("    args: {}", args.join(", ")));
+        }
+    }
+    let hidden = prompts.len().saturating_sub(10);
+    if hidden > 0 {
+        lines.push(format!("  (+{hidden} more)"));
+    }
+    if let Some(next_cursor) = value
+        .get("nextCursor")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        lines.push(format!(
+            "  next cursor: {}",
+            compact_mcp_text(next_cursor, 80)
+        ));
+    }
+    lines.join("\n")
+}
+
+fn mcp_prompt_content_summary(content: &Value) -> Vec<String> {
+    let Some(content_type) = content.get("type").and_then(Value::as_str) else {
+        return vec!["unknown content".to_string()];
+    };
+    match content_type {
+        "text" => content
+            .get("text")
+            .and_then(Value::as_str)
+            .map(|text| {
+                let mut lines = vec!["text".to_string()];
+                for line in text.lines().take(6) {
+                    lines.push(format!("  {}", compact_mcp_text(line.trim_end(), 180)));
+                }
+                if text.lines().count() > 6 {
+                    lines.push("  ...".to_string());
+                }
+                lines
+            })
+            .unwrap_or_else(|| vec!["text".to_string()]),
+        "resource" => {
+            let resource = content.get("resource").unwrap_or(&Value::Null);
+            let uri = resource.get("uri").and_then(Value::as_str).unwrap_or("-");
+            let mime = resource
+                .get("mimeType")
+                .and_then(Value::as_str)
+                .unwrap_or("application/octet-stream");
+            vec![format!(
+                "resource {} ({})",
+                compact_mcp_text(uri, 120),
+                compact_mcp_text(mime, 60)
+            )]
+        }
+        "image" | "audio" => {
+            let mime = content
+                .get("mimeType")
+                .and_then(Value::as_str)
+                .unwrap_or("application/octet-stream");
+            let data_len = content
+                .get("data")
+                .and_then(Value::as_str)
+                .map(str::len)
+                .unwrap_or(0);
+            vec![format!(
+                "{} {} base64 chars ({})",
+                content_type,
+                data_len,
+                compact_mcp_text(mime, 60)
+            )]
+        }
+        other => vec![format!("{} content", compact_mcp_text(other, 60))],
+    }
+}
+
+fn format_mcp_prompt_get_result(value: &Value) -> String {
+    let server_id = value
+        .get("serverId")
+        .and_then(Value::as_str)
+        .unwrap_or("mcp");
+    let name = value.get("name").and_then(Value::as_str).unwrap_or("-");
+    let status = value
+        .get("status")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown");
+    if status != "ok" {
+        let error = value
+            .get("error")
+            .and_then(Value::as_str)
+            .unwrap_or("prompt get failed");
+        return format!(
+            "mcp prompt {server_id}/{name}: {status}\n  {}",
+            compact_mcp_text(error.trim(), 180)
+        );
+    }
+    let Some(messages) = value.get("messages").and_then(Value::as_array) else {
+        return format!("mcp prompt {server_id}/{name}: unavailable");
+    };
+    let mut lines = vec![format!("mcp prompt {server_id}/{name}: ok")];
+    if let Some(description) = value
+        .get("description")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        lines.push(format!("  {}", compact_mcp_text(description, 160)));
+    }
+    for message in messages.iter().take(8) {
+        let role = message
+            .get("role")
+            .and_then(Value::as_str)
+            .unwrap_or("message");
+        let content = message.get("content").unwrap_or(&Value::Null);
+        let summary = mcp_prompt_content_summary(content);
+        if let Some(first) = summary.first() {
+            lines.push(format!("  {} {}", compact_mcp_text(role, 40), first));
+        }
+        for detail in summary.iter().skip(1) {
+            lines.push(format!("    {}", detail));
+        }
+    }
+    let hidden = messages.len().saturating_sub(8);
+    if hidden > 0 {
+        lines.push(format!("  (+{hidden} more messages)"));
+    }
+    lines.join("\n")
+}
+
+fn format_mcp_resource_read_result(value: &Value) -> String {
+    let server_id = value
+        .get("serverId")
+        .and_then(Value::as_str)
+        .unwrap_or("mcp");
+    let uri = value.get("uri").and_then(Value::as_str).unwrap_or("-");
+    let status = value
+        .get("status")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown");
+    if status != "ok" {
+        let error = value
+            .get("error")
+            .and_then(Value::as_str)
+            .unwrap_or("resource read failed");
+        return format!(
+            "mcp read {server_id}: {status}\n  {}",
+            compact_mcp_text(error.trim(), 180)
+        );
+    }
+    let Some(contents) = value.get("contents").and_then(Value::as_array) else {
+        return format!("mcp read {server_id}: unavailable");
+    };
+    let mut lines = vec![format!(
+        "mcp read {server_id}: {}",
+        compact_mcp_text(uri, 160)
+    )];
+    for content in contents.iter().take(5) {
+        let content_uri = content.get("uri").and_then(Value::as_str).unwrap_or(uri);
+        let mime = content
+            .get("mimeType")
+            .and_then(Value::as_str)
+            .unwrap_or("application/octet-stream");
+        if let Some(text) = content.get("text").and_then(Value::as_str) {
+            lines.push(format!(
+                "  {} text <{}>",
+                mime,
+                compact_mcp_text(content_uri, 120)
+            ));
+            for line in text.lines().take(8) {
+                lines.push(format!("    {}", compact_mcp_text(line.trim_end(), 180)));
+            }
+            if text.lines().count() > 8 {
+                lines.push("    ...".to_string());
+            }
+        } else if let Some(blob) = content.get("blob").and_then(Value::as_str) {
+            lines.push(format!(
+                "  {} blob, {} base64 chars <{}>",
+                mime,
+                blob.len(),
+                compact_mcp_text(content_uri, 120)
+            ));
+        } else {
+            lines.push(format!(
+                "  {} empty <{}>",
+                mime,
+                compact_mcp_text(content_uri, 120)
+            ));
+        }
+    }
+    let hidden = contents.len().saturating_sub(5);
+    if hidden > 0 {
+        lines.push(format!("  (+{hidden} more content entries)"));
+    }
+    lines.join("\n")
+}
+
+fn format_mcp_resource_subscription_result(action: &str, value: &Value) -> String {
+    let server_id = value
+        .get("serverId")
+        .and_then(Value::as_str)
+        .unwrap_or("mcp");
+    let uri = value.get("uri").and_then(Value::as_str).unwrap_or("-");
+    let status = value
+        .get("status")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown");
+    if status != "ok" {
+        let error = value
+            .get("error")
+            .and_then(Value::as_str)
+            .unwrap_or("resource subscription failed");
+        return format!(
+            "mcp {action} {server_id}: {status}\n  {}",
+            compact_mcp_text(error.trim(), 180)
+        );
+    }
+    let state = if value
+        .get("subscribed")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        "subscribed"
+    } else {
+        "unsubscribed"
+    };
+    format!(
+        "mcp {action} {server_id}: {}\n  {state}",
+        compact_mcp_text(uri, 160)
+    )
+}
+
+fn format_mcp_action_result(action: &str, server_id: &str, value: &Value) -> String {
+    let mut headline_status = "ok".to_string();
+    let mut detail_lines = Vec::new();
+    if let Some(events) = value.get("events").and_then(Value::as_array) {
+        for event in events {
+            let Some(kind) = event.get("kind") else {
+                continue;
+            };
+            match kind.get("type").and_then(Value::as_str) {
+                Some("mcpServerRegistered") => {
+                    if let Some(server) = kind.get("server") {
+                        let status = server
+                            .get("status")
+                            .and_then(Value::as_str)
+                            .unwrap_or("unknown");
+                        if action == "auth" && status == "authRequired" {
+                            headline_status = status.to_string();
+                        }
+                        let tool_count = mcp_tool_names(server).len();
+                        detail_lines.push(format!("  {server_id}: {status}, tools={tool_count}"));
+                    }
+                }
+                Some("diagnostic") => {
+                    if let Some(message) = kind
+                        .get("diagnostic")
+                        .and_then(|diagnostic| diagnostic.get("message"))
+                        .and_then(Value::as_str)
+                    {
+                        detail_lines.push(format!("  {}", compact_mcp_text(message.trim(), 180)));
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    let mut lines = vec![format!("mcp {action} {server_id}: {headline_status}")];
+    lines.extend(detail_lines);
+    lines.join("\n")
+}
+
+fn format_permission_review_history(value: &Value) -> String {
+    let Some(records) = value.get("records").and_then(Value::as_array) else {
+        return "permissions history: unavailable".to_string();
+    };
+    if records.is_empty() {
+        return "permissions history: no Guardian review records".to_string();
+    }
+    let mut lines = vec!["permissions history:".to_string()];
+    for record in records {
+        let status = record
+            .get("status")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown");
+        let tool = record
+            .get("toolName")
+            .and_then(Value::as_str)
+            .unwrap_or("tool");
+        let timestamp = record
+            .get("timestamp")
+            .and_then(Value::as_str)
+            .unwrap_or("-");
+        let risk = record
+            .get("decision")
+            .and_then(|decision| decision.get("riskLevel"))
+            .and_then(Value::as_str)
+            .or_else(|| {
+                record
+                    .get("risk")
+                    .and_then(|risk| risk.get("category"))
+                    .and_then(Value::as_str)
+            })
+            .unwrap_or("unknown");
+        let authorization = record
+            .get("decision")
+            .and_then(|decision| decision.get("userAuthorization"))
+            .and_then(Value::as_str)
+            .unwrap_or("unknown");
+        let rationale = record
+            .get("decision")
+            .and_then(|decision| decision.get("rationale"))
+            .and_then(Value::as_str)
+            .or_else(|| record.get("summary").and_then(Value::as_str))
+            .unwrap_or("");
+        lines.push(format!(
+            "- {timestamp} {status} {tool} risk={risk} auth={authorization}: {rationale}"
+        ));
+    }
+    lines.join("\n")
+}
+
+fn value_string_array(value: &Value, key: &str) -> Vec<String> {
+    value
+        .get(key)
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+fn format_permission_review_context(value: &Value) -> String {
+    let settings = value.get("settings").cloned().unwrap_or_else(|| json!({}));
+    let timeout_seconds = settings
+        .get("timeoutMs")
+        .and_then(Value::as_u64)
+        .map(|timeout_ms| timeout_ms / 1_000)
+        .unwrap_or(0);
+    let reviewer_model = settings
+        .get("reviewerModel")
+        .and_then(Value::as_str)
+        .unwrap_or("auto");
+    let provider_policy = value
+        .get("reviewerProviderPolicy")
+        .and_then(Value::as_str)
+        .unwrap_or("isolated reviewer");
+    let mut lines = vec![
+        "permissions Guardian context:".to_string(),
+        format!("reviewer model={reviewer_model} timeout={timeout_seconds}s"),
+        format!("provider: {}", compact_mcp_text(provider_policy, 180)),
+    ];
+    let prompt_context = value_string_array(value, "promptContext");
+    if !prompt_context.is_empty() {
+        lines.push("prompt receives:".to_string());
+        lines.extend(prompt_context.iter().map(|item| format!("- {item}")));
+    }
+    let reviewer_tools = value_string_array(value, "reviewerTools");
+    if !reviewer_tools.is_empty() {
+        lines.push(format!("reviewer tools: {}", reviewer_tools.join(", ")));
+    }
+    let hard_denies = value_string_array(value, "hardDenies");
+    if !hard_denies.is_empty() {
+        lines.push("hard denies before reviewer:".to_string());
+        lines.extend(hard_denies.iter().map(|item| format!("- {item}")));
+    }
+    if let Some(prompt) = value
+        .get("promptSkeleton")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|prompt| !prompt.is_empty())
+    {
+        lines.push("prompt skeleton:".to_string());
+        lines.push(compact_mcp_text(prompt, 1_200));
+    }
+    lines.join("\n")
 }
 
 fn mock_model_steps_for_prompt(prompt: &str, cwd: &str) -> Value {
@@ -6005,161 +14665,11 @@ fn todo_client_action_name(action: TodoClientAction) -> &'static str {
 }
 
 fn parse_agent_markdown(text: &str, source: AgentSource) -> Result<AgentDefinition, String> {
-    let (frontmatter, body) = split_agent_frontmatter(text)
-        .ok_or_else(|| "agent markdown requires YAML frontmatter".to_string())?;
-    let fields = parse_agent_frontmatter(frontmatter);
-    let name = required_agent_field(&fields, "name")?;
-    let description = required_agent_field(&fields, "description")?;
-    let instructions = body.trim().to_string();
-    if instructions.is_empty() {
-        return Err("agent markdown requires instruction body".to_string());
-    }
-    Ok(AgentDefinition {
-        name,
-        description,
-        source: Some(source),
-        tools: parse_agent_list_field(fields.get("tools").map(String::as_str)),
-        model: optional_agent_field(&fields, "model"),
-        effort: optional_agent_field(&fields, "effort"),
-        permission_mode: optional_agent_field(&fields, "permissionMode")
-            .or_else(|| optional_agent_field(&fields, "permission_mode"))
-            .map(|value| parse_agent_permission_mode(&value))
-            .transpose()?,
-        background: optional_agent_field(&fields, "background").is_some_and(|value| {
-            matches!(
-                value.to_ascii_lowercase().as_str(),
-                "1" | "true" | "yes" | "on"
-            )
-        }),
-        worktree_root: optional_agent_field(&fields, "worktreeRoot")
-            .or_else(|| optional_agent_field(&fields, "worktree_root")),
-        instructions,
-    })
+    oppi_agents::parse_agent_markdown(text, source, None, None, false)
 }
 
 fn format_agent_markdown(agent: &AgentDefinition) -> String {
-    let mut lines = vec![
-        "---".to_string(),
-        format!("name: {}", agent.name),
-        format!("description: {}", quote_agent_yaml(&agent.description)),
-    ];
-    if !agent.tools.is_empty() {
-        lines.push(format!("tools: {}", agent.tools.join(", ")));
-    }
-    if let Some(model) = agent.model.as_deref() {
-        lines.push(format!("model: {model}"));
-    }
-    if let Some(effort) = agent.effort.as_deref() {
-        lines.push(format!("effort: {effort}"));
-    }
-    if let Some(mode) = agent.permission_mode {
-        lines.push(format!("permissionMode: {}", mode.as_str()));
-    }
-    if agent.background {
-        lines.push("background: true".to_string());
-    }
-    if let Some(worktree_root) = agent.worktree_root.as_deref() {
-        lines.push(format!("worktreeRoot: {worktree_root}"));
-    }
-    lines.push("---".to_string());
-    lines.push(String::new());
-    lines.push(agent.instructions.trim().to_string());
-    lines.push(String::new());
-    lines.join("\n")
-}
-
-fn split_agent_frontmatter(text: &str) -> Option<(&str, &str)> {
-    let text = text.strip_prefix('\u{feff}').unwrap_or(text).trim_start();
-    let rest = text.strip_prefix("---")?;
-    let rest = rest
-        .strip_prefix("\r\n")
-        .or_else(|| rest.strip_prefix('\n'))
-        .unwrap_or(rest);
-    let marker = rest.find("\n---").or_else(|| rest.find("\r\n---"))?;
-    let (frontmatter, after) = rest.split_at(marker);
-    let body = after
-        .trim_start_matches("\r\n")
-        .trim_start_matches('\n')
-        .trim_start_matches("---")
-        .trim_start_matches("\r\n")
-        .trim_start_matches('\n');
-    Some((frontmatter, body))
-}
-
-fn parse_agent_frontmatter(frontmatter: &str) -> BTreeMap<String, String> {
-    let mut fields = BTreeMap::new();
-    for line in frontmatter.lines() {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        if let Some((key, value)) = line.split_once(':') {
-            fields.insert(
-                key.trim().to_string(),
-                strip_agent_quotes(value.trim()).to_string(),
-            );
-        }
-    }
-    fields
-}
-
-fn required_agent_field(fields: &BTreeMap<String, String>, key: &str) -> Result<String, String> {
-    optional_agent_field(fields, key).ok_or_else(|| format!("agent markdown requires {key}"))
-}
-
-fn optional_agent_field(fields: &BTreeMap<String, String>, key: &str) -> Option<String> {
-    fields
-        .get(key)
-        .map(|value| value.trim())
-        .filter(|value| !value.is_empty())
-        .map(str::to_string)
-}
-
-fn parse_agent_list_field(value: Option<&str>) -> Vec<String> {
-    let Some(value) = value.map(str::trim).filter(|value| !value.is_empty()) else {
-        return Vec::new();
-    };
-    let value = value
-        .strip_prefix('[')
-        .and_then(|inner| inner.strip_suffix(']'))
-        .unwrap_or(value);
-    value
-        .split(',')
-        .map(|item| strip_agent_quotes(item.trim()).trim().to_string())
-        .filter(|item| !item.is_empty())
-        .collect()
-}
-
-fn parse_agent_permission_mode(value: &str) -> Result<PermissionMode, String> {
-    match value.trim().to_ascii_lowercase().as_str() {
-        "read-only" | "readonly" | "ro" => Ok(PermissionMode::ReadOnly),
-        "default" => Ok(PermissionMode::Default),
-        "auto-review" | "autoreview" | "auto" => Ok(PermissionMode::AutoReview),
-        "full-access" | "full" | "danger" => Ok(PermissionMode::FullAccess),
-        other => Err(format!("unknown agent permissionMode: {other}")),
-    }
-}
-
-fn strip_agent_quotes(value: &str) -> &str {
-    value
-        .strip_prefix('"')
-        .and_then(|value| value.strip_suffix('"'))
-        .or_else(|| {
-            value
-                .strip_prefix('\'')
-                .and_then(|value| value.strip_suffix('\''))
-        })
-        .unwrap_or(value)
-}
-
-fn quote_agent_yaml(value: &str) -> String {
-    format!(
-        "\"{}\"",
-        value
-            .replace('\\', "\\\\")
-            .replace('"', "\\\"")
-            .replace('\n', "\\n")
-    )
+    oppi_agents::format_agent_markdown(agent)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -6178,6 +14688,107 @@ struct AgentImportRoute {
 struct AgentExportRoute {
     agent_name: String,
     path: PathBuf,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum AgentsRoute {
+    List,
+    Show {
+        name: String,
+    },
+    Create {
+        source: AgentSource,
+        name: String,
+        description: String,
+    },
+    Edit {
+        name: String,
+    },
+    Delete {
+        name: String,
+        confirmed: bool,
+    },
+    Dispatch {
+        name: String,
+        task: String,
+    },
+    Poll {
+        run_id: String,
+    },
+    Block {
+        run_id: String,
+        reason: String,
+    },
+    Complete {
+        run_id: String,
+        output: String,
+    },
+    Import(AgentImportRoute),
+    Export(AgentExportRoute),
+}
+
+#[cfg(test)]
+fn parse_agents_route(input: &str) -> Result<AgentsRoute, String> {
+    let parts = input.split_whitespace().collect::<Vec<_>>();
+    parse_agents_route_parts(&parts, Path::new("."), Path::new("."))
+}
+
+fn parse_agents_route_parts(
+    args: &[&str],
+    cwd: &Path,
+    agent_dir: &Path,
+) -> Result<AgentsRoute, String> {
+    match args {
+        [] | ["list"] => Ok(AgentsRoute::List),
+        ["show", name] if !name.trim().is_empty() => Ok(AgentsRoute::Show {
+            name: (*name).to_string(),
+        }),
+        ["create", "user", name, description @ ..] if !description.is_empty() => {
+            Ok(AgentsRoute::Create {
+                source: AgentSource::User,
+                name: (*name).to_string(),
+                description: description.join(" "),
+            })
+        }
+        ["create", name, description @ ..] if !description.is_empty() => Ok(AgentsRoute::Create {
+            source: AgentSource::Project,
+            name: (*name).to_string(),
+            description: description.join(" "),
+        }),
+        ["edit", name] if !name.trim().is_empty() => Ok(AgentsRoute::Edit {
+            name: (*name).to_string(),
+        }),
+        ["delete", name] if !name.trim().is_empty() => Ok(AgentsRoute::Delete {
+            name: (*name).to_string(),
+            confirmed: false,
+        }),
+        ["delete", name, "--yes"] if !name.trim().is_empty() => Ok(AgentsRoute::Delete {
+            name: (*name).to_string(),
+            confirmed: true,
+        }),
+        ["dispatch", name, task @ ..] if !task.is_empty() => Ok(AgentsRoute::Dispatch {
+            name: (*name).to_string(),
+            task: task.join(" "),
+        }),
+        ["poll", run_id] | ["status", run_id] if !run_id.trim().is_empty() => {
+            Ok(AgentsRoute::Poll {
+                run_id: (*run_id).to_string(),
+            })
+        }
+        ["block", run_id, reason @ ..] if !reason.is_empty() => Ok(AgentsRoute::Block {
+            run_id: (*run_id).to_string(),
+            reason: reason.join(" "),
+        }),
+        ["complete", run_id, output @ ..] if !output.is_empty() => Ok(AgentsRoute::Complete {
+            run_id: (*run_id).to_string(),
+            output: output.join(" "),
+        }),
+        ["import", rest @ ..] => Ok(AgentsRoute::Import(parse_agent_import_route(rest, cwd)?)),
+        ["export", rest @ ..] => Ok(AgentsRoute::Export(parse_agent_export_route(
+            rest, cwd, agent_dir,
+        )?)),
+        _ => Err("usage: /agents [list|show <name>|create [user] <name> <description>|edit <name>|delete <name> --yes|dispatch <name> <task>|poll <run-id>|status <run-id>|block <run-id> <reason>|complete <run-id> <output>|import [project|user] <path>|export <name> [project|user|path]]".to_string()),
+    }
 }
 
 fn parse_agent_import_route(args: &[&str], cwd: &Path) -> Result<AgentImportRoute, String> {
@@ -6221,7 +14832,7 @@ fn parse_agent_export_route(
 }
 
 fn active_agent_from_list(value: Value, agent_name: &str) -> Result<AgentDefinition, String> {
-    let result: RuntimeListResult<ResolvedAgent> =
+    let result: AgentListResult =
         serde_json::from_value(value).map_err(|error| format!("decode agents/list: {error}"))?;
     let names = result
         .items
@@ -6241,6 +14852,198 @@ fn active_agent_from_list(value: Value, agent_name: &str) -> Result<AgentDefinit
                 format!("unknown agent {agent_name}; available agents: {names}")
             }
         })
+}
+
+fn hoppi_module_path_for_pin() -> Result<PathBuf, String> {
+    hoppi_candidate_module_paths_for_startup_offer()
+        .into_iter()
+        .find(|path| path.exists())
+        .ok_or_else(|| {
+            format!(
+                "Hoppi pin skipped: Hoppi backend is not installed. Run `/memory install-hoppi --yes` or set OPPI_HOPPI_MODULE."
+            )
+        })
+}
+
+fn format_agents_list(value: &Value) -> Result<String, String> {
+    let result: AgentListResult = serde_json::from_value(value.clone())
+        .map_err(|error| format!("decode agents/list: {error}"))?;
+    if result.items.is_empty() && result.failed.is_empty() {
+        return Ok("no agents discovered".to_string());
+    }
+
+    let mut rendered = "agents (active definitions; project > user > built-in):".to_string();
+    for item in result.items {
+        let active = item.active;
+        rendered.push_str(&format!(
+            "\n- {} [{}]{}: {}",
+            active.name,
+            agent_source_label(active.source),
+            if active.read_only || !agent_source_is_writable(active.source) {
+                " read-only"
+            } else {
+                ""
+            },
+            active.description
+        ));
+        if !active.tools.is_empty() {
+            rendered.push_str(&format!("\n  tools: {}", active.tools.join(", ")));
+        }
+        if !active.tool_denylist.is_empty() {
+            rendered.push_str(&format!(
+                "\n  disallowed: {}",
+                active.tool_denylist.join(", ")
+            ));
+        }
+        if let Some(path) = active.path.as_deref() {
+            rendered.push_str(&format!("\n  path: {path}"));
+        }
+        if !item.shadowed.is_empty() {
+            rendered.push_str(&format!(
+                "\n  shadows {} lower-priority definition(s)",
+                item.shadowed.len()
+            ));
+        }
+    }
+
+    if !result.failed.is_empty() {
+        rendered.push_str("\n\nfailed agent files:");
+        for failed in result.failed {
+            rendered.push_str(&format!(
+                "\n- {} {}: {}",
+                agent_source_label(Some(failed.source)),
+                failed.path,
+                failed.message
+            ));
+        }
+    }
+    Ok(rendered)
+}
+
+fn format_agent_show(resolved: &ResolvedAgent) -> String {
+    let mut rendered = format_agent_definition_detail(&resolved.active);
+    if !resolved.shadowed.is_empty() {
+        rendered.push_str("\n\nShadowed:");
+        for definition in &resolved.shadowed {
+            rendered.push_str(&format!(
+                "\n- {} [{}]{}: {}",
+                definition.name,
+                agent_source_label(definition.source),
+                if definition.read_only || !agent_source_is_writable(definition.source) {
+                    " read-only"
+                } else {
+                    ""
+                },
+                definition.description
+            ));
+            if let Some(path) = definition.path.as_deref() {
+                rendered.push_str(&format!("\n  Path: {path}"));
+            }
+        }
+    }
+    rendered
+}
+
+fn format_agent_definition_detail(agent: &AgentDefinition) -> String {
+    let mut rendered = format!(
+        "{} [{}]{}",
+        agent.name,
+        agent_source_label(agent.source),
+        if agent.read_only || !agent_source_is_writable(agent.source) {
+            " read-only"
+        } else {
+            ""
+        }
+    );
+    rendered.push_str(&format!("\nDescription: {}", agent.description));
+    if !agent.tools.is_empty() {
+        rendered.push_str(&format!("\nTools: {}", agent.tools.join(", ")));
+    }
+    if !agent.tool_denylist.is_empty() {
+        rendered.push_str(&format!(
+            "\nDisallowed tools: {}",
+            agent.tool_denylist.join(", ")
+        ));
+    }
+    if let Some(model) = agent.model.as_deref() {
+        rendered.push_str(&format!("\nModel: {model}"));
+    }
+    if let Some(effort) = agent.effort.as_deref() {
+        rendered.push_str(&format!("\nEffort: {effort}"));
+    }
+    if let Some(mode) = agent.permission_mode {
+        rendered.push_str(&format!("\nPermission mode: {}", mode.as_str()));
+    }
+    if let Some(memory) = agent.memory_mode.as_deref() {
+        rendered.push_str(&format!("\nMemory: {memory}"));
+    }
+    if agent.background {
+        rendered.push_str("\nBackground: true");
+    }
+    if let Some(root) = agent.worktree_root.as_deref() {
+        rendered.push_str(&format!("\nWorktree root: {root}"));
+    }
+    if let Some(isolation) = agent.isolation.as_deref() {
+        rendered.push_str(&format!("\nIsolation: {isolation}"));
+    }
+    if let Some(color) = agent.color.as_deref() {
+        rendered.push_str(&format!("\nColor: {color}"));
+    }
+    if !agent.skills.is_empty() {
+        rendered.push_str(&format!("\nSkills: {}", agent.skills.join(", ")));
+    }
+    if let Some(max_turns) = agent.max_turns {
+        rendered.push_str(&format!("\nMax turns: {max_turns}"));
+    }
+    if let Some(path) = agent.path.as_deref() {
+        rendered.push_str(&format!("\nPath: {path}"));
+    }
+    rendered.push_str("\n\n");
+    rendered.push_str(agent.instructions.trim());
+    rendered
+}
+
+fn agent_source_label(source: Option<AgentSource>) -> &'static str {
+    match source {
+        Some(AgentSource::BuiltIn) => "built-in",
+        Some(AgentSource::ClaudeUser) => "claude-user",
+        Some(AgentSource::User) => "user",
+        Some(AgentSource::ClaudeProject) => "claude-project",
+        Some(AgentSource::Project) => "project",
+        Some(AgentSource::Plugin) => "plugin",
+        Some(AgentSource::Cli) => "cli",
+        Some(AgentSource::ManagedPolicy) => "managed-policy",
+        None => "unknown",
+    }
+}
+
+fn agent_source_is_writable(source: Option<AgentSource>) -> bool {
+    matches!(source, Some(AgentSource::Project | AgentSource::User))
+}
+
+fn configured_agent_editor() -> Option<String> {
+    env::var("OPPI_EDITOR")
+        .or_else(|_| env::var("EDITOR"))
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn launch_agent_editor(editor: &str, path: &Path) -> Result<(), String> {
+    let mut parts = editor.split_whitespace();
+    let Some(command) = parts.next() else {
+        return Err("editor command is empty".to_string());
+    };
+    let status = Command::new(command)
+        .args(parts)
+        .arg(path)
+        .status()
+        .map_err(|error| format!("launch editor {editor}: {error}"))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("editor {editor} exited with status {status}"))
+    }
 }
 
 fn resolve_agent_markdown_path(cwd: &Path, path: &str) -> PathBuf {
@@ -6482,8 +15285,62 @@ fn format_compact_i64(value: i64) -> String {
     }
 }
 
+fn format_compact_tokens(value: i64) -> String {
+    format_compact_i64(value).to_ascii_lowercase()
+}
+
+fn format_reset_epoch(epoch_seconds: u64) -> String {
+    let now = current_time_ms().unwrap_or_default() / 1000;
+    if epoch_seconds <= now {
+        return "now".to_string();
+    }
+    format_duration_ms((epoch_seconds - now).saturating_mul(1000))
+}
+
 fn trim_compact_suffix(value: String) -> String {
     value.replace(".0K", "K").replace(".0M", "M")
+}
+
+fn format_memory_status_summary(value: &Value) -> String {
+    let enabled = value
+        .get("enabled")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let backend = value
+        .get("backend")
+        .and_then(Value::as_str)
+        .unwrap_or("none");
+    let scope = value
+        .get("scope")
+        .and_then(Value::as_str)
+        .unwrap_or("project");
+    let count = value
+        .get("memoryCount")
+        .and_then(Value::as_u64)
+        .unwrap_or_default();
+    let mut parts = vec![
+        enabled_label(enabled).to_string(),
+        format!("backend {backend}"),
+        format!("scope {scope}"),
+        format!("{count} memories"),
+    ];
+    if let Some(owner) = value
+        .get("executionOwner")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        parts.push(format!("owner {owner}"));
+    }
+    if let Some(adapter) = value
+        .get("executionAdapter")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        parts.push(format!("adapter {adapter}"));
+    }
+    format!("memory runtime: {}", parts.join(" · "))
 }
 
 fn format_memory_control(value: &Value) -> String {
@@ -6512,16 +15369,56 @@ fn format_memory_control(value: &Value) -> String {
         .get("memoryCount")
         .and_then(Value::as_u64)
         .unwrap_or(0);
+    let initialized = status
+        .get("initialized")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let pinned_count = status
+        .get("pinnedCount")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let store_path = status
+        .get("storePath")
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty());
+    let dashboard_url = status
+        .get("dashboardUrl")
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty());
+    let execution_owner = status
+        .get("executionOwner")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let execution_adapter = status
+        .get("executionAdapter")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
     let mut lines = vec![
         title.to_string(),
         format!(
-            "status: {} backend={} scope={} memories={}",
+            "status: {} backend={} scope={} memories={} pinned={} initialized={}",
             if enabled { "enabled" } else { "disabled" },
             backend,
             scope,
-            count
+            count,
+            pinned_count,
+            enabled_label(initialized)
         ),
     ];
+    if let Some(execution_owner) = execution_owner {
+        lines.push(format!("owner={execution_owner}"));
+    }
+    if let Some(execution_adapter) = execution_adapter {
+        lines.push(format!("adapter={execution_adapter}"));
+    }
+    if let Some(store_path) = store_path {
+        lines.push(format!("store={store_path}"));
+    }
+    if let Some(dashboard_url) = dashboard_url {
+        lines.push(format!("dashboard={dashboard_url}"));
+    }
     if !summary.trim().is_empty() {
         lines.push(summary.to_string());
     }
@@ -6552,6 +15449,770 @@ fn format_memory_control(value: &Value) -> String {
         }
     }
     lines.join("\n")
+}
+
+fn format_memory_dashboard(value: &Value) -> String {
+    let available = value
+        .get("available")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let message = value
+        .get("message")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let status = value.get("status").cloned().unwrap_or_else(|| json!({}));
+    let count = status
+        .get("memoryCount")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let pinned_count = status
+        .get("pinnedCount")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let store_path = status
+        .get("storePath")
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty());
+    let url = value
+        .get("url")
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty());
+    let fallback = value
+        .get("fallbackUrl")
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty());
+    let mut lines = Vec::new();
+    if available {
+        if let Some(url) = url {
+            lines.push(format!("Hoppi dashboard: {url}"));
+        } else {
+            lines.push("Hoppi dashboard: available".to_string());
+        }
+    } else {
+        lines.push("Hoppi dashboard: unavailable".to_string());
+    }
+    if let Some(fallback) = fallback
+        && url != Some(fallback)
+    {
+        lines.push(format!("Fallback: {fallback}"));
+    }
+    lines.push(format!("memories={count} pinned={pinned_count}"));
+    if let Some(store_path) = store_path {
+        lines.push(format!("store: {store_path}"));
+    }
+    if !message.trim().is_empty() {
+        lines.push(message.to_string());
+    }
+    lines.join("\n")
+}
+
+fn format_memory_list(value: &Value) -> String {
+    let available = value
+        .get("available")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let total_count = value.get("totalCount").and_then(Value::as_u64).unwrap_or(0);
+    let items = value
+        .get("items")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let message = value
+        .get("message")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let mut lines = Vec::new();
+    if available {
+        lines.push(format!("Hoppi memories: {total_count}"));
+    } else {
+        lines.push("Hoppi memories: unavailable".to_string());
+    }
+    if items.is_empty() {
+        lines.push("No cached memories matched.".to_string());
+    } else {
+        for item in items {
+            let id = item.get("id").and_then(Value::as_str).unwrap_or("memory");
+            let content = item
+                .get("content")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ");
+            let pinned = item.get("pinned").and_then(Value::as_bool).unwrap_or(false)
+                || item
+                    .get("starred")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
+            let marker = if pinned { "[pinned] " } else { "" };
+            let display_content = if content.chars().count() > 160 {
+                format!("{}...", content.chars().take(157).collect::<String>())
+            } else {
+                content
+            };
+            lines.push(format!("- {marker}{id}: {display_content}"));
+            let tags = item
+                .get("tags")
+                .and_then(Value::as_array)
+                .map(|tags| {
+                    tags.iter()
+                        .filter_map(Value::as_str)
+                        .filter(|tag| !tag.trim().is_empty())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                })
+                .unwrap_or_default();
+            if !tags.is_empty() {
+                lines.push(format!("  tags={tags}"));
+            }
+            let source = item
+                .get("source")
+                .and_then(Value::as_str)
+                .filter(|source| !source.trim().is_empty());
+            let confidence = item
+                .get("confidence")
+                .and_then(Value::as_str)
+                .filter(|confidence| !confidence.trim().is_empty());
+            if source.is_some() || confidence.is_some() {
+                lines.push(format!(
+                    "  source={} confidence={}",
+                    source.unwrap_or("unknown"),
+                    confidence.unwrap_or("unknown")
+                ));
+            }
+        }
+    }
+    if !message.trim().is_empty() {
+        lines.push(message.to_string());
+    }
+    lines.join("\n")
+}
+
+fn format_memory_forget(value: &Value) -> String {
+    let id = value.get("id").and_then(Value::as_str).unwrap_or("memory");
+    let backend_applied = value
+        .get("backendApplied")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let cache_updated = value
+        .get("cacheUpdated")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let message = value
+        .get("message")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let status = value.get("status").cloned().unwrap_or_else(|| json!({}));
+    let count = status
+        .get("memoryCount")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let pinned_count = status
+        .get("pinnedCount")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let mut lines = vec![format!("Forgot memory: {id}")];
+    lines.push(format!(
+        "backend={} cache {}",
+        if backend_applied {
+            "applied"
+        } else {
+            "not reported"
+        },
+        if cache_updated {
+            "updated"
+        } else {
+            "unchanged"
+        }
+    ));
+    lines.push(format!("memories={count} pinned={pinned_count}"));
+    if !message.trim().is_empty() {
+        lines.push(message.to_string());
+    }
+    lines.join("\n")
+}
+
+fn format_memory_pin(value: &Value) -> String {
+    let id = value.get("id").and_then(Value::as_str).unwrap_or("memory");
+    let action = value.get("action").and_then(Value::as_str).unwrap_or("pin");
+    let backend_applied = value
+        .get("backendApplied")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let cache_updated = value
+        .get("cacheUpdated")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let message = value
+        .get("message")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let status = value.get("status").cloned().unwrap_or_else(|| json!({}));
+    let count = status
+        .get("memoryCount")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let pinned_count = status
+        .get("pinnedCount")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let title = if action == "unpin" {
+        format!("Unpinned memory: {id}")
+    } else {
+        format!("Pinned memory: {id}")
+    };
+    let mut lines = vec![title];
+    lines.push(format!(
+        "backend={} cache {}",
+        if backend_applied {
+            "applied"
+        } else {
+            "not reported"
+        },
+        if cache_updated {
+            "updated"
+        } else {
+            "unchanged"
+        }
+    ));
+    lines.push(format!("memories={count} pinned={pinned_count}"));
+    if !message.trim().is_empty() {
+        lines.push(message.to_string());
+    }
+    lines.join("\n")
+}
+
+fn format_memory_update(value: &Value) -> String {
+    let id = value.get("id").and_then(Value::as_str).unwrap_or("memory");
+    let backend_applied = value
+        .get("backendApplied")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let cache_updated = value
+        .get("cacheUpdated")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let message = value
+        .get("message")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let status = value.get("status").cloned().unwrap_or_else(|| json!({}));
+    let count = status
+        .get("memoryCount")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let pinned_count = status
+        .get("pinnedCount")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let mut lines = vec![format!("Updated memory: {id}")];
+    lines.push(format!(
+        "backend={} cache {}",
+        if backend_applied {
+            "applied"
+        } else {
+            "not reported"
+        },
+        if cache_updated {
+            "updated"
+        } else {
+            "unchanged"
+        }
+    ));
+    lines.push(format!("memories={count} pinned={pinned_count}"));
+    if !message.trim().is_empty() {
+        lines.push(message.to_string());
+    }
+    lines.join("\n")
+}
+
+fn format_memory_supersede(value: &Value) -> String {
+    let id = value.get("id").and_then(Value::as_str).unwrap_or("memory");
+    let superseded_by = value
+        .get("record")
+        .and_then(|record| record.get("supersededBy"))
+        .and_then(Value::as_str)
+        .or_else(|| value.get("supersededBy").and_then(Value::as_str))
+        .unwrap_or("replacement");
+    let backend_applied = value
+        .get("backendApplied")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let cache_updated = value
+        .get("cacheUpdated")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let message = value
+        .get("message")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let status = value.get("status").cloned().unwrap_or_else(|| json!({}));
+    let count = status
+        .get("memoryCount")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let pinned_count = status
+        .get("pinnedCount")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let mut lines = vec![format!("Superseded memory: {id} -> {superseded_by}")];
+    lines.push(format!(
+        "backend={} cache {}",
+        if backend_applied {
+            "applied"
+        } else {
+            "not reported"
+        },
+        if cache_updated {
+            "updated"
+        } else {
+            "unchanged"
+        }
+    ));
+    lines.push(format!("memories={count} pinned={pinned_count}"));
+    if !message.trim().is_empty() {
+        lines.push(message.to_string());
+    }
+    lines.join("\n")
+}
+
+fn format_memory_consolidate(value: &Value) -> String {
+    let dry_run = value
+        .get("dryRun")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let backend_applied = value
+        .get("backendApplied")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let cache_updated = value
+        .get("cacheUpdated")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let stage = value
+        .get("stage")
+        .and_then(Value::as_str)
+        .filter(|stage| !stage.trim().is_empty())
+        .unwrap_or("maintenance");
+    let created = value
+        .get("createdCount")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let deleted = value
+        .get("deletedCount")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let total = value.get("totalCount").and_then(Value::as_u64).unwrap_or(0);
+    let message = value
+        .get("message")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let summary = value
+        .get("summary")
+        .and_then(Value::as_str)
+        .filter(|summary| !summary.trim().is_empty());
+    let model_used = value
+        .get("modelUsed")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|model| !model.is_empty());
+    let status = value.get("status").cloned().unwrap_or_else(|| json!({}));
+    let count = status
+        .get("memoryCount")
+        .and_then(Value::as_u64)
+        .unwrap_or(total);
+    let pinned_count = status
+        .get("pinnedCount")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let queue_depth = status.get("queueDepth").and_then(Value::as_u64);
+    let mut lines = vec![format!(
+        "Hoppi maintenance: {}",
+        if dry_run { "preview" } else { "applied" }
+    )];
+    let mut stage_line = format!(
+        "stage={stage} backend={} cache {}",
+        if backend_applied {
+            "applied"
+        } else {
+            "not reported"
+        },
+        if cache_updated {
+            "updated"
+        } else {
+            "unchanged"
+        }
+    );
+    if let Some(model_used) = model_used {
+        stage_line.push_str(&format!(" model={model_used}"));
+    }
+    lines.push(stage_line);
+    lines.push(format!(
+        "created={created} deleted={deleted} total={total} memories={count} pinned={pinned_count}"
+    ));
+    if let Some(queue_depth) = queue_depth {
+        lines.push(format!("queue={queue_depth}"));
+    }
+    if let Some(summary) = summary {
+        lines.push(summary.to_string());
+    }
+    let deleted_ids = value
+        .get("deletedIds")
+        .and_then(Value::as_array)
+        .map(|ids| {
+            ids.iter()
+                .filter_map(Value::as_str)
+                .filter(|id| !id.trim().is_empty())
+                .collect::<Vec<_>>()
+                .join(", ")
+        })
+        .unwrap_or_default();
+    if !deleted_ids.is_empty() {
+        lines.push(format!("deleted ids: {deleted_ids}"));
+    }
+    if !message.trim().is_empty() {
+        lines.push(message.to_string());
+    }
+    lines.join("\n")
+}
+
+fn memory_jobs_active_count(value: &Value) -> u64 {
+    value
+        .get("queueDepth")
+        .and_then(Value::as_u64)
+        .unwrap_or_else(|| {
+            value
+                .get("items")
+                .and_then(Value::as_array)
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter(|item| memory_job_is_active(item))
+                        .count() as u64
+                })
+                .unwrap_or(0)
+        })
+}
+
+fn memory_job_is_active(item: &Value) -> bool {
+    matches!(
+        item.get("status").and_then(Value::as_str),
+        Some("queued" | "running")
+    )
+}
+
+fn memory_active_job_labels(value: &Value) -> Vec<String> {
+    value
+        .get("items")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|item| memory_job_is_active(item))
+        .take(5)
+        .map(|item| {
+            let id = item.get("id").and_then(Value::as_str).unwrap_or("job");
+            let status = item
+                .get("status")
+                .and_then(Value::as_str)
+                .unwrap_or("active");
+            format!("{id}({status})")
+        })
+        .collect()
+}
+
+fn format_memory_drain_timeout(value: &Value, timeout: Duration) -> String {
+    let active = memory_jobs_active_count(value);
+    let label = if active == 1 { "job" } else { "jobs" };
+    let mut message = format!(
+        "memory: drain timed out after {}s with {active} active {label}; continuing",
+        timeout.as_secs()
+    );
+    let labels = memory_active_job_labels(value);
+    if !labels.is_empty() {
+        message.push_str(&format!(": {}", labels.join(", ")));
+    }
+    message
+}
+
+fn format_memory_jobs(value: &Value) -> String {
+    let queue_depth = value.get("queueDepth").and_then(Value::as_u64).unwrap_or(0);
+    let total = value.get("totalCount").and_then(Value::as_u64).unwrap_or(0);
+    let message = value
+        .get("message")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let items = value
+        .get("items")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let mut lines = vec![format!("memory jobs: active={queue_depth} total={total}")];
+    if !message.trim().is_empty() {
+        lines.push(message.to_string());
+    }
+    if items.is_empty() {
+        lines.push("no memory jobs recorded".to_string());
+        return lines.join("\n");
+    }
+    for item in items.into_iter().take(8) {
+        let id = item.get("id").and_then(Value::as_str).unwrap_or("job");
+        let kind = item.get("kind").and_then(Value::as_str).unwrap_or("memory");
+        let status = item
+            .get("status")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown");
+        let stage = item
+            .get("stage")
+            .and_then(Value::as_str)
+            .filter(|stage| !stage.trim().is_empty());
+        let records = item.get("recordCount").and_then(Value::as_u64).unwrap_or(0);
+        let deleted = item
+            .get("deletedCount")
+            .and_then(Value::as_u64)
+            .unwrap_or(0);
+        let source = item
+            .get("source")
+            .and_then(Value::as_str)
+            .filter(|source| !source.trim().is_empty());
+        let mut row = format!("- {id}: {kind}");
+        if let Some(stage) = stage {
+            row.push_str(&format!(" stage={stage}"));
+        }
+        row.push_str(&format!(" status={status}"));
+        if records > 0 {
+            row.push_str(&format!(" records={records}"));
+        }
+        if deleted > 0 {
+            row.push_str(&format!(" deleted={deleted}"));
+        }
+        if let Some(source) = source {
+            row.push_str(&format!(" source={source}"));
+        }
+        lines.push(row);
+        if let Some(message) = item
+            .get("message")
+            .and_then(Value::as_str)
+            .filter(|message| !message.trim().is_empty())
+        {
+            lines.push(format!("  {message}"));
+        }
+    }
+    lines.join("\n")
+}
+
+fn format_prompt_templates(value: &Value) -> String {
+    let items = value
+        .get("items")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    if items.is_empty() {
+        return "no prompt templates discovered".to_string();
+    }
+    let mut rendered =
+        "prompts (active templates; project > plugin > user > built-in):".to_string();
+    for item in items {
+        let Some(active) = item.get("active") else {
+            continue;
+        };
+        let name = active
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or("prompt")
+            .trim_start_matches('/');
+        let source = active
+            .get("source")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown");
+        let description = active
+            .get("description")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let argument_hint = active
+            .get("argumentHint")
+            .and_then(Value::as_str)
+            .filter(|hint| !hint.trim().is_empty())
+            .map(|hint| format!(" {}", hint.trim()))
+            .unwrap_or_default();
+        let shadowed = item
+            .get("shadowed")
+            .and_then(Value::as_array)
+            .map(Vec::len)
+            .unwrap_or(0);
+        rendered.push_str(&format!(
+            "\n- /{name}{argument_hint} [{source}]: {description}"
+        ));
+        if let Some(path) = active.get("path").and_then(Value::as_str) {
+            rendered.push_str(&format!("\n  {path}"));
+        }
+        if shadowed > 0 {
+            rendered.push_str(&format!(
+                "\n  shadows {shadowed} lower-priority template(s)"
+            ));
+        }
+    }
+    rendered
+}
+
+fn format_theme_status(
+    current: &str,
+    loaded: Option<&LoadedShellTheme>,
+    list: Option<&Value>,
+) -> String {
+    let source = loaded
+        .map(|theme| theme.source.as_str())
+        .unwrap_or_else(|| {
+            if normalize_theme_name(current).is_some() {
+                "builtIn"
+            } else {
+                "unknown"
+            }
+        });
+    let mut rendered = format!("theme: {current} [{source}]");
+    let Some(list) = list else {
+        return rendered;
+    };
+    let items = list
+        .get("items")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    if items.is_empty() {
+        return rendered;
+    }
+    rendered.push_str("\navailable themes:");
+    for entry in active_theme_entries_from_theme_list(&Value::Object(
+        [("items".to_string(), Value::Array(items))]
+            .into_iter()
+            .collect(),
+    )) {
+        rendered.push_str(&format!("\n- {} [{}]", entry.name, entry.source));
+        if let Some(path) = entry.path {
+            rendered.push_str(&format!("\n  {path}"));
+        }
+    }
+    rendered
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ThemeListEntry {
+    name: String,
+    source: String,
+    path: Option<String>,
+}
+
+fn active_theme_entries_from_theme_list(list: &Value) -> Vec<ThemeListEntry> {
+    list.get("items")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|item| {
+            let active = item.get("active")?;
+            let name = active
+                .get("name")
+                .and_then(Value::as_str)?
+                .trim()
+                .to_string();
+            if name.is_empty() {
+                return None;
+            }
+            let source = active
+                .get("source")
+                .and_then(Value::as_str)
+                .filter(|source| !source.trim().is_empty())
+                .unwrap_or("unknown")
+                .to_string();
+            let path = active
+                .get("path")
+                .and_then(Value::as_str)
+                .filter(|path| !path.trim().is_empty())
+                .map(str::to_string);
+            Some(ThemeListEntry { name, source, path })
+        })
+        .collect()
+}
+
+fn fallback_theme_preview_entries() -> Vec<ThemeListEntry> {
+    ["oppi", "dark", "light", "plain"]
+        .into_iter()
+        .map(|name| ThemeListEntry {
+            name: name.to_string(),
+            source: "builtIn".to_string(),
+            path: None,
+        })
+        .collect()
+}
+
+fn theme_preview_entries(list: Option<&Value>) -> Vec<ThemeListEntry> {
+    let entries = list
+        .map(active_theme_entries_from_theme_list)
+        .unwrap_or_default();
+    if entries.is_empty() {
+        fallback_theme_preview_entries()
+    } else {
+        entries
+    }
+}
+
+fn theme_preview_index_arg(raw: &str) -> bool {
+    let raw = raw.trim();
+    !raw.is_empty() && raw.chars().all(|ch| ch.is_ascii_digit())
+}
+
+fn theme_preview_index_selection(list: Option<&Value>, raw: &str) -> Option<String> {
+    let index = raw.trim().parse::<usize>().ok()?;
+    if index == 0 {
+        return None;
+    }
+    theme_preview_entries(list)
+        .get(index - 1)
+        .map(|entry| entry.name.clone())
+}
+
+fn format_theme_preview_index(current: &str, list: Option<&Value>) -> String {
+    let mut rendered = format!("theme preview picker\ncurrent: {current}\n\navailable themes:");
+    for (index, entry) in theme_preview_entries(list).into_iter().enumerate() {
+        let number = index + 1;
+        rendered.push_str(&format!("\n{number}. {} [{}]", entry.name, entry.source));
+        if let Some(normalized) = normalize_theme_name(&entry.name) {
+            rendered.push_str(&format!(
+                "\n   {}",
+                theme_preview_sample(theme_tokens(&normalized))
+            ));
+        }
+        if let Some(path) = entry.path {
+            rendered.push_str(&format!("\n   {path}"));
+        }
+    }
+    rendered.push_str(
+        "\n\nUse /theme preview <name> or /theme preview <number> to inspect one theme, then /theme <name> or /theme <number> to apply it. Example: /theme preview 2, then /theme 2.",
+    );
+    rendered
+}
+
+fn format_theme_preview_detail(name: &str, source: &str, tokens: ThemeTokens) -> String {
+    [
+        format!("theme preview: {name} [{source}]"),
+        theme_preview_sample(tokens),
+        format!("Use /theme {name} to apply this theme, or /theme preview to list themes."),
+    ]
+    .join("\n")
+}
+
+fn theme_preview_sample(tokens: ThemeTokens) -> String {
+    format!(
+        "sample: {}assistant{} {}`code`{} {}tool ok{} {}warning{} {}error{}",
+        tokens.accent,
+        tokens.reset,
+        tokens.code,
+        tokens.reset,
+        tokens.success,
+        tokens.reset,
+        tokens.warning,
+        tokens.reset,
+        tokens.error,
+        tokens.reset
+    )
 }
 
 fn terminal_width() -> usize {
@@ -6650,6 +16311,13 @@ fn login_claude_picker_panel() -> String {
 fn login_meridian_install_approval_panel() -> String {
     format!(
         "Approval required: install managed Meridian bridge package {MERIDIAN_PACKAGE_NAME} into {}. This may use npm/network and can modify OPPi's managed packages directory. Type `yes` to approve, `no` to cancel, or run `/login subscription claude install --yes`.",
+        format_path_for_display(&managed_packages_dir())
+    )
+}
+
+fn hoppi_install_approval_panel() -> String {
+    format!(
+        "Approval required: install/update Hoppi backend package {HOPPI_PACKAGE_NAME} into {}. This may use npm/network and can modify OPPi's managed packages directory. Type `yes` to approve, `no` to cancel, or run `/memory install-hoppi --yes`. OPPi performs no hidden install.",
         format_path_for_display(&managed_packages_dir())
     )
 }
@@ -6812,19 +16480,28 @@ fn graphify_command_guidance() -> &'static str {
 
 fn current_provider_model(provider: &ProviderConfig) -> Option<&str> {
     match provider {
-        ProviderConfig::Mock => Some("mock-scripted"),
+        ProviderConfig::Mock => Some(MOCK_MODEL_ID),
         ProviderConfig::OpenAiCompatible(config) => Some(config.model.as_str()),
     }
 }
 
-fn provider_name(provider: &ProviderConfig) -> &'static str {
+fn provider_name(provider: &ProviderConfig) -> &str {
     match provider {
         ProviderConfig::Mock => "mock",
         ProviderConfig::OpenAiCompatible(config) => match config.flavor {
-            DirectProviderFlavor::OpenAiCompatible => "openai-compatible",
+            DirectProviderFlavor::OpenAiCompatible => {
+                config.provider_id.as_deref().unwrap_or("openai-compatible")
+            }
             DirectProviderFlavor::OpenAiCodex => "openai-codex",
             DirectProviderFlavor::GitHubCopilot => "github-copilot",
         },
+    }
+}
+
+fn display_provider_id(provider: &ProviderConfig) -> &str {
+    match provider {
+        ProviderConfig::Mock => "local-test",
+        ProviderConfig::OpenAiCompatible(_) => provider_name(provider),
     }
 }
 
@@ -6874,8 +16551,10 @@ fn normalize_current_thinking_level(value: Option<&str>) -> ThinkingLevel {
 fn effort_model_name(provider: &ProviderConfig) -> String {
     format!(
         "{}/{}",
-        provider_name(provider),
-        current_provider_model(provider).unwrap_or("unknown")
+        display_provider_id(provider),
+        current_provider_model(provider)
+            .map(display_model_id)
+            .unwrap_or("unknown")
     )
 }
 
@@ -7005,6 +16684,18 @@ fn set_provider_effort_level(provider: &mut ProviderConfig, level: ThinkingLevel
     }
 }
 
+fn apply_saved_reasoning_effort(provider: &mut ProviderConfig, path: &Path, explicit_effort: bool) {
+    if explicit_effort {
+        return;
+    }
+    let Some(saved_effort) = load_reasoning_effort_setting(path) else {
+        return;
+    };
+    if allowed_effort_levels_for_provider(provider).contains(&saved_effort) {
+        set_provider_effort_level(provider, saved_effort);
+    }
+}
+
 fn format_effort_status(provider: &ProviderConfig) -> String {
     let current = current_effort_level_for_provider(provider);
     let recommended = recommended_effort_level_for_provider(provider);
@@ -7024,7 +16715,7 @@ fn format_effort_status(provider: &ProviderConfig) -> String {
         )
     };
     format!(
-        "effort: {} for {}\nrecommended: {}\nallowed: {}\n{}\nuse /effort auto or /effort <level>; bare /effort opens the native slider in the TUI",
+        "effort: {} for {}\nrecommended: {}\nallowed: {}\n{}\nuse /effort auto or /effort <level>; saved as Pi defaultThinkingLevel; bare /effort opens the native slider in the TUI",
         effort_level_label_for_provider(provider, current),
         effort_model_name(provider),
         effort_level_label_for_provider(provider, recommended),
@@ -7050,7 +16741,7 @@ fn effort_status_json(provider: &ProviderConfig) -> Value {
 
 fn native_model_catalog_for_provider(provider: &ProviderConfig) -> &'static [&'static str] {
     match provider {
-        ProviderConfig::Mock => &["mock-scripted"],
+        ProviderConfig::Mock => &[MOCK_MODEL_ID],
         ProviderConfig::OpenAiCompatible(config)
             if config.flavor == DirectProviderFlavor::OpenAiCompatible
                 && provider_uses_meridian_placeholder(config) =>
@@ -7071,12 +16762,127 @@ fn native_model_catalog_for_provider(provider: &ProviderConfig) -> &'static [&'s
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct NativeModelCatalogEntry {
+    id: String,
+    display_name: String,
+    api: Option<String>,
+    base_url: Option<String>,
+    reasoning: Option<bool>,
+    input: Vec<String>,
+    cost: Option<Value>,
+    context_window: Option<u64>,
+    max_tokens: Option<u64>,
+    headers: Option<Value>,
+    compat: Option<Value>,
+}
+
+impl NativeModelCatalogEntry {
+    fn new(id: impl Into<String>, display_name: impl Into<String>) -> Self {
+        let id = id.into();
+        let display_name = display_name.into();
+        Self {
+            display_name: if display_name.trim().is_empty() {
+                id.clone()
+            } else {
+                display_name
+            },
+            id,
+            api: None,
+            base_url: None,
+            reasoning: None,
+            input: Vec::new(),
+            cost: None,
+            context_window: None,
+            max_tokens: None,
+            headers: None,
+            compat: None,
+        }
+    }
+
+    fn apply_models_json_config(&mut self, value: &serde_json::Map<String, Value>) {
+        if let Some(name) = value
+            .get("name")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+        {
+            self.display_name = name.to_string();
+        }
+        if let Some(api) = value
+            .get("api")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|api| !api.is_empty())
+        {
+            self.api = Some(api.to_string());
+        }
+        if let Some(base_url) = value
+            .get("baseUrl")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|base_url| !base_url.is_empty())
+        {
+            self.base_url = Some(base_url.to_string());
+        }
+        if let Some(reasoning) = value.get("reasoning").and_then(Value::as_bool) {
+            self.reasoning = Some(reasoning);
+        }
+        if let Some(input) = value.get("input").and_then(Value::as_array) {
+            self.input = input
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::trim)
+                .filter(|input| !input.is_empty())
+                .map(ToString::to_string)
+                .collect();
+        }
+        if let Some(context_window) = value.get("contextWindow").and_then(Value::as_u64) {
+            self.context_window = Some(context_window);
+        }
+        if let Some(max_tokens) = value.get("maxTokens").and_then(Value::as_u64) {
+            self.max_tokens = Some(max_tokens);
+        }
+        self.cost = merge_json_object_values(self.cost.take(), value.get("cost"));
+        self.headers = merge_json_object_values(self.headers.take(), value.get("headers"));
+        self.compat = merge_json_object_values(self.compat.take(), value.get("compat"));
+    }
+}
+
 fn model_ref_for_provider(provider: &ProviderConfig, model: &str, role: Option<&str>) -> ModelRef {
     ModelRef {
         id: model.to_string(),
         provider: provider_name(provider).to_string(),
         display_name: model.to_string(),
+        context_window: None,
         role: role.map(str::to_string),
+    }
+}
+
+fn merge_json_object_values(base: Option<Value>, override_value: Option<&Value>) -> Option<Value> {
+    let Some(override_value) = override_value else {
+        return base;
+    };
+    match (base, override_value) {
+        (Some(Value::Object(mut base)), Value::Object(override_object)) => {
+            for (key, value) in override_object {
+                let existing = base.remove(key);
+                if matches!(
+                    (&existing, value),
+                    (Some(Value::Object(_)), Value::Object(_))
+                ) {
+                    base.insert(
+                        key.clone(),
+                        merge_json_object_values(existing, Some(value))?,
+                    );
+                } else {
+                    base.insert(key.clone(), value.clone());
+                }
+            }
+            Some(Value::Object(base))
+        }
+        (_, Value::Object(_)) => Some(override_value.clone()),
+        (base, _) => base,
     }
 }
 
@@ -7087,70 +16893,603 @@ fn models_json_path() -> PathBuf {
         .unwrap_or_else(|| default_agent_dir().join("models.json"))
 }
 
-fn provider_aliases_for_models_json(provider: &ProviderConfig) -> Vec<&'static str> {
+fn provider_aliases_for_models_json(provider: &ProviderConfig) -> Vec<String> {
     match provider {
-        ProviderConfig::Mock => vec!["mock"],
+        ProviderConfig::Mock => vec!["mock".to_string()],
+        ProviderConfig::OpenAiCompatible(config)
+            if config.flavor == DirectProviderFlavor::OpenAiCompatible
+                && config.provider_id.is_some() =>
+        {
+            vec![config.provider_id.clone().unwrap_or_default()]
+        }
         ProviderConfig::OpenAiCompatible(config)
             if config.flavor == DirectProviderFlavor::OpenAiCompatible
                 && provider_uses_meridian_placeholder(config) =>
         {
-            vec!["meridian", "anthropic"]
+            vec!["meridian".to_string(), "anthropic".to_string()]
         }
         ProviderConfig::OpenAiCompatible(config) => match config.flavor {
-            DirectProviderFlavor::OpenAiCompatible => vec!["openai-compatible", "openai"],
-            DirectProviderFlavor::OpenAiCodex => vec!["openai-codex"],
-            DirectProviderFlavor::GitHubCopilot => vec!["github-copilot"],
+            DirectProviderFlavor::OpenAiCompatible => {
+                vec!["openai-compatible".to_string(), "openai".to_string()]
+            }
+            DirectProviderFlavor::OpenAiCodex => vec!["openai-codex".to_string()],
+            DirectProviderFlavor::GitHubCopilot => vec!["github-copilot".to_string()],
         },
     }
 }
 
-fn custom_model_ids_from_models_json(provider: &ProviderConfig) -> Vec<String> {
-    let path = models_json_path();
-    let Ok(raw) = fs::read_to_string(&path) else {
-        return Vec::new();
-    };
-    let Ok(value) = serde_json::from_str::<Value>(&raw) else {
-        return Vec::new();
-    };
-    let Some(providers) = value.get("providers").and_then(Value::as_object) else {
-        return Vec::new();
-    };
-    let aliases = provider_aliases_for_models_json(provider);
-    let mut out = Vec::new();
-    for alias in aliases {
-        let Some(models) = providers
-            .get(alias)
-            .and_then(|provider| provider.get("models"))
-            .and_then(Value::as_array)
-        else {
+fn native_models_json_builtin_model_ids(provider_name: &str) -> Option<Vec<&'static str>> {
+    match provider_name {
+        "mock" => Some(vec![MOCK_MODEL_ID]),
+        "openai-compatible" | "openai" => Some(OPENAI_DIRECT_MODEL_CATALOG.to_vec()),
+        "openai-codex" => Some(OPENAI_CODEX_MODEL_CATALOG.to_vec()),
+        "github-copilot" => Some(GITHUB_COPILOT_MODEL_CATALOG.to_vec()),
+        "anthropic" | "meridian" => Some(MERIDIAN_MODEL_CATALOG.to_vec()),
+        _ => None,
+    }
+}
+
+fn native_models_json_api_supported(api: &str) -> bool {
+    matches!(api, "openai-completions")
+}
+
+fn models_json_registry_diagnostics(
+    path: &Path,
+    providers: &serde_json::Map<String, Value>,
+) -> Vec<String> {
+    let mut diagnostics = Vec::<String>::new();
+    for (provider_name, provider_value) in providers {
+        let Some(provider_object) = provider_value.as_object() else {
+            diagnostics.push(format!(
+                "models.json schema error at {}: provider {provider_name} must be an object",
+                path.display()
+            ));
             continue;
         };
-        for model in models {
-            if let Some(id) = model.get("id").and_then(Value::as_str) {
-                let id = id.trim();
-                if !id.is_empty() && !out.iter().any(|existing| existing == id) {
-                    out.push(id.to_string());
+        if let Some(api) = provider_object.get("api").and_then(Value::as_str) {
+            let api = api.trim();
+            if !api.is_empty() && !native_models_json_api_supported(api) {
+                diagnostics.push(format!(
+                    "models.json unsupported provider API at {}: provider {provider_name} api {api} is not yet supported by Rust-native OPPi",
+                    path.display()
+                ));
+            }
+        }
+        if let Some(models) = provider_object.get("models").and_then(Value::as_array) {
+            if native_models_json_builtin_model_ids(provider_name).is_none()
+                && !models.is_empty()
+                && provider_object.get("apiKey").is_none()
+            {
+                diagnostics.push(format!(
+                    "models.json auth diagnostic at {}: provider {provider_name} apiKey is required when defining custom models",
+                    path.display()
+                ));
+            }
+            for model in models {
+                let model_id = model
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|id| !id.is_empty())
+                    .unwrap_or("<unknown>");
+                if let Some(api) = model.get("api").and_then(Value::as_str) {
+                    let api = api.trim();
+                    if !api.is_empty() && !native_models_json_api_supported(api) {
+                        diagnostics.push(format!(
+                            "models.json unsupported provider API at {}: provider {provider_name} model {model_id} api {api} is not yet supported by Rust-native OPPi",
+                            path.display()
+                        ));
+                    }
+                }
+            }
+        }
+        if let Some(model_overrides) = provider_object
+            .get("modelOverrides")
+            .and_then(Value::as_object)
+        {
+            let known_ids = native_models_json_builtin_model_ids(provider_name);
+            for model_id in model_overrides.keys() {
+                let known = known_ids
+                    .as_ref()
+                    .is_some_and(|ids| ids.iter().any(|known| *known == model_id));
+                if !known {
+                    diagnostics.push(format!(
+                        "models.json ignored modelOverrides at {}: provider {provider_name} has no built-in model id {model_id}",
+                        path.display()
+                    ));
                 }
             }
         }
     }
-    out
+    diagnostics
+}
+
+fn models_json_providers_from_path(
+    path: &Path,
+) -> Result<Option<serde_json::Map<String, Value>>, Vec<String>> {
+    let raw = match fs::read_to_string(path) {
+        Ok(raw) => raw,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(vec![format!(
+                "models.json read error at {}: {error}",
+                path.display()
+            )]);
+        }
+    };
+    let value = match serde_json::from_str::<Value>(&raw) {
+        Ok(value) => value,
+        Err(error) => {
+            return Err(vec![format!(
+                "models.json parse error at {}: {error}",
+                path.display()
+            )]);
+        }
+    };
+    let Some(providers) = value.get("providers").and_then(Value::as_object) else {
+        return Err(vec![format!(
+            "models.json schema error at {}: expected a providers object",
+            path.display()
+        )]);
+    };
+    Ok(Some(providers.clone()))
+}
+
+fn apply_models_json_merge_from_path(
+    provider: &ProviderConfig,
+    path: &Path,
+    out: &mut Vec<NativeModelCatalogEntry>,
+) -> Vec<String> {
+    let providers = match models_json_providers_from_path(path) {
+        Ok(Some(providers)) => providers,
+        Ok(None) => return Vec::new(),
+        Err(diagnostics) => return diagnostics,
+    };
+    let aliases = provider_aliases_for_models_json(provider);
+    let mut diagnostics = models_json_registry_diagnostics(path, &providers);
+    for alias in aliases {
+        let Some(provider_value) = providers.get(&alias) else {
+            continue;
+        };
+        let Some(provider_object) = provider_value.as_object() else {
+            continue;
+        };
+        for entry in out.iter_mut() {
+            entry.apply_models_json_config(provider_object);
+        }
+        if let Some(model_overrides) = provider_object
+            .get("modelOverrides")
+            .and_then(Value::as_object)
+        {
+            for (model_id, override_value) in model_overrides {
+                let Some(override_object) = override_value.as_object() else {
+                    diagnostics.push(format!(
+                        "models.json schema error at {}: provider {alias} modelOverrides.{model_id} must be an object",
+                        path.display()
+                    ));
+                    continue;
+                };
+                if let Some(existing) = out.iter_mut().find(|existing| existing.id == *model_id) {
+                    existing.apply_models_json_config(override_object);
+                }
+            }
+        }
+        if let Some(models_value) = provider_object.get("models") {
+            let Some(models) = models_value.as_array() else {
+                diagnostics.push(format!(
+                    "models.json schema error at {}: provider {alias} models must be an array",
+                    path.display()
+                ));
+                continue;
+            };
+            for model in models {
+                let Some(model_object) = model.as_object() else {
+                    diagnostics.push(format!(
+                        "models.json schema error at {}: provider {alias} model entries must be objects",
+                        path.display()
+                    ));
+                    continue;
+                };
+                let Some(id) = model_object
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                else {
+                    diagnostics.push(format!(
+                        "models.json schema error at {}: provider {alias} model entry is missing id",
+                        path.display()
+                    ));
+                    continue;
+                };
+                if id.is_empty() {
+                    diagnostics.push(format!(
+                        "models.json schema error at {}: provider {alias} model entry has an empty id",
+                        path.display()
+                    ));
+                    continue;
+                }
+                let display_name = model_object
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|name| !name.is_empty())
+                    .unwrap_or(id);
+                let mut entry = NativeModelCatalogEntry::new(id, display_name);
+                entry.apply_models_json_config(provider_object);
+                entry.apply_models_json_config(model_object);
+                if let Some(existing) = out.iter_mut().find(|existing| existing.id == entry.id) {
+                    *existing = entry;
+                } else {
+                    out.push(entry);
+                }
+            }
+        }
+    }
+    diagnostics
+}
+
+fn custom_model_entries_from_models_json_path(
+    provider: &ProviderConfig,
+    path: &Path,
+) -> Vec<NativeModelCatalogEntry> {
+    custom_model_entries_from_models_json_path_with_diagnostics(provider, path).0
+}
+
+fn custom_model_entries_from_models_json_path_with_diagnostics(
+    provider: &ProviderConfig,
+    path: &Path,
+) -> (Vec<NativeModelCatalogEntry>, Vec<String>) {
+    let raw = match fs::read_to_string(path) {
+        Ok(raw) => raw,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return (Vec::new(), Vec::new()),
+        Err(error) => {
+            return (
+                Vec::new(),
+                vec![format!(
+                    "models.json read error at {}: {error}",
+                    path.display()
+                )],
+            );
+        }
+    };
+    let value = match serde_json::from_str::<Value>(&raw) {
+        Ok(value) => value,
+        Err(error) => {
+            return (
+                Vec::new(),
+                vec![format!(
+                    "models.json parse error at {}: {error}",
+                    path.display()
+                )],
+            );
+        }
+    };
+    let Some(providers) = value.get("providers").and_then(Value::as_object) else {
+        return (
+            Vec::new(),
+            vec![format!(
+                "models.json schema error at {}: expected a providers object",
+                path.display()
+            )],
+        );
+    };
+    let aliases = provider_aliases_for_models_json(provider);
+    let mut out = Vec::<NativeModelCatalogEntry>::new();
+    let mut diagnostics = models_json_registry_diagnostics(path, providers);
+    for alias in aliases {
+        let Some(provider_value) = providers.get(&alias) else {
+            continue;
+        };
+        let Some(provider_object) = provider_value.as_object() else {
+            diagnostics.push(format!(
+                "models.json schema error at {}: provider {alias} must be an object",
+                path.display()
+            ));
+            continue;
+        };
+        let Some(models_value) = provider_object.get("models") else {
+            continue;
+        };
+        let Some(models) = models_value.as_array() else {
+            diagnostics.push(format!(
+                "models.json schema error at {}: provider {alias} models must be an array",
+                path.display()
+            ));
+            continue;
+        };
+        for model in models {
+            let Some(model_object) = model.as_object() else {
+                diagnostics.push(format!(
+                    "models.json schema error at {}: provider {alias} model entries must be objects",
+                    path.display()
+                ));
+                continue;
+            };
+            let Some(id) = model_object
+                .get("id")
+                .and_then(Value::as_str)
+                .map(str::trim)
+            else {
+                diagnostics.push(format!(
+                    "models.json schema error at {}: provider {alias} model entry is missing id",
+                    path.display()
+                ));
+                continue;
+            };
+            if id.is_empty() {
+                diagnostics.push(format!(
+                    "models.json schema error at {}: provider {alias} model entry has an empty id",
+                    path.display()
+                ));
+                continue;
+            }
+            let display_name = model_object
+                .get("name")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|name| !name.is_empty())
+                .unwrap_or(id);
+            if !out.iter().any(|existing| existing.id == id) {
+                out.push(NativeModelCatalogEntry::new(id, display_name));
+            }
+        }
+    }
+    (out, diagnostics)
+}
+
+fn custom_model_entries_from_models_json(
+    provider: &ProviderConfig,
+) -> Vec<NativeModelCatalogEntry> {
+    custom_model_entries_from_models_json_path(provider, &models_json_path())
+}
+
+fn native_model_entries_for_provider_at_path(
+    provider: &ProviderConfig,
+    models_path: &Path,
+) -> Vec<NativeModelCatalogEntry> {
+    native_model_entries_for_provider_at_path_with_diagnostics(provider, models_path).0
+}
+
+fn native_model_entries_for_provider_at_path_with_diagnostics(
+    provider: &ProviderConfig,
+    models_path: &Path,
+) -> (Vec<NativeModelCatalogEntry>, Vec<String>) {
+    let mut seen = BTreeSet::<String>::new();
+    let mut out = Vec::<NativeModelCatalogEntry>::new();
+    for model in native_model_catalog_for_provider(provider) {
+        if seen.insert((*model).to_string()) {
+            out.push(NativeModelCatalogEntry::new(*model, *model));
+        }
+    }
+    let diagnostics = apply_models_json_merge_from_path(provider, models_path, &mut out);
+    (out, diagnostics)
+}
+
+fn native_model_entries_for_provider(provider: &ProviderConfig) -> Vec<NativeModelCatalogEntry> {
+    native_model_entries_for_provider_with_diagnostics(provider).0
+}
+
+fn native_model_entries_for_provider_with_diagnostics(
+    provider: &ProviderConfig,
+) -> (Vec<NativeModelCatalogEntry>, Vec<String>) {
+    native_model_entries_for_provider_at_path_with_diagnostics(provider, &models_json_path())
+}
+
+fn models_json_provider_request_auth_configured_at(
+    provider: &ProviderConfig,
+    models_path: &Path,
+) -> bool {
+    let Ok(Some(providers)) = models_json_providers_from_path(models_path) else {
+        return false;
+    };
+    provider_aliases_for_models_json(provider)
+        .into_iter()
+        .filter_map(|alias| providers.get(&alias).and_then(Value::as_object))
+        .any(|provider_object| {
+            provider_object
+                .get("apiKey")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .is_some_and(|api_key| !api_key.is_empty())
+        })
+}
+
+fn models_json_string_field<'a>(
+    object: &'a serde_json::Map<String, Value>,
+    key: &str,
+) -> Option<&'a str> {
+    object
+        .get(key)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+}
+
+fn models_json_bool_compat_field(
+    object: &serde_json::Map<String, Value>,
+    key: &str,
+) -> Option<bool> {
+    object
+        .get("compat")
+        .and_then(Value::as_object)
+        .and_then(|compat| compat.get(key))
+        .and_then(Value::as_bool)
+}
+
+fn models_json_supports_reasoning_effort(
+    provider_object: &serde_json::Map<String, Value>,
+    model_object: &serde_json::Map<String, Value>,
+) -> bool {
+    models_json_bool_compat_field(model_object, "supportsReasoningEffort")
+        .or_else(|| models_json_bool_compat_field(provider_object, "supportsReasoningEffort"))
+        .unwrap_or(true)
+}
+
+fn models_json_u32_field(object: &serde_json::Map<String, Value>, key: &str) -> Option<u32> {
+    object
+        .get(key)
+        .and_then(Value::as_u64)
+        .and_then(|value| u32::try_from(value).ok())
+}
+
+fn custom_provider_config_for_model_at_path(
+    selector: &str,
+    models_path: &Path,
+) -> Result<ProviderConfig, String> {
+    let (provider_id, model_id) = selector.split_once('/').ok_or_else(|| {
+        "custom provider model selection requires provider/model syntax".to_string()
+    })?;
+    let provider_id = provider_id.trim();
+    let model_id = model_id.trim();
+    if provider_id.is_empty() || model_id.is_empty() {
+        return Err("custom provider model selection requires provider/model syntax".to_string());
+    }
+    if native_models_json_builtin_model_ids(provider_id).is_some() {
+        return Err(format!(
+            "provider {provider_id} is a built-in native provider; select its model id directly"
+        ));
+    }
+
+    let providers = models_json_providers_from_path(models_path)
+        .map_err(|diagnostics| diagnostics.join("\n"))?
+        .ok_or_else(|| {
+            format!(
+                "models.json custom provider {provider_id} was not found at {}",
+                models_path.display()
+            )
+        })?;
+    let provider_object = providers
+        .get(provider_id)
+        .and_then(Value::as_object)
+        .ok_or_else(|| {
+            format!(
+                "models.json custom provider {provider_id} was not found at {}",
+                models_path.display()
+            )
+        })?;
+    let models = provider_object
+        .get("models")
+        .and_then(Value::as_array)
+        .ok_or_else(|| {
+            format!("models.json provider {provider_id} must define a models array for selection")
+        })?;
+    let model_object = models
+        .iter()
+        .filter_map(Value::as_object)
+        .find(|model| models_json_string_field(model, "id") == Some(model_id))
+        .ok_or_else(|| format!("models.json provider {provider_id} has no model id {model_id}"))?;
+
+    let api = models_json_string_field(model_object, "api")
+        .or_else(|| models_json_string_field(provider_object, "api"))
+        .ok_or_else(|| {
+            format!("models.json provider {provider_id} model {model_id} is missing api")
+        })?;
+    if api != "openai-completions" {
+        return Err(format!(
+            "models.json provider {provider_id} model {model_id} uses unsupported api {api}; Rust-native OPPi can select only openai-completions custom providers today"
+        ));
+    }
+    let base_url = models_json_string_field(model_object, "baseUrl")
+        .or_else(|| models_json_string_field(provider_object, "baseUrl"))
+        .ok_or_else(|| {
+            format!("models.json provider {provider_id} model {model_id} is missing baseUrl")
+        })?;
+    let api_key = models_json_string_field(provider_object, "apiKey").ok_or_else(|| {
+        format!("models.json provider {provider_id} model {model_id} is missing apiKey")
+    })?;
+    if api_key.starts_with('!') {
+        return Err(format!(
+            "models.json provider {provider_id} apiKey is command-backed; Rust-native custom provider selection requires a safe environment variable reference"
+        ));
+    }
+    if !is_safe_api_key_env_name(api_key) {
+        return Err(format!(
+            "models.json provider {provider_id} apiKey must be a safe environment variable reference; raw or literal keys are not passed into Rust-native provider config"
+        ));
+    }
+
+    let mut config = OpenAiCompatibleConfig {
+        flavor: DirectProviderFlavor::OpenAiCompatible,
+        provider_id: Some(provider_id.to_string()),
+        model: model_id.to_string(),
+        base_url: Some(base_url.to_string()),
+        api_key_env: Some(api_key.to_string()),
+        system_prompt: None,
+        temperature: None,
+        reasoning_effort: None,
+        max_output_tokens: models_json_u32_field(model_object, "maxTokens"),
+        stream: true,
+    };
+    if models_json_supports_reasoning_effort(provider_object, model_object) {
+        config = with_default_reasoning_effort(config);
+    }
+    Ok(ProviderConfig::OpenAiCompatible(config))
+}
+
+fn native_provider_auth_configured_at_paths(
+    provider: &ProviderConfig,
+    models_path: &Path,
+    codex_auth_path: &Path,
+    copilot_auth_path: &Path,
+) -> bool {
+    if models_json_provider_request_auth_configured_at(provider, models_path) {
+        return true;
+    }
+    match provider {
+        ProviderConfig::Mock => true,
+        ProviderConfig::OpenAiCompatible(config) => match config.flavor {
+            DirectProviderFlavor::OpenAiCodex => codex_auth_present_at(codex_auth_path),
+            DirectProviderFlavor::GitHubCopilot => {
+                github_copilot_auth_present_at(copilot_auth_path)
+            }
+            DirectProviderFlavor::OpenAiCompatible => {
+                configured_api_key_env(config).is_some()
+                    || provider_uses_meridian_placeholder(config)
+            }
+        },
+    }
+}
+
+fn native_provider_auth_configured(provider: &ProviderConfig, models_path: &Path) -> bool {
+    native_provider_auth_configured_at_paths(
+        provider,
+        models_path,
+        &auth_store_path(),
+        &github_copilot_auth_store_path(),
+    )
 }
 
 fn native_model_ids_for_provider(provider: &ProviderConfig) -> Vec<String> {
-    let mut seen = BTreeSet::<String>::new();
-    let mut out = Vec::<String>::new();
-    for model in native_model_catalog_for_provider(provider) {
-        if seen.insert((*model).to_string()) {
-            out.push((*model).to_string());
-        }
-    }
-    for model in custom_model_ids_from_models_json(provider) {
-        if seen.insert(model.clone()) {
-            out.push(model);
-        }
-    }
-    out
+    native_model_entries_for_provider(provider)
+        .into_iter()
+        .map(|model| model.id)
+        .collect()
+}
+
+fn native_model_refs_for_provider_at_path(
+    provider: &ProviderConfig,
+    models_path: &Path,
+) -> Vec<ModelRef> {
+    native_model_refs_for_provider_at_path_with_diagnostics(provider, models_path).0
+}
+
+fn native_model_refs_for_provider_at_path_with_diagnostics(
+    provider: &ProviderConfig,
+    models_path: &Path,
+) -> (Vec<ModelRef>, Vec<String>) {
+    let (entries, diagnostics) =
+        native_model_entries_for_provider_at_path_with_diagnostics(provider, models_path);
+    let refs = entries
+        .into_iter()
+        .map(|model| ModelRef {
+            id: model.id,
+            provider: provider_name(provider).to_string(),
+            display_name: model.display_name,
+            context_window: model.context_window,
+            role: None,
+        })
+        .collect();
+    (refs, diagnostics)
 }
 
 fn thinking_suffix_stripped(pattern: &str) -> &str {
@@ -7229,6 +17568,16 @@ fn main_model_ids_for_selection(
     scoped_patterns: &[String],
     provider: &ProviderConfig,
 ) -> Vec<String> {
+    let entries = native_model_entries_for_provider(provider);
+    main_model_ids_for_selection_from_entries(current, scoped_patterns, provider, &entries)
+}
+
+fn main_model_ids_for_selection_from_entries(
+    current: Option<&str>,
+    scoped_patterns: &[String],
+    provider: &ProviderConfig,
+    entries: &[NativeModelCatalogEntry],
+) -> Vec<String> {
     let mut seen = BTreeSet::<String>::new();
     let mut out = Vec::<String>::new();
     let mut push_model = |model: &str| {
@@ -7240,41 +17589,119 @@ fn main_model_ids_for_selection(
     if let Some(current) = current {
         push_model(current);
     }
-    let scoped = scoped_model_ids_for_patterns(scoped_patterns, provider);
-    let ordered = if scoped.is_empty() {
-        native_model_ids_for_provider(provider)
-    } else {
-        scoped
-    };
-    for model in ordered {
-        push_model(&model);
+    if scoped_patterns.is_empty() {
+        for model in entries {
+            push_model(&model.id);
+        }
+        return out;
+    }
+    let mut scoped_resolved = false;
+    for pattern in scoped_patterns {
+        for model in entries {
+            if model_matches_scope_pattern(provider, &model.id, pattern) {
+                scoped_resolved = true;
+                push_model(&model.id);
+            }
+        }
+    }
+    if !scoped_resolved {
+        for model in entries {
+            push_model(&model.id);
+        }
     }
     out
+}
+
+fn main_model_refs_from_entries(
+    current: Option<&str>,
+    scoped_patterns: &[String],
+    provider: &ProviderConfig,
+    entries: &[NativeModelCatalogEntry],
+) -> Vec<ModelRef> {
+    let display_names = entries
+        .iter()
+        .map(|model| (model.id.clone(), model.display_name.clone()))
+        .collect::<BTreeMap<_, _>>();
+    main_model_ids_for_selection_from_entries(current, scoped_patterns, provider, entries)
+        .into_iter()
+        .map(|model| {
+            let context_window = entries
+                .iter()
+                .find(|entry| entry.id == model)
+                .and_then(|entry| entry.context_window);
+            ModelRef {
+                display_name: display_names
+                    .get(&model)
+                    .cloned()
+                    .unwrap_or_else(|| model.clone()),
+                id: model,
+                provider: provider_name(provider).to_string(),
+                context_window,
+                role: None,
+            }
+        })
+        .collect()
+}
+
+fn main_model_refs_for_provider_at_path_with_auth_paths(
+    current: Option<&str>,
+    scoped_patterns: &[String],
+    provider: &ProviderConfig,
+    models_path: &Path,
+    codex_auth_path: &Path,
+    copilot_auth_path: &Path,
+    available_only: bool,
+) -> (Vec<ModelRef>, Vec<String>) {
+    let (entries, diagnostics) =
+        native_model_entries_for_provider_at_path_with_diagnostics(provider, models_path);
+    if available_only
+        && !native_provider_auth_configured_at_paths(
+            provider,
+            models_path,
+            codex_auth_path,
+            copilot_auth_path,
+        )
+    {
+        return (Vec::new(), diagnostics);
+    }
+    (
+        main_model_refs_from_entries(current, scoped_patterns, provider, &entries),
+        diagnostics,
+    )
+}
+
+fn main_model_refs_for_provider_with_diagnostics(
+    session: &ShellSession,
+    provider: &ProviderConfig,
+    available_only: bool,
+) -> (Vec<ModelRef>, Vec<String>) {
+    // Match Pi selector behavior: current selection first, then either the
+    // enabled/scoped order or the current provider catalog order. Do not use
+    // historical known_model_ids here; those include stale prior selections and
+    // role-only overrides, which is how old models leaked into the main selector.
+    let models_path = models_json_path();
+    main_model_refs_for_provider_at_path_with_auth_paths(
+        session.session_model(provider),
+        &session.scoped_model_ids,
+        provider,
+        &models_path,
+        &auth_store_path(),
+        &github_copilot_auth_store_path(),
+        available_only,
+    )
 }
 
 fn main_model_refs_for_provider(
     session: &ShellSession,
     provider: &ProviderConfig,
 ) -> Vec<ModelRef> {
-    // Match Pi selector behavior: current selection first, then either the
-    // enabled/scoped order or the current provider catalog order. Do not use
-    // historical known_model_ids here; those include stale prior selections and
-    // role-only overrides, which is how old models leaked into the main selector.
-    main_model_ids_for_selection(
-        session.session_model(provider),
-        &session.scoped_model_ids,
-        provider,
-    )
-    .into_iter()
-    .map(|model| model_ref_for_provider(provider, &model, None))
-    .collect()
+    main_model_refs_for_provider_with_diagnostics(session, provider, true).0
 }
 
 fn main_model_ids_for_provider(session: &ShellSession, provider: &ProviderConfig) -> Vec<String> {
-    main_model_refs_for_provider(session, provider)
-        .into_iter()
-        .map(|model| model.id)
-        .collect()
+    session
+        .cached_model_ids_for_provider(provider, true)
+        .unwrap_or_default()
 }
 
 fn provider_api_key_env(config: &OpenAiCompatibleConfig) -> &str {
@@ -7367,6 +17794,7 @@ fn default_authenticated_provider_config_from_state(
         return Some(ProviderConfig::OpenAiCompatible(
             with_default_reasoning_effort(OpenAiCompatibleConfig {
                 flavor: DirectProviderFlavor::OpenAiCodex,
+                provider_id: None,
                 model: OPENAI_CODEX_DEFAULT_MODEL.to_string(),
                 base_url: None,
                 api_key_env: None,
@@ -7383,6 +17811,7 @@ fn default_authenticated_provider_config_from_state(
         return Some(ProviderConfig::OpenAiCompatible(
             with_default_reasoning_effort(OpenAiCompatibleConfig {
                 flavor: DirectProviderFlavor::GitHubCopilot,
+                provider_id: None,
                 model: GITHUB_COPILOT_DEFAULT_MODEL.to_string(),
                 base_url: Some(github_copilot_base_url(auth)),
                 api_key_env: None,
@@ -7438,6 +17867,14 @@ fn meridian_package_spec() -> String {
         .unwrap_or_else(|| format!("{MERIDIAN_PACKAGE_NAME}@latest"))
 }
 
+fn hoppi_package_spec() -> String {
+    env::var("OPPI_HOPPI_PACKAGE_SPEC")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| format!("{HOPPI_PACKAGE_NAME}@^0.1.0"))
+}
+
 fn oppi_home_dir() -> PathBuf {
     env::var_os("OPPI_HOME")
         .filter(|value| !value.is_empty())
@@ -7479,6 +17916,80 @@ fn managed_meridian_module_path() -> PathBuf {
         .join("meridian")
         .join("dist")
         .join("server.js")
+}
+
+fn managed_hoppi_module_path_for(package_name: &str) -> PathBuf {
+    let mut path = managed_packages_dir().join("node_modules");
+    for part in package_name.split('/') {
+        path.push(part);
+    }
+    path.join("dist").join("index.js")
+}
+
+fn managed_hoppi_module_path() -> PathBuf {
+    managed_hoppi_module_path_for(HOPPI_PACKAGE_NAME)
+}
+
+fn resolve_optional_module_path(path: PathBuf) -> PathBuf {
+    let text = path.display().to_string();
+    if let Some(stripped) = text.strip_prefix("~/").or_else(|| text.strip_prefix("~\\")) {
+        return home_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join(stripped);
+    }
+    if path.is_absolute() {
+        path
+    } else {
+        env::current_dir()
+            .unwrap_or_else(|_| PathBuf::from("."))
+            .join(path)
+    }
+}
+
+fn local_sibling_hoppi_module_path() -> Option<PathBuf> {
+    env::current_dir()
+        .ok()
+        .and_then(|cwd| cwd.parent().map(Path::to_path_buf))
+        .map(|parent| parent.join("hoppi-memory").join("dist").join("index.js"))
+}
+
+fn hoppi_candidate_module_paths_for_startup_offer() -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+    if let Some(path) = env::var_os("OPPI_HOPPI_MODULE")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .map(resolve_optional_module_path)
+    {
+        paths.push(path);
+    }
+    paths.push(managed_hoppi_module_path_for(HOPPI_PACKAGE_NAME));
+    paths.push(managed_hoppi_module_path_for(HOPPI_LEGACY_PACKAGE_NAME));
+    if let Some(path) = local_sibling_hoppi_module_path() {
+        paths.push(path);
+    }
+    paths
+}
+
+fn hoppi_backend_available_for_startup_offer() -> bool {
+    hoppi_candidate_module_paths_for_startup_offer()
+        .into_iter()
+        .any(|path| path.exists())
+}
+
+fn should_offer_hoppi_first_start_install(
+    settings: &MemorySettings,
+    backend_available: bool,
+) -> bool {
+    settings.enabled && settings.hoppi_install_offer != "dismissed" && !backend_available
+}
+
+fn hoppi_first_start_install_prompt() -> String {
+    format!(
+        "Install Hoppi memory?\n\
+         OPPi memory is enabled, but {HOPPI_PACKAGE_NAME} is not installed. Install it now with npm into {}?\n\
+         Choose No to keep working. You can install later with `/memory install-hoppi`, approve directly with `/memory install-hoppi --yes`, or dismiss future startup offers with `/memory install-offer dismissed`. OPPi performs no hidden install.",
+        format_path_for_display(&managed_packages_dir())
+    )
 }
 
 fn format_path_for_display(path: &Path) -> String {
@@ -7552,6 +18063,3249 @@ fn install_meridian_package() -> Result<String, String> {
             tail
         ))
     }
+}
+
+fn default_hoppi_sync_repo_path() -> PathBuf {
+    oppi_home_dir()
+        .join("oppi")
+        .join("hoppi-sync")
+        .join("hoppi-memories")
+}
+
+fn default_hoppi_sync_passphrase_file() -> PathBuf {
+    oppi_home_dir()
+        .join("oppi")
+        .join("hoppi-sync")
+        .join("passphrase")
+}
+
+fn resolve_hoppi_sync_path(value: &str) -> PathBuf {
+    resolve_optional_module_path(PathBuf::from(value))
+}
+
+fn hoppi_module_path_for_sync() -> Result<PathBuf, String> {
+    hoppi_candidate_module_paths_for_startup_offer()
+        .into_iter()
+        .find(|path| path.exists())
+        .ok_or_else(|| {
+            format!(
+                "Hoppi sync skipped: Hoppi backend is not installed. Run `/memory install-hoppi --yes` or set OPPI_HOPPI_MODULE."
+            )
+        })
+}
+
+fn hoppi_module_path_for_recall() -> Result<PathBuf, String> {
+    hoppi_candidate_module_paths_for_startup_offer()
+        .into_iter()
+        .find(|path| path.exists())
+        .ok_or_else(|| {
+            format!(
+                "Hoppi recall skipped: Hoppi backend is not installed. Run `/memory install-hoppi --yes` or set OPPI_HOPPI_MODULE."
+            )
+        })
+}
+
+fn hoppi_module_path_for_remember() -> Result<PathBuf, String> {
+    hoppi_candidate_module_paths_for_startup_offer()
+        .into_iter()
+        .find(|path| path.exists())
+        .ok_or_else(|| {
+            format!(
+                "Hoppi remember skipped: Hoppi backend is not installed. Run `/memory install-hoppi --yes` or set OPPI_HOPPI_MODULE."
+            )
+        })
+}
+
+fn hoppi_module_path_for_dashboard() -> Result<PathBuf, String> {
+    hoppi_candidate_module_paths_for_startup_offer()
+        .into_iter()
+        .find(|path| path.exists())
+        .ok_or_else(|| {
+            format!(
+                "Hoppi dashboard skipped: Hoppi backend is not installed. Run `/memory install-hoppi --yes` or set OPPI_HOPPI_MODULE."
+            )
+        })
+}
+
+fn hoppi_module_path_for_list() -> Result<PathBuf, String> {
+    hoppi_candidate_module_paths_for_startup_offer()
+        .into_iter()
+        .find(|path| path.exists())
+        .ok_or_else(|| {
+            format!(
+                "Hoppi list skipped: Hoppi backend is not installed. Run `/memory install-hoppi --yes` or set OPPI_HOPPI_MODULE."
+            )
+        })
+}
+
+fn hoppi_module_path_for_forget() -> Result<PathBuf, String> {
+    hoppi_candidate_module_paths_for_startup_offer()
+        .into_iter()
+        .find(|path| path.exists())
+        .ok_or_else(|| {
+            format!(
+                "Hoppi forget skipped: Hoppi backend is not installed. Run `/memory install-hoppi --yes` or set OPPI_HOPPI_MODULE."
+            )
+        })
+}
+
+fn hoppi_module_path_for_update() -> Result<PathBuf, String> {
+    hoppi_candidate_module_paths_for_startup_offer()
+        .into_iter()
+        .find(|path| path.exists())
+        .ok_or_else(|| {
+            format!(
+                "Hoppi update skipped: Hoppi backend is not installed. Run `/memory install-hoppi --yes` or set OPPI_HOPPI_MODULE."
+            )
+        })
+}
+
+fn hoppi_module_path_for_consolidate() -> Result<PathBuf, String> {
+    hoppi_candidate_module_paths_for_startup_offer()
+        .into_iter()
+        .find(|path| path.exists())
+        .ok_or_else(|| {
+            format!(
+                "Hoppi maintenance skipped: Hoppi backend is not installed. Run `/memory install-hoppi --yes` or set OPPI_HOPPI_MODULE."
+            )
+        })
+}
+
+fn memory_backend_recall_params_from_settings(
+    settings: &MemorySettings,
+    thread_id: &str,
+    prompt: &str,
+) -> Result<Value, String> {
+    if !settings.enabled {
+        return Err("Hoppi recall skipped: memory disabled".to_string());
+    }
+    let prompt = prompt.trim();
+    let include_startup = settings.startup_recall;
+    let include_task = settings.task_start_recall && !prompt.is_empty();
+    if !include_startup && !include_task {
+        return Err("Hoppi recall skipped: recall disabled".to_string());
+    }
+    Ok(json!({
+        "threadId": thread_id,
+        "prompt": prompt.chars().take(HOPPI_MEMORY_QUERY_MAX_CHARS).collect::<String>(),
+        "includeStartup": include_startup,
+        "includeTask": include_task,
+    }))
+}
+
+fn memory_backend_dashboard_params_from_settings(
+    settings: &MemorySettings,
+    thread_id: &str,
+) -> Result<Value, String> {
+    if !settings.enabled {
+        return Err("Hoppi dashboard skipped: memory disabled".to_string());
+    }
+    Ok(json!({ "threadId": thread_id }))
+}
+
+fn memory_backend_list_params_from_settings(
+    settings: &MemorySettings,
+    thread_id: &str,
+    include_superseded: bool,
+    pinned_only: bool,
+    limit: Option<u64>,
+) -> Result<Value, String> {
+    if !settings.enabled {
+        return Err("Hoppi list skipped: memory disabled".to_string());
+    }
+    let mut params = json!({
+        "threadId": thread_id,
+        "includeSuperseded": include_superseded,
+        "pinnedOnly": pinned_only,
+    });
+    if let Some(limit) = limit {
+        params["limit"] = json!(limit);
+    }
+    Ok(params)
+}
+
+fn memory_backend_forget_params_from_settings(
+    settings: &MemorySettings,
+    thread_id: &str,
+    id: &str,
+) -> Result<Value, String> {
+    if !settings.enabled {
+        return Err("Hoppi forget skipped: memory disabled".to_string());
+    }
+    let id = id.trim();
+    if id.is_empty() {
+        return Err("Hoppi forget skipped: memory id is required".to_string());
+    }
+    Ok(json!({ "threadId": thread_id, "id": id }))
+}
+
+fn memory_backend_pin_params_from_settings(
+    settings: &MemorySettings,
+    thread_id: &str,
+    id: &str,
+    pinned: bool,
+) -> Result<Value, String> {
+    if !settings.enabled {
+        return Err("Hoppi pin skipped: memory disabled".to_string());
+    }
+    let id = id.trim();
+    if id.is_empty() {
+        return Err("Hoppi pin skipped: memory id is required".to_string());
+    }
+    Ok(json!({ "threadId": thread_id, "id": id, "pinned": pinned }))
+}
+
+fn memory_backend_update_params_from_settings(
+    settings: &MemorySettings,
+    thread_id: &str,
+    id: &str,
+    patch: Value,
+) -> Result<Value, String> {
+    if !settings.enabled {
+        return Err("Hoppi update skipped: memory disabled".to_string());
+    }
+    let id = id.trim();
+    if id.is_empty() {
+        return Err("Hoppi update skipped: memory id is required".to_string());
+    }
+    let Some(object) = patch.as_object() else {
+        return Err("Hoppi update skipped: update patch must be an object".to_string());
+    };
+    if object.is_empty() {
+        return Err("Hoppi update skipped: update patch cannot be empty".to_string());
+    }
+    Ok(json!({ "threadId": thread_id, "id": id, "patch": patch }))
+}
+
+fn memory_backend_supersede_params_from_settings(
+    settings: &MemorySettings,
+    thread_id: &str,
+    id: &str,
+    superseded_by: &str,
+) -> Result<Value, String> {
+    if !settings.enabled {
+        return Err("Hoppi supersede skipped: memory disabled".to_string());
+    }
+    let id = id.trim();
+    let superseded_by = superseded_by.trim();
+    if id.is_empty() || superseded_by.is_empty() || id == superseded_by {
+        return Err(memory_settings_usage().to_string());
+    }
+    Ok(json!({
+        "threadId": thread_id,
+        "id": id,
+        "supersededBy": superseded_by,
+    }))
+}
+
+fn memory_backend_consolidate_params_from_settings(
+    settings: &MemorySettings,
+    thread_id: &str,
+    dry_run: bool,
+) -> Result<Value, String> {
+    if !settings.enabled {
+        return Err("Hoppi maintenance skipped: memory disabled".to_string());
+    }
+    Ok(json!({
+        "threadId": thread_id,
+        "stage": "manual-maintenance",
+        "dryRun": dry_run,
+        "limit": 50,
+        "agentModel": memory_model_preference_or_auto(&settings.agent_model),
+        "deepModel": memory_model_preference_or_auto(&settings.deep_model),
+    }))
+}
+
+fn memory_backend_idle_consolidate_params_from_settings(
+    settings: &MemorySettings,
+    thread_id: &str,
+) -> Result<Value, String> {
+    if !settings.enabled {
+        return Err("Hoppi idle consolidation skipped: memory disabled".to_string());
+    }
+    if !settings.idle_consolidation {
+        return Err("Hoppi idle consolidation skipped: idle consolidation disabled".to_string());
+    }
+    Ok(json!({
+        "threadId": thread_id,
+        "stage": "idle-dream",
+        "dryRun": false,
+        "budget": HOPPI_IDLE_CONSOLIDATE_BUDGET,
+        "agentModel": memory_model_preference_or_auto(&settings.agent_model),
+        "deepModel": memory_model_preference_or_auto(&settings.deep_model),
+    }))
+}
+
+fn memory_backend_turn_remember_params_from_settings(
+    settings: &MemorySettings,
+    summary: &str,
+    thread_id: &str,
+    turn_id: &str,
+) -> Result<Value, String> {
+    if !settings.enabled {
+        return Err("Hoppi remember skipped: memory disabled".to_string());
+    }
+    if !settings.turn_summaries {
+        return Err("Hoppi remember skipped: turn summaries disabled".to_string());
+    }
+    let summary = summary.trim();
+    if summary.is_empty() {
+        return Err("Hoppi remember skipped: empty summary".to_string());
+    }
+    Ok(json!({
+        "threadId": thread_id,
+        "content": summary,
+        "tags": ["oppi-native-shell", "oppi-turn-summary", "agent_end"],
+        "source": "oppi:native-shell",
+        "sourceSessionId": format!("{thread_id}:{turn_id}"),
+        "layer": "buffer",
+    }))
+}
+
+fn memory_backend_session_recap_params_from_settings(
+    settings: &MemorySettings,
+    recap: &str,
+    thread_id: &str,
+    reason: HoppiSessionRecapReason,
+) -> Result<Value, String> {
+    if !settings.enabled {
+        return Err(format!(
+            "Hoppi {} recap skipped: memory disabled",
+            reason.as_str()
+        ));
+    }
+    let recap = recap.trim();
+    if recap.is_empty() {
+        return Err(format!(
+            "Hoppi {} recap skipped: empty recap",
+            reason.as_str()
+        ));
+    }
+    Ok(json!({
+        "threadId": thread_id,
+        "content": recap,
+        "tags": ["oppi-native-shell", reason.tag(), "session-recap"],
+        "source": format!("oppi:{}", reason.as_str()),
+        "sourceSessionId": thread_id,
+    }))
+}
+
+fn memory_backend_sync_params_from_settings(
+    settings: &MemorySettings,
+    thread_id: &str,
+    direction: HoppiSyncDirection,
+    reason: &str,
+) -> Result<Value, String> {
+    if !settings.enabled {
+        return Err("Hoppi sync skipped: memory disabled".to_string());
+    }
+    if !settings.sync_enabled {
+        return Err("Hoppi sync skipped: sync disabled".to_string());
+    }
+    let repo_path = settings
+        .sync_repo_path
+        .as_deref()
+        .map(resolve_hoppi_sync_path)
+        .unwrap_or_else(default_hoppi_sync_repo_path);
+    let mut params = json!({
+        "threadId": thread_id,
+        "direction": direction.as_str(),
+        "repoPath": repo_path.display().to_string(),
+        "conflictMode": settings.sync_conflict_mode,
+        "message": format!("Hoppi memory sync ({reason})"),
+    });
+    if let Some(remote) = settings.sync_repo_url.as_ref() {
+        params["remote"] = json!(remote);
+    }
+    if let Some(passphrase) = hoppi_sync_passphrase(settings)? {
+        params["passphrase"] = json!(passphrase);
+    }
+    Ok(params)
+}
+
+fn hoppi_sync_display_invocation_from_settings(
+    settings: &MemorySettings,
+    direction: HoppiSyncDirection,
+    reason: &str,
+) -> Result<HoppiSyncInvocation, String> {
+    if !settings.enabled {
+        return Err("Hoppi sync skipped: memory disabled".to_string());
+    }
+    if !settings.sync_enabled {
+        return Err("Hoppi sync skipped: sync disabled".to_string());
+    }
+    let repo_path = settings
+        .sync_repo_path
+        .as_deref()
+        .map(resolve_hoppi_sync_path)
+        .unwrap_or_else(default_hoppi_sync_repo_path);
+    Ok(HoppiSyncInvocation {
+        module_path: PathBuf::new(),
+        repo_path,
+        direction,
+        remote: settings.sync_repo_url.clone(),
+        conflict_mode: settings.sync_conflict_mode.clone(),
+        passphrase: None,
+        message: format!("Hoppi memory sync ({reason})"),
+    })
+}
+
+fn memory_backend_normalized_value(value: Value, method: &str) -> Result<Value, String> {
+    value
+        .get("normalized")
+        .cloned()
+        .ok_or_else(|| format!("{method} response missing normalized result"))
+}
+
+fn hoppi_recall_invocation_from_settings(
+    settings: &MemorySettings,
+    cwd: &Path,
+    prompt: &str,
+    module_path: PathBuf,
+) -> Result<HoppiRecallInvocation, String> {
+    if !settings.enabled {
+        return Err("Hoppi recall skipped: memory disabled".to_string());
+    }
+    let prompt = prompt.trim();
+    let include_startup = settings.startup_recall;
+    let include_task = settings.task_start_recall && !prompt.is_empty();
+    if !include_startup && !include_task {
+        return Err("Hoppi recall skipped: recall disabled".to_string());
+    }
+    Ok(HoppiRecallInvocation {
+        module_path,
+        cwd: cwd.to_path_buf(),
+        prompt: prompt.chars().take(HOPPI_MEMORY_QUERY_MAX_CHARS).collect(),
+        include_startup,
+        include_task,
+    })
+}
+
+fn hoppi_dashboard_invocation_from_settings(
+    settings: &MemorySettings,
+    cwd: &Path,
+    module_path: PathBuf,
+) -> Result<HoppiDashboardInvocation, String> {
+    if !settings.enabled {
+        return Err("Hoppi dashboard skipped: memory disabled".to_string());
+    }
+    Ok(HoppiDashboardInvocation {
+        module_path,
+        cwd: cwd.to_path_buf(),
+        port: settings.dashboard_port,
+    })
+}
+
+fn hoppi_list_invocation_from_settings(
+    settings: &MemorySettings,
+    cwd: &Path,
+    module_path: PathBuf,
+    include_superseded: bool,
+    pinned_only: bool,
+    limit: Option<u64>,
+) -> Result<HoppiListInvocation, String> {
+    if !settings.enabled {
+        return Err("Hoppi list skipped: memory disabled".to_string());
+    }
+    Ok(HoppiListInvocation {
+        module_path,
+        cwd: cwd.to_path_buf(),
+        include_superseded,
+        pinned_only,
+        limit,
+    })
+}
+
+fn hoppi_forget_invocation_from_settings(
+    settings: &MemorySettings,
+    cwd: &Path,
+    module_path: PathBuf,
+    id: &str,
+) -> Result<HoppiForgetInvocation, String> {
+    if !settings.enabled {
+        return Err("Hoppi forget skipped: memory disabled".to_string());
+    }
+    let id = id.trim();
+    if id.is_empty() {
+        return Err("Hoppi forget skipped: memory id is required".to_string());
+    }
+    Ok(HoppiForgetInvocation {
+        module_path,
+        cwd: cwd.to_path_buf(),
+        id: id.to_string(),
+    })
+}
+
+fn hoppi_pin_invocation_from_settings(
+    settings: &MemorySettings,
+    cwd: &Path,
+    module_path: PathBuf,
+    id: &str,
+    pinned: bool,
+) -> Result<HoppiPinInvocation, String> {
+    if !settings.enabled {
+        return Err("Hoppi pin skipped: memory disabled".to_string());
+    }
+    let id = id.trim();
+    if id.is_empty() {
+        return Err("Hoppi pin skipped: memory id is required".to_string());
+    }
+    Ok(HoppiPinInvocation {
+        module_path,
+        cwd: cwd.to_path_buf(),
+        id: id.to_string(),
+        pinned,
+    })
+}
+
+fn hoppi_update_invocation_from_settings(
+    settings: &MemorySettings,
+    cwd: &Path,
+    module_path: PathBuf,
+    id: &str,
+    patch: Value,
+) -> Result<HoppiUpdateInvocation, String> {
+    if !settings.enabled {
+        return Err("Hoppi update skipped: memory disabled".to_string());
+    }
+    let id = id.trim();
+    if id.is_empty() {
+        return Err("Hoppi update skipped: memory id is required".to_string());
+    }
+    let Some(object) = patch.as_object() else {
+        return Err("Hoppi update skipped: update patch must be an object".to_string());
+    };
+    if object.is_empty() {
+        return Err("Hoppi update skipped: update patch cannot be empty".to_string());
+    }
+    Ok(HoppiUpdateInvocation {
+        module_path,
+        cwd: cwd.to_path_buf(),
+        id: id.to_string(),
+        patch,
+    })
+}
+
+fn memory_model_preference_or_auto(value: &str) -> String {
+    let value = value.trim();
+    if value.is_empty() {
+        "auto".to_string()
+    } else {
+        value.to_string()
+    }
+}
+
+fn hoppi_consolidate_invocation_from_settings(
+    settings: &MemorySettings,
+    cwd: &Path,
+    module_path: PathBuf,
+    dry_run: bool,
+) -> Result<HoppiConsolidateInvocation, String> {
+    if !settings.enabled {
+        return Err("Hoppi maintenance skipped: memory disabled".to_string());
+    }
+    Ok(HoppiConsolidateInvocation {
+        module_path,
+        cwd: cwd.to_path_buf(),
+        dry_run,
+        stage: "manual-maintenance".to_string(),
+        limit: Some(50),
+        budget: None,
+        agent_model: memory_model_preference_or_auto(&settings.agent_model),
+        deep_model: memory_model_preference_or_auto(&settings.deep_model),
+    })
+}
+
+fn hoppi_idle_consolidate_invocation_from_settings(
+    settings: &MemorySettings,
+    cwd: &Path,
+    module_path: PathBuf,
+) -> Result<HoppiConsolidateInvocation, String> {
+    if !settings.enabled {
+        return Err("Hoppi idle consolidation skipped: memory disabled".to_string());
+    }
+    if !settings.idle_consolidation {
+        return Err("Hoppi idle consolidation skipped: idle consolidation disabled".to_string());
+    }
+    Ok(HoppiConsolidateInvocation {
+        module_path,
+        cwd: cwd.to_path_buf(),
+        dry_run: false,
+        stage: "idle-dream".to_string(),
+        limit: None,
+        budget: Some(HOPPI_IDLE_CONSOLIDATE_BUDGET),
+        agent_model: memory_model_preference_or_auto(&settings.agent_model),
+        deep_model: memory_model_preference_or_auto(&settings.deep_model),
+    })
+}
+
+fn hoppi_remember_invocation_from_settings(
+    settings: &MemorySettings,
+    cwd: &Path,
+    summary: &str,
+    thread_id: &str,
+    turn_id: &str,
+    module_path: PathBuf,
+) -> Result<HoppiRememberInvocation, String> {
+    if !settings.enabled {
+        return Err("Hoppi remember skipped: memory disabled".to_string());
+    }
+    if !settings.turn_summaries {
+        return Err("Hoppi remember skipped: turn summaries disabled".to_string());
+    }
+    let summary = summary.trim();
+    if summary.is_empty() {
+        return Err("Hoppi remember skipped: empty summary".to_string());
+    }
+    Ok(HoppiRememberInvocation {
+        module_path,
+        cwd: cwd.to_path_buf(),
+        summary: summary.to_string(),
+        tags: vec![
+            "oppi-native-shell".to_string(),
+            "oppi-turn-summary".to_string(),
+            "agent_end".to_string(),
+        ],
+        source: "oppi:native-shell".to_string(),
+        source_session_id: format!("{thread_id}:{turn_id}"),
+        layer: Some("buffer".to_string()),
+    })
+}
+
+fn hoppi_exit_recap_invocation_from_settings(
+    settings: &MemorySettings,
+    cwd: &Path,
+    recap: &str,
+    thread_id: &str,
+    module_path: PathBuf,
+) -> Result<HoppiRememberInvocation, String> {
+    hoppi_session_recap_invocation_from_settings(
+        settings,
+        cwd,
+        recap,
+        thread_id,
+        module_path,
+        HoppiSessionRecapReason::Exit,
+    )
+}
+
+fn hoppi_session_recap_invocation_from_settings(
+    settings: &MemorySettings,
+    cwd: &Path,
+    recap: &str,
+    thread_id: &str,
+    module_path: PathBuf,
+    reason: HoppiSessionRecapReason,
+) -> Result<HoppiRememberInvocation, String> {
+    if !settings.enabled {
+        return Err(format!(
+            "Hoppi {} recap skipped: memory disabled",
+            reason.as_str()
+        ));
+    }
+    let recap = recap.trim();
+    if recap.is_empty() {
+        return Err(format!(
+            "Hoppi {} recap skipped: empty recap",
+            reason.as_str()
+        ));
+    }
+    Ok(HoppiRememberInvocation {
+        module_path,
+        cwd: cwd.to_path_buf(),
+        summary: recap.to_string(),
+        tags: vec![
+            "oppi-native-shell".to_string(),
+            reason.tag().to_string(),
+            "session-recap".to_string(),
+        ],
+        source: format!("oppi:{}", reason.as_str()),
+        source_session_id: thread_id.to_string(),
+        layer: None,
+    })
+}
+
+fn hoppi_sync_passphrase(settings: &MemorySettings) -> Result<Option<String>, String> {
+    if settings.sync_encryption != "passphrase" {
+        return Ok(None);
+    }
+    if settings.sync_passphrase_source == "file" {
+        let file = settings
+            .sync_passphrase_file
+            .as_deref()
+            .map(resolve_hoppi_sync_path)
+            .unwrap_or_else(default_hoppi_sync_passphrase_file);
+        let value = fs::read_to_string(&file)
+            .map_err(|error| {
+                format!(
+                    "Encrypted sync passphrase file is missing: {}: {error}",
+                    file.display()
+                )
+            })?
+            .trim()
+            .to_string();
+        if value.is_empty() {
+            return Err(format!(
+                "Encrypted sync passphrase file is empty: {}",
+                file.display()
+            ));
+        }
+        return Ok(Some(value));
+    }
+    let value = env::var(&settings.sync_passphrase_env)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            format!(
+                "Encrypted sync needs {} to be set.",
+                settings.sync_passphrase_env
+            )
+        })?;
+    Ok(Some(value))
+}
+
+fn hoppi_sync_invocation_from_settings(
+    settings: &MemorySettings,
+    direction: HoppiSyncDirection,
+    reason: &str,
+    module_path: PathBuf,
+) -> Result<HoppiSyncInvocation, String> {
+    if !settings.enabled {
+        return Err("Hoppi sync skipped: memory disabled".to_string());
+    }
+    if !settings.sync_enabled {
+        return Err("Hoppi sync skipped: sync disabled".to_string());
+    }
+    let repo_path = settings
+        .sync_repo_path
+        .as_deref()
+        .map(resolve_hoppi_sync_path)
+        .unwrap_or_else(default_hoppi_sync_repo_path);
+    Ok(HoppiSyncInvocation {
+        module_path,
+        repo_path,
+        direction,
+        remote: settings.sync_repo_url.clone(),
+        conflict_mode: settings.sync_conflict_mode.clone(),
+        passphrase: hoppi_sync_passphrase(settings)?,
+        message: format!("Hoppi memory sync ({reason})"),
+    })
+}
+
+fn hoppi_sync_lifecycle_direction(
+    settings: &MemorySettings,
+    lifecycle: HoppiSyncLifecycle,
+) -> Option<HoppiSyncDirection> {
+    if !settings.enabled || !settings.sync_enabled {
+        return None;
+    }
+    match lifecycle {
+        HoppiSyncLifecycle::Startup if settings.sync_pull_on_startup => {
+            Some(HoppiSyncDirection::Pull)
+        }
+        HoppiSyncLifecycle::Exit if settings.sync_push_on_exit => Some(HoppiSyncDirection::Push),
+        HoppiSyncLifecycle::Clear if settings.sync_push_on_exit => Some(HoppiSyncDirection::Push),
+        _ => None,
+    }
+}
+
+fn hoppi_background_sync_interval(settings: &MemorySettings) -> Option<Duration> {
+    if !settings.enabled || !settings.sync_enabled {
+        return None;
+    }
+    match settings.sync_background.as_str() {
+        "15m" => Some(Duration::from_secs(15 * 60)),
+        "30m" => Some(Duration::from_secs(30 * 60)),
+        "60m" => Some(Duration::from_secs(60 * 60)),
+        _ => None,
+    }
+}
+
+fn hoppi_next_background_sync_at(settings: &MemorySettings, now: Instant) -> Option<Instant> {
+    hoppi_background_sync_interval(settings).map(|interval| now + interval)
+}
+
+fn hoppi_background_sync_due(
+    settings: &MemorySettings,
+    next_due: Option<Instant>,
+    idle: bool,
+    now: Instant,
+) -> bool {
+    idle && hoppi_background_sync_interval(settings).is_some()
+        && next_due.is_some_and(|due| now >= due)
+}
+
+fn hoppi_idle_consolidation_due(
+    settings: &MemorySettings,
+    dirty_version: u64,
+    consolidated_version: u64,
+    dirty_at: Option<Instant>,
+    idle: bool,
+    now: Instant,
+) -> bool {
+    if !settings.enabled || !settings.idle_consolidation || !idle {
+        return false;
+    }
+    if dirty_version <= consolidated_version {
+        return false;
+    }
+    let Some(dirty_at) = dirty_at else {
+        return false;
+    };
+    now.checked_duration_since(dirty_at)
+        .is_some_and(|elapsed| elapsed >= HOPPI_IDLE_CONSOLIDATE_AFTER)
+}
+
+fn hoppi_turn_summary_timestamp() -> String {
+    let seconds = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or(0);
+    format!("unix:{seconds}")
+}
+
+fn compact_hoppi_summary_text(value: &str) -> String {
+    value.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn truncate_hoppi_summary_part(value: &str, max_chars: usize) -> String {
+    value.chars().take(max_chars).collect()
+}
+
+fn build_hoppi_turn_summary(
+    prompt: &str,
+    assistant_text: &str,
+    tool_result_statuses: &[String],
+    thread_id: &str,
+    turn_id: &str,
+    timestamp: &str,
+) -> Option<String> {
+    let user = compact_hoppi_summary_text(prompt);
+    let assistant = compact_hoppi_summary_text(assistant_text);
+    if user.is_empty() || assistant.is_empty() || user.len() + assistant.len() < 80 {
+        return None;
+    }
+    Some(
+        [
+            Some(format!("Native shell turn summary ({timestamp})")),
+            Some(format!(
+                "User asked: {}",
+                truncate_hoppi_summary_part(&user, 500)
+            )),
+            Some(format!(
+                "Assistant outcome: {}",
+                truncate_hoppi_summary_part(&assistant, 700)
+            )),
+            (!tool_result_statuses.is_empty())
+                .then(|| format!("Tool results: {}", tool_result_statuses.join(", "))),
+            Some(format!("Runtime turn: {thread_id}/{turn_id}")),
+        ]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join("\n"),
+    )
+}
+
+fn build_hoppi_turn_summary_from_events(
+    events: &[Event],
+    thread_id: &str,
+    turn_id: &str,
+    fallback_prompt: Option<&str>,
+    timestamp: &str,
+) -> Option<String> {
+    let mut user_text = fallback_prompt.unwrap_or_default().to_string();
+    let mut assistant_parts = Vec::new();
+    let mut tool_result_statuses = Vec::new();
+    for event in events
+        .iter()
+        .filter(|event| event.thread_id == thread_id && event.turn_id.as_deref() == Some(turn_id))
+    {
+        match &event.kind {
+            EventKind::ItemCompleted { item } if item.turn_id == turn_id => match &item.kind {
+                ItemKind::UserMessage { text } => user_text = text.clone(),
+                ItemKind::AssistantMessage { text } => assistant_parts.push(text.clone()),
+                _ => {}
+            },
+            EventKind::ToolCallCompleted { result } => {
+                tool_result_statuses.push(tool_result_status_label(result.status).to_string());
+            }
+            _ => {}
+        }
+    }
+    build_hoppi_turn_summary(
+        &user_text,
+        &assistant_parts.join("\n\n"),
+        &tool_result_statuses,
+        thread_id,
+        turn_id,
+        timestamp,
+    )
+}
+
+fn is_low_signal_hoppi_memory_text(text: &str) -> bool {
+    let normalized = compact_hoppi_summary_text(text).to_lowercase();
+    normalized.is_empty()
+        || normalized == "cd"
+        || normalized.starts_with("current working directory:")
+        || normalized
+            .strip_prefix("[tool:")
+            .is_some_and(|rest| rest.ends_with(']'))
+}
+
+fn recent_unique_hoppi_texts(texts: &[String], limit: usize, max_chars: usize) -> Vec<String> {
+    let mut seen = BTreeSet::new();
+    let mut selected = Vec::new();
+    for text in texts.iter().rev() {
+        let compact = compact_hoppi_summary_text(text);
+        if is_low_signal_hoppi_memory_text(&compact) {
+            continue;
+        }
+        let key = compact.to_lowercase().chars().take(180).collect::<String>();
+        if !seen.insert(key) {
+            continue;
+        }
+        selected.push(truncate_hoppi_summary_part(&compact, max_chars));
+        if selected.len() >= limit {
+            break;
+        }
+    }
+    selected.reverse();
+    selected
+}
+
+fn build_hoppi_session_recap_from_events(
+    events: &[Event],
+    thread_id: &str,
+    timestamp: &str,
+) -> Option<String> {
+    let mut user_texts = Vec::new();
+    let mut assistant_texts = Vec::new();
+    for event in events.iter().filter(|event| event.thread_id == thread_id) {
+        let EventKind::ItemCompleted { item } = &event.kind else {
+            continue;
+        };
+        if item.thread_id != thread_id {
+            continue;
+        }
+        match &item.kind {
+            ItemKind::UserMessage { text } => user_texts.push(text.clone()),
+            ItemKind::AssistantMessage { text } => assistant_texts.push(text.clone()),
+            _ => {}
+        }
+    }
+
+    let recent_user_goals = recent_unique_hoppi_texts(&user_texts, 4, 180);
+    let recent_assistant_outcomes = recent_unique_hoppi_texts(&assistant_texts, 4, 220);
+    if recent_user_goals.is_empty() && recent_assistant_outcomes.is_empty() {
+        return None;
+    }
+
+    let mut lines = vec![
+        format!("Session recap ({timestamp})"),
+        "Recent user goals:".to_string(),
+    ];
+    lines.extend(recent_user_goals.iter().map(|text| format!("- {text}")));
+    lines.push("Recent assistant outcomes:".to_string());
+    lines.extend(
+        recent_assistant_outcomes
+            .iter()
+            .map(|text| format!("- {text}")),
+    );
+    let recap = lines.join("\n");
+    (recap.len() >= 90).then_some(recap)
+}
+
+const HOPPI_RECALL_NODE_SCRIPT: &str = r#"
+const path = require("node:path");
+const os = require("node:os");
+const { pathToFileURL } = require("node:url");
+
+const CONTEXT_MAX_BYTES = Number(process.env.OPPI_HOPPI_MEMORY_CONTEXT_MAX_BYTES || 12000);
+
+function coerceMemoryCount(value) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) && numeric > 0 ? Math.floor(numeric) : 0;
+}
+
+function truncateUtf8Text(value, maxBytes, suffix = "\n\n[Hoppi memory context truncated]") {
+  const text = String(value || "").trim();
+  if (Buffer.byteLength(text, "utf8") <= maxBytes) return { text, truncated: false };
+  const suffixBytes = Buffer.byteLength(suffix, "utf8");
+  const limit = Math.max(0, maxBytes - suffixBytes);
+  const truncated = Buffer.from(text, "utf8").subarray(0, limit).toString("utf8").replace(/\uFFFD+$/g, "").trimEnd();
+  return { text: `${truncated}${suffix}`, truncated: true };
+}
+
+function stringField(entry, keys) {
+  for (const key of keys) {
+    const value = entry && entry[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return undefined;
+}
+
+function numberField(entry, keys) {
+  for (const key of keys) {
+    const value = Number(entry && entry[key]);
+    if (Number.isFinite(value)) return value;
+  }
+  return undefined;
+}
+
+function stringArray(value) {
+  return Array.isArray(value)
+    ? value.map((item) => String(item || "").trim()).filter(Boolean)
+    : [];
+}
+
+function modelField(value) {
+  return typeof value === "string" && value.trim() ? value.trim() : "auto";
+}
+
+function normalizeRecord(entry) {
+  const id = stringField(entry, ["id", "memoryId"]);
+  const content = stringField(entry, ["content", "text", "summary", "body"]);
+  if (!id || !content) return undefined;
+  return {
+    id,
+    content,
+    tags: stringArray(entry.tags),
+    pinned: Boolean(entry.pinned),
+    starred: Boolean(entry.starred),
+    layer: stringField(entry, ["layer"]),
+    confidence: stringField(entry, ["confidence"]),
+    source: stringField(entry, ["source"]),
+    createdAt: stringField(entry, ["createdAt", "created_at", "created"]),
+    updatedAt: stringField(entry, ["updatedAt", "updated_at"]),
+    strength: numberField(entry, ["strength"]),
+    retrievalStrength: numberField(entry, ["retrievalStrength", "retrieval_strength"]),
+    retrievalCount: coerceMemoryCount(entry.retrievalCount ?? entry.retrieval_count ?? entry.useCount ?? entry.use_count),
+    lastRetrievedAt: stringField(entry, ["lastRetrievedAt", "last_retrieved_at", "retrieved_at", "lastUsedAt", "last_used_at"]),
+    supersededBy: stringField(entry, ["supersededBy", "superseded_by"]),
+    parents: stringArray(entry.parents),
+  };
+}
+
+function mergeRecords(target, rawRecords) {
+  if (!Array.isArray(rawRecords)) return;
+  for (const rawRecord of rawRecords) {
+    const record = normalizeRecord(rawRecord);
+    if (!record) continue;
+    const existing = target.findIndex((item) => item.id === record.id);
+    if (existing >= 0) target[existing] = record;
+    else target.push(record);
+  }
+}
+
+function buildMemoryContext(parts) {
+  const unique = [...new Set(parts.map((part) => String(part || "").trim()).filter(Boolean))];
+  if (!unique.length) return { contextBytes: 0, truncated: false };
+  const advisory = "\n\nMemory is advisory: prefer current user instructions and current files when they conflict.";
+  const bodyLimit = Math.max(1, CONTEXT_MAX_BYTES - Buffer.byteLength(advisory, "utf8"));
+  const body = truncateUtf8Text(unique.join("\n\n---\n\n"), bodyLimit);
+  const contextMarkdown = `${body.text}${advisory}`;
+  return { contextMarkdown, contextBytes: Buffer.byteLength(contextMarkdown, "utf8"), truncated: body.truncated };
+}
+
+(async () => {
+  const [modulePath, cwd, prompt, includeStartupRaw, includeTaskRaw] = process.argv.slice(1);
+  const includeStartup = includeStartupRaw === "true";
+  const includeTask = includeTaskRaw === "true";
+  const hoppi = await import(pathToFileURL(path.resolve(modulePath)).href);
+  if (typeof hoppi.createHoppiBackend !== "function") {
+    throw new Error("Installed Hoppi package does not expose createHoppiBackend().");
+  }
+  const root = typeof hoppi.getDefaultHoppiRoot === "function"
+    ? hoppi.getDefaultHoppiRoot()
+    : (process.env.HOPPI_HOME ? path.resolve(process.env.HOPPI_HOME) : path.join(os.homedir(), ".oppi", "hoppi"));
+  const backend = hoppi.createHoppiBackend({ root });
+  if (!backend || typeof backend !== "object") {
+    throw new Error("Installed Hoppi package returned an invalid backend.");
+  }
+  if (typeof backend.init === "function") await backend.init();
+  const resolvedCwd = path.resolve(cwd);
+  const project = { cwd: resolvedCwd, displayName: path.basename(resolvedCwd) || undefined };
+  const parts = [];
+  const records = [];
+  let memoryCount = 0;
+  let pinnedCount = 0;
+  let storePath;
+
+  if (typeof backend.status === "function") {
+    try {
+      const status = await backend.status(project);
+      memoryCount = Math.max(memoryCount, coerceMemoryCount(status && status.memoryCount));
+      pinnedCount = Math.max(pinnedCount, coerceMemoryCount(status && status.pinnedCount));
+      if (status && status.storePath) storePath = String(status.storePath);
+    } catch {
+      // Status is informational; recall should still be able to provide useful context.
+    }
+  }
+
+  if (includeStartup && typeof backend.buildStartupContext === "function") {
+    try {
+      const startup = await backend.buildStartupContext({ project, maxMemories: 8, includePinned: true });
+      if (startup && startup.contextMarkdown) parts.push(startup.contextMarkdown);
+      memoryCount = Math.max(memoryCount, coerceMemoryCount(startup && startup.memoryCount));
+      if (startup && Array.isArray(startup.memories)) {
+        memoryCount = Math.max(memoryCount, startup.memories.length);
+        mergeRecords(records, startup.memories);
+      }
+    } catch {
+      // Startup recall is additive; task recall may still succeed.
+    }
+  }
+
+  if (includeTask && String(prompt || "").trim() && typeof backend.recall === "function") {
+    try {
+      const recall = await backend.recall({ project, query: String(prompt || "").trim(), budget: 900, limit: 5 });
+      if (recall && recall.contextMarkdown) parts.push(recall.contextMarkdown);
+      if (recall && Array.isArray(recall.memories)) memoryCount = Math.max(memoryCount, recall.memories.length);
+      if (recall && Array.isArray(recall.memories)) mergeRecords(records, recall.memories);
+      memoryCount = Math.max(memoryCount, coerceMemoryCount(recall && recall.memoryCount));
+    } catch {
+      // The shell treats missing recall as no context instead of aborting the turn.
+    }
+  }
+
+  pinnedCount = Math.max(pinnedCount, records.filter((record) => record.pinned || record.starred).length);
+  console.log(JSON.stringify({ ...buildMemoryContext(parts), memoryCount, pinnedCount, storePath, records }));
+})().catch((error) => {
+  console.error(error && error.stack ? error.stack : String(error));
+  process.exit(1);
+});
+"#;
+
+const HOPPI_DASHBOARD_NODE_SCRIPT: &str = r#"
+const path = require("node:path");
+const os = require("node:os");
+const { pathToFileURL } = require("node:url");
+
+function coerceMemoryCount(value) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) && numeric > 0 ? Math.floor(numeric) : 0;
+}
+
+(async () => {
+  const [modulePath, cwd, portRaw] = process.argv.slice(1);
+  const hoppi = await import(pathToFileURL(path.resolve(modulePath)).href);
+  if (typeof hoppi.createHoppiBackend !== "function") {
+    throw new Error("Installed Hoppi package does not expose createHoppiBackend().");
+  }
+  const root = typeof hoppi.getDefaultHoppiRoot === "function"
+    ? hoppi.getDefaultHoppiRoot()
+    : (process.env.HOPPI_HOME ? path.resolve(process.env.HOPPI_HOME) : path.join(os.homedir(), ".oppi", "hoppi"));
+  const backend = hoppi.createHoppiBackend({ root });
+  if (!backend || typeof backend !== "object") {
+    throw new Error("Installed Hoppi package returned an invalid backend.");
+  }
+  if (typeof backend.init === "function") await backend.init();
+  if (typeof backend.startDashboard !== "function") {
+    throw new Error("Installed Hoppi package does not expose backend.startDashboard().");
+  }
+  const resolvedCwd = path.resolve(cwd);
+  const project = { cwd: resolvedCwd, displayName: path.basename(resolvedCwd) || undefined };
+  let memoryCount = 0;
+  let pinnedCount = 0;
+  let storePath;
+  if (typeof backend.status === "function") {
+    try {
+      const status = await backend.status(project);
+      memoryCount = coerceMemoryCount(status && status.memoryCount);
+      pinnedCount = coerceMemoryCount(status && status.pinnedCount);
+      if (status && status.storePath) storePath = String(status.storePath);
+    } catch {
+      // Dashboard startup is still useful when status is unavailable.
+    }
+  }
+  const requestedPort = portRaw && portRaw !== "auto" ? Number(portRaw) : 0;
+  const dashboard = await backend.startDashboard({
+    project,
+    port: Number.isInteger(requestedPort) && requestedPort > 0 && requestedPort < 65536 ? requestedPort : 0,
+  });
+  if (!dashboard || !dashboard.url) {
+    throw new Error("Installed Hoppi package returned no dashboard URL.");
+  }
+  const url = String(dashboard.url);
+  const fallbackUrl = url.includes("hoppi.localhost") ? url.replace("hoppi.localhost", "localhost") : undefined;
+  console.log(JSON.stringify({ url, fallbackUrl, memoryCount, pinnedCount, storePath }));
+
+  let stopping = false;
+  async function stopAndExit() {
+    if (stopping) return;
+    stopping = true;
+    if (dashboard && typeof dashboard.stop === "function") {
+      try { await dashboard.stop(); } catch {}
+    }
+    process.exit(0);
+  }
+  process.on("SIGTERM", () => { void stopAndExit(); });
+  process.on("SIGINT", () => { void stopAndExit(); });
+  process.stdin.resume();
+  setInterval(() => {}, 2147483647);
+})().catch((error) => {
+  console.error(error && error.stack ? error.stack : String(error));
+  process.exit(1);
+});
+"#;
+
+const HOPPI_LIST_NODE_SCRIPT: &str = r#"
+const path = require("node:path");
+const os = require("node:os");
+const { pathToFileURL } = require("node:url");
+
+function coerceMemoryCount(value) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) && numeric > 0 ? Math.floor(numeric) : 0;
+}
+
+function stringField(entry, keys) {
+  for (const key of keys) {
+    const value = entry && entry[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return undefined;
+}
+
+function numberField(entry, keys) {
+  for (const key of keys) {
+    const value = Number(entry && entry[key]);
+    if (Number.isFinite(value)) return value;
+  }
+  return undefined;
+}
+
+function stringArray(value) {
+  return Array.isArray(value)
+    ? value.map((item) => String(item || "").trim()).filter(Boolean)
+    : [];
+}
+
+function normalizeRecord(entry) {
+  const id = stringField(entry, ["id", "memoryId"]);
+  const content = stringField(entry, ["content", "text", "summary", "body"]);
+  if (!id || !content) return undefined;
+  return {
+    id,
+    content,
+    tags: stringArray(entry.tags),
+    pinned: Boolean(entry.pinned),
+    starred: Boolean(entry.starred),
+    layer: stringField(entry, ["layer"]),
+    confidence: stringField(entry, ["confidence"]),
+    source: stringField(entry, ["source"]),
+    createdAt: stringField(entry, ["createdAt", "created_at", "created"]),
+    updatedAt: stringField(entry, ["updatedAt", "updated_at"]),
+    strength: numberField(entry, ["strength"]),
+    retrievalStrength: numberField(entry, ["retrievalStrength", "retrieval_strength"]),
+    retrievalCount: coerceMemoryCount(entry.retrievalCount ?? entry.retrieval_count ?? entry.useCount ?? entry.use_count),
+    lastRetrievedAt: stringField(entry, ["lastRetrievedAt", "last_retrieved_at", "retrieved_at", "lastUsedAt", "last_used_at"]),
+    supersededBy: stringField(entry, ["supersededBy", "superseded_by"]),
+    parents: stringArray(entry.parents),
+  };
+}
+
+(async () => {
+  const [modulePath, cwd, includeSupersededRaw, pinnedOnlyRaw, limitRaw] = process.argv.slice(1);
+  const hoppi = await import(pathToFileURL(path.resolve(modulePath)).href);
+  if (typeof hoppi.createHoppiBackend !== "function") {
+    throw new Error("Installed Hoppi package does not expose createHoppiBackend().");
+  }
+  const root = typeof hoppi.getDefaultHoppiRoot === "function"
+    ? hoppi.getDefaultHoppiRoot()
+    : (process.env.HOPPI_HOME ? path.resolve(process.env.HOPPI_HOME) : path.join(os.homedir(), ".oppi", "hoppi"));
+  const backend = hoppi.createHoppiBackend({ root });
+  if (!backend || typeof backend !== "object") {
+    throw new Error("Installed Hoppi package returned an invalid backend.");
+  }
+  if (typeof backend.init === "function") await backend.init();
+  if (typeof backend.list !== "function") {
+    throw new Error("Installed Hoppi package does not expose backend.list().");
+  }
+  const resolvedCwd = path.resolve(cwd);
+  const project = { cwd: resolvedCwd, displayName: path.basename(resolvedCwd) || undefined };
+  const limitNumber = Number(limitRaw);
+  const input = {
+    project,
+    includeSuperseded: includeSupersededRaw === "true",
+    pinnedOnly: pinnedOnlyRaw === "true",
+  };
+  if (Number.isInteger(limitNumber) && limitNumber > 0) input.limit = Math.min(limitNumber, 500);
+  const rawRecords = await backend.list(input);
+  const records = Array.isArray(rawRecords)
+    ? rawRecords.map(normalizeRecord).filter(Boolean)
+    : [];
+  let memoryCount = records.length;
+  let pinnedCount = records.filter((record) => record.pinned || record.starred).length;
+  let storePath;
+  if (typeof backend.status === "function") {
+    try {
+      const status = await backend.status(project);
+      memoryCount = Math.max(memoryCount, coerceMemoryCount(status && status.memoryCount));
+      pinnedCount = Math.max(pinnedCount, coerceMemoryCount(status && status.pinnedCount));
+      if (status && status.storePath) storePath = String(status.storePath);
+    } catch {
+      // List records are useful even when status is unavailable.
+    }
+  }
+  console.log(JSON.stringify({ records, memoryCount, pinnedCount, storePath }));
+})().catch((error) => {
+  console.error(error && error.stack ? error.stack : String(error));
+  process.exit(1);
+});
+"#;
+
+const HOPPI_FORGET_NODE_SCRIPT: &str = r#"
+const path = require("node:path");
+const os = require("node:os");
+const { pathToFileURL } = require("node:url");
+
+function coerceMemoryCount(value) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) && numeric >= 0 ? Math.floor(numeric) : undefined;
+}
+
+(async () => {
+  const [modulePath, cwd, id] = process.argv.slice(1);
+  const memoryId = String(id || "").trim();
+  if (!memoryId) throw new Error("memory id is required");
+  const hoppi = await import(pathToFileURL(path.resolve(modulePath)).href);
+  if (typeof hoppi.createHoppiBackend !== "function") {
+    throw new Error("Installed Hoppi package does not expose createHoppiBackend().");
+  }
+  const root = typeof hoppi.getDefaultHoppiRoot === "function"
+    ? hoppi.getDefaultHoppiRoot()
+    : (process.env.HOPPI_HOME ? path.resolve(process.env.HOPPI_HOME) : path.join(os.homedir(), ".oppi", "hoppi"));
+  const backend = hoppi.createHoppiBackend({ root });
+  if (!backend || typeof backend !== "object") {
+    throw new Error("Installed Hoppi package returned an invalid backend.");
+  }
+  if (typeof backend.init === "function") await backend.init();
+  if (typeof backend.forget !== "function") {
+    throw new Error("Installed Hoppi package does not expose backend.forget().");
+  }
+  const resolvedCwd = path.resolve(cwd);
+  const project = { cwd: resolvedCwd, displayName: path.basename(resolvedCwd) || undefined };
+  await backend.forget(memoryId);
+  let memoryCount;
+  let pinnedCount;
+  let storePath;
+  if (typeof backend.status === "function") {
+    try {
+      const status = await backend.status(project);
+      memoryCount = coerceMemoryCount(status && status.memoryCount);
+      pinnedCount = coerceMemoryCount(status && status.pinnedCount);
+      if (status && status.storePath) storePath = String(status.storePath);
+    } catch {
+      // Forget already succeeded; status refresh is best-effort.
+    }
+  }
+  console.log(JSON.stringify({ id: memoryId, memoryCount, pinnedCount, storePath }));
+})().catch((error) => {
+  console.error(error && error.stack ? error.stack : String(error));
+  process.exit(1);
+});
+"#;
+
+const HOPPI_PIN_NODE_SCRIPT: &str = r#"
+const path = require("node:path");
+const os = require("node:os");
+const { pathToFileURL } = require("node:url");
+
+function coerceMemoryCount(value) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) && numeric >= 0 ? Math.floor(numeric) : undefined;
+}
+
+function stringField(entry, keys) {
+  for (const key of keys) {
+    const value = entry && entry[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return undefined;
+}
+
+function numberField(entry, keys) {
+  for (const key of keys) {
+    const value = Number(entry && entry[key]);
+    if (Number.isFinite(value)) return value;
+  }
+  return undefined;
+}
+
+function stringArray(value) {
+  return Array.isArray(value)
+    ? value.map((item) => String(item || "").trim()).filter(Boolean)
+    : [];
+}
+
+function normalizeRecord(entry, fallbackId, pinned) {
+  if (!entry || typeof entry !== "object") return undefined;
+  const id = stringField(entry, ["id", "memoryId"]) || fallbackId;
+  const content = stringField(entry, ["content", "text", "summary", "body"]);
+  if (!id || !content) return undefined;
+  return {
+    id,
+    content,
+    tags: stringArray(entry.tags),
+    pinned: Boolean(entry.pinned ?? pinned),
+    starred: Boolean(entry.starred),
+    layer: stringField(entry, ["layer"]),
+    confidence: stringField(entry, ["confidence"]),
+    source: stringField(entry, ["source"]),
+    createdAt: stringField(entry, ["createdAt", "created_at", "created"]),
+    updatedAt: stringField(entry, ["updatedAt", "updated_at"]),
+    strength: numberField(entry, ["strength"]),
+    retrievalStrength: numberField(entry, ["retrievalStrength", "retrieval_strength"]),
+    retrievalCount: coerceMemoryCount(entry.retrievalCount ?? entry.retrieval_count ?? entry.useCount ?? entry.use_count),
+    lastRetrievedAt: stringField(entry, ["lastRetrievedAt", "last_retrieved_at", "retrieved_at", "lastUsedAt", "last_used_at"]),
+    supersededBy: stringField(entry, ["supersededBy", "superseded_by"]),
+    parents: stringArray(entry.parents),
+  };
+}
+
+(async () => {
+  const [modulePath, cwd, id, pinnedRaw] = process.argv.slice(1);
+  const memoryId = String(id || "").trim();
+  if (!memoryId) throw new Error("memory id is required");
+  const pinned = pinnedRaw === "true";
+  const hoppi = await import(pathToFileURL(path.resolve(modulePath)).href);
+  if (typeof hoppi.createHoppiBackend !== "function") {
+    throw new Error("Installed Hoppi package does not expose createHoppiBackend().");
+  }
+  const root = typeof hoppi.getDefaultHoppiRoot === "function"
+    ? hoppi.getDefaultHoppiRoot()
+    : (process.env.HOPPI_HOME ? path.resolve(process.env.HOPPI_HOME) : path.join(os.homedir(), ".oppi", "hoppi"));
+  const backend = hoppi.createHoppiBackend({ root });
+  if (!backend || typeof backend !== "object") {
+    throw new Error("Installed Hoppi package returned an invalid backend.");
+  }
+  if (typeof backend.init === "function") await backend.init();
+  if (typeof backend.pin !== "function") {
+    throw new Error("Installed Hoppi package does not expose backend.pin().");
+  }
+  const resolvedCwd = path.resolve(cwd);
+  const project = { cwd: resolvedCwd, displayName: path.basename(resolvedCwd) || undefined };
+  const rawRecord = await backend.pin(memoryId, pinned);
+  const record = normalizeRecord(rawRecord, memoryId, pinned);
+  let memoryCount;
+  let pinnedCount;
+  let storePath;
+  if (typeof backend.status === "function") {
+    try {
+      const status = await backend.status(project);
+      memoryCount = coerceMemoryCount(status && status.memoryCount);
+      pinnedCount = coerceMemoryCount(status && status.pinnedCount);
+      if (status && status.storePath) storePath = String(status.storePath);
+    } catch {
+      // Pin already succeeded; status refresh is best-effort.
+    }
+  }
+  console.log(JSON.stringify({ id: memoryId, pinned, record, memoryCount, pinnedCount, storePath }));
+})().catch((error) => {
+  console.error(error && error.stack ? error.stack : String(error));
+  process.exit(1);
+});
+"#;
+
+const HOPPI_UPDATE_NODE_SCRIPT: &str = r#"
+const path = require("node:path");
+const os = require("node:os");
+const { pathToFileURL } = require("node:url");
+
+function coerceMemoryCount(value) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) && numeric >= 0 ? Math.floor(numeric) : undefined;
+}
+
+function stringField(entry, keys) {
+  for (const key of keys) {
+    const value = entry && entry[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return undefined;
+}
+
+function numberField(entry, keys) {
+  for (const key of keys) {
+    const value = Number(entry && entry[key]);
+    if (Number.isFinite(value)) return value;
+  }
+  return undefined;
+}
+
+function stringArray(value) {
+  return Array.isArray(value)
+    ? value.map((item) => String(item || "").trim()).filter(Boolean)
+    : [];
+}
+
+function normalizeRecord(entry, fallbackId) {
+  if (!entry || typeof entry !== "object") return undefined;
+  const id = stringField(entry, ["id", "memoryId"]) || fallbackId;
+  const content = stringField(entry, ["content", "text", "summary", "body"]);
+  if (!id || !content) return undefined;
+  return {
+    id,
+    content,
+    tags: stringArray(entry.tags),
+    pinned: Boolean(entry.pinned),
+    starred: Boolean(entry.starred),
+    layer: stringField(entry, ["layer"]),
+    confidence: stringField(entry, ["confidence"]),
+    source: stringField(entry, ["source"]),
+    createdAt: stringField(entry, ["createdAt", "created_at", "created"]),
+    updatedAt: stringField(entry, ["updatedAt", "updated_at"]),
+    strength: numberField(entry, ["strength"]),
+    retrievalStrength: numberField(entry, ["retrievalStrength", "retrieval_strength"]),
+    retrievalCount: coerceMemoryCount(entry.retrievalCount ?? entry.retrieval_count ?? entry.useCount ?? entry.use_count),
+    lastRetrievedAt: stringField(entry, ["lastRetrievedAt", "last_retrieved_at", "retrieved_at", "lastUsedAt", "last_used_at"]),
+    supersededBy: stringField(entry, ["supersededBy", "superseded_by"]),
+    parents: stringArray(entry.parents),
+  };
+}
+
+(async () => {
+  const [modulePath, cwd, id, patchRaw] = process.argv.slice(1);
+  const memoryId = String(id || "").trim();
+  if (!memoryId) throw new Error("memory id is required");
+  const patch = JSON.parse(String(patchRaw || "{}"));
+  if (!patch || typeof patch !== "object" || Array.isArray(patch) || Object.keys(patch).length === 0) {
+    throw new Error("memory update patch must be a non-empty object");
+  }
+  const hoppi = await import(pathToFileURL(path.resolve(modulePath)).href);
+  if (typeof hoppi.createHoppiBackend !== "function") {
+    throw new Error("Installed Hoppi package does not expose createHoppiBackend().");
+  }
+  const root = typeof hoppi.getDefaultHoppiRoot === "function"
+    ? hoppi.getDefaultHoppiRoot()
+    : (process.env.HOPPI_HOME ? path.resolve(process.env.HOPPI_HOME) : path.join(os.homedir(), ".oppi", "hoppi"));
+  const backend = hoppi.createHoppiBackend({ root });
+  if (!backend || typeof backend !== "object") {
+    throw new Error("Installed Hoppi package returned an invalid backend.");
+  }
+  if (typeof backend.init === "function") await backend.init();
+  if (typeof backend.update !== "function") {
+    throw new Error("Installed Hoppi package does not expose backend.update().");
+  }
+  const resolvedCwd = path.resolve(cwd);
+  const project = { cwd: resolvedCwd, displayName: path.basename(resolvedCwd) || undefined };
+  const rawRecord = await backend.update(memoryId, patch);
+  const record = normalizeRecord(rawRecord, memoryId);
+  let memoryCount;
+  let pinnedCount;
+  let storePath;
+  if (typeof backend.status === "function") {
+    try {
+      const status = await backend.status(project);
+      memoryCount = coerceMemoryCount(status && status.memoryCount);
+      pinnedCount = coerceMemoryCount(status && status.pinnedCount);
+      if (status && status.storePath) storePath = String(status.storePath);
+    } catch {
+      // Update already succeeded; status refresh is best-effort.
+    }
+  }
+  console.log(JSON.stringify({ id: memoryId, record, memoryCount, pinnedCount, storePath }));
+})().catch((error) => {
+  console.error(error && error.stack ? error.stack : String(error));
+  process.exit(1);
+});
+"#;
+
+const HOPPI_SYNC_NODE_SCRIPT: &str = r#"
+const path = require("node:path");
+const os = require("node:os");
+const { pathToFileURL } = require("node:url");
+
+(async () => {
+  const [modulePath, repoPath, direction, conflictMode, message, remote] = process.argv.slice(1);
+  const hoppi = await import(pathToFileURL(path.resolve(modulePath)).href);
+  if (typeof hoppi.syncGitRepository !== "function") {
+    throw new Error("Installed Hoppi package does not expose syncGitRepository().");
+  }
+  const root = typeof hoppi.getDefaultHoppiRoot === "function"
+    ? hoppi.getDefaultHoppiRoot()
+    : (process.env.HOPPI_HOME ? path.resolve(process.env.HOPPI_HOME) : path.join(os.homedir(), ".oppi", "hoppi"));
+  const options = { direction, conflictMode, message };
+  if (remote) options.remote = remote;
+  if (process.env.OPPI_HOPPI_SYNC_RUNTIME_PASSPHRASE) {
+    options.passphrase = process.env.OPPI_HOPPI_SYNC_RUNTIME_PASSPHRASE;
+  }
+  const result = await hoppi.syncGitRepository(root, repoPath, options);
+  let rebuiltEmbeddings = false;
+  if ((direction === "pull" || direction === "both")
+      && result && result.embeddingsRebuildRecommended
+      && typeof hoppi.rebuildEmbeddings === "function") {
+    const rebuilt = await hoppi.rebuildEmbeddings(root);
+    rebuiltEmbeddings = !(rebuilt && rebuilt.error);
+  }
+  console.log(JSON.stringify({ ...(result || {}), rebuiltEmbeddings }));
+})().catch((error) => {
+  console.error(error && error.stack ? error.stack : String(error));
+  process.exit(1);
+});
+"#;
+
+fn format_hoppi_bridge_timeout(timeout: Duration) -> String {
+    let millis = timeout.as_millis();
+    if millis >= 1_000 && millis % 1_000 == 0 {
+        format!("{}s", millis / 1_000)
+    } else {
+        format!("{millis}ms")
+    }
+}
+
+fn read_process_pipe_async<R: Read + Send + 'static>(mut pipe: R) -> mpsc::Receiver<Vec<u8>> {
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        let _ = pipe.read_to_end(&mut bytes);
+        let _ = tx.send(bytes);
+    });
+    rx
+}
+
+fn process_pipe_bytes(rx: &mpsc::Receiver<Vec<u8>>) -> Vec<u8> {
+    rx.recv_timeout(Duration::from_secs(1)).unwrap_or_default()
+}
+
+fn run_hoppi_node_output(
+    command: &mut Command,
+    label: &str,
+    timeout: Duration,
+) -> Result<std::process::Output, String> {
+    let timeout = std::cmp::max(timeout, Duration::from_millis(1));
+    command.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut child = command
+        .spawn()
+        .map_err(|error| format!("spawn node {label}: {error}"))?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| format!("{label} stdout was not captured"))?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| format!("{label} stderr was not captured"))?;
+    let stdout_rx = read_process_pipe_async(stdout);
+    let stderr_rx = read_process_pipe_async(stderr);
+    let started = Instant::now();
+
+    loop {
+        if let Some(status) = child
+            .try_wait()
+            .map_err(|error| format!("wait for node {label}: {error}"))?
+        {
+            return Ok(std::process::Output {
+                status,
+                stdout: process_pipe_bytes(&stdout_rx),
+                stderr: process_pipe_bytes(&stderr_rx),
+            });
+        }
+        if started.elapsed() >= timeout {
+            let _ = child.kill();
+            let _ = child.wait();
+            let stdout = process_pipe_bytes(&stdout_rx);
+            let stderr = process_pipe_bytes(&stderr_rx);
+            let tail = compact_process_output(&[stdout, stderr].concat());
+            return Err(format!(
+                "{label} timed out after {}{}{}",
+                format_hoppi_bridge_timeout(timeout),
+                if tail.is_empty() { "" } else { ": " },
+                tail
+            ));
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+fn run_hoppi_dashboard(
+    settings: &MemorySettings,
+    cwd: &Path,
+    module_path: PathBuf,
+) -> Result<HoppiDashboardProcess, String> {
+    let invocation = hoppi_dashboard_invocation_from_settings(settings, cwd, module_path)?;
+    run_hoppi_dashboard_invocation(&invocation)
+}
+
+fn run_hoppi_dashboard_invocation(
+    invocation: &HoppiDashboardInvocation,
+) -> Result<HoppiDashboardProcess, String> {
+    let mut child = Command::new(if cfg!(windows) { "node.exe" } else { "node" })
+        .arg("-e")
+        .arg(HOPPI_DASHBOARD_NODE_SCRIPT)
+        .arg(&invocation.module_path)
+        .arg(&invocation.cwd)
+        .arg(
+            invocation
+                .port
+                .map(|port| port.to_string())
+                .unwrap_or_else(|| "auto".to_string()),
+        )
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| format!("spawn node Hoppi dashboard: {error}"))?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| "Hoppi dashboard stdout was not captured".to_string())?;
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let mut reader = BufReader::new(stdout);
+        let mut line = String::new();
+        let read = reader.read_line(&mut line);
+        let _ = tx.send((read, line));
+    });
+
+    let (read, line) = match rx.recv_timeout(Duration::from_secs(10)) {
+        Ok(value) => value,
+        Err(mpsc::RecvTimeoutError::Timeout) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err("Hoppi dashboard did not report a URL within 10s".to_string());
+        }
+        Err(mpsc::RecvTimeoutError::Disconnected) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err("Hoppi dashboard exited before reporting a URL".to_string());
+        }
+    };
+    match read {
+        Ok(0) => {
+            let tail = child
+                .stderr
+                .take()
+                .and_then(|mut stderr| {
+                    let mut text = Vec::new();
+                    stderr.read_to_end(&mut text).ok().map(|_| text)
+                })
+                .map(|text| compact_process_output(&text))
+                .unwrap_or_default();
+            let status = child.try_wait().ok().flatten();
+            let _ = child.kill();
+            let _ = child.wait();
+            Err(format!(
+                "Hoppi dashboard returned no JSON output{}{}{}",
+                status
+                    .map(|status| format!(" ({status})"))
+                    .unwrap_or_default(),
+                if tail.is_empty() { "" } else { ": " },
+                tail
+            ))
+        }
+        Ok(_) => {
+            let result = parse_hoppi_dashboard_output(&line)?;
+            Ok(HoppiDashboardProcess { result, child })
+        }
+        Err(error) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            Err(format!("read Hoppi dashboard output: {error}"))
+        }
+    }
+}
+
+fn parse_hoppi_dashboard_output(output: &str) -> Result<HoppiDashboardCommandResult, String> {
+    let line = output
+        .lines()
+        .find(|line| !line.trim().is_empty())
+        .ok_or_else(|| "Hoppi dashboard returned no JSON output".to_string())?;
+    let value: Value = serde_json::from_str(line.trim())
+        .map_err(|error| format!("parse Hoppi dashboard output: {error}"))?;
+    let url = value
+        .get("url")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|url| !url.is_empty())
+        .ok_or_else(|| "Hoppi dashboard output missing url".to_string())?
+        .to_string();
+    Ok(HoppiDashboardCommandResult {
+        fallback_url: value
+            .get("fallbackUrl")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|url| !url.is_empty())
+            .map(str::to_string),
+        url,
+        memory_count: value
+            .get("memoryCount")
+            .and_then(Value::as_u64)
+            .unwrap_or(0),
+        pinned_count: value
+            .get("pinnedCount")
+            .and_then(Value::as_u64)
+            .unwrap_or(0),
+        store_path: value
+            .get("storePath")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|path| !path.is_empty())
+            .map(str::to_string),
+    })
+}
+
+fn run_hoppi_list_invocation(
+    invocation: &HoppiListInvocation,
+) -> Result<HoppiListCommandResult, String> {
+    run_hoppi_list_invocation_with_timeout(invocation, HOPPI_BRIDGE_TIMEOUT)
+}
+
+fn run_hoppi_list_invocation_with_timeout(
+    invocation: &HoppiListInvocation,
+    timeout: Duration,
+) -> Result<HoppiListCommandResult, String> {
+    let mut command = Command::new(if cfg!(windows) { "node.exe" } else { "node" });
+    command
+        .arg("-e")
+        .arg(HOPPI_LIST_NODE_SCRIPT)
+        .arg(&invocation.module_path)
+        .arg(&invocation.cwd)
+        .arg(if invocation.include_superseded {
+            "true"
+        } else {
+            "false"
+        })
+        .arg(if invocation.pinned_only {
+            "true"
+        } else {
+            "false"
+        })
+        .arg(
+            invocation
+                .limit
+                .map(|limit| limit.to_string())
+                .unwrap_or_else(|| "0".to_string()),
+        );
+    let output = run_hoppi_node_output(&mut command, "Hoppi list", timeout)?;
+    if !output.status.success() {
+        let tail = compact_process_output(&[output.stdout, output.stderr].concat());
+        return Err(format!(
+            "Hoppi list failed with status {}{}{}",
+            output.status,
+            if tail.is_empty() { "" } else { ": " },
+            tail
+        ));
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    parse_hoppi_list_output(&stdout)
+}
+
+fn parse_hoppi_list_output(output: &str) -> Result<HoppiListCommandResult, String> {
+    let line = output
+        .lines()
+        .rev()
+        .find(|line| !line.trim().is_empty())
+        .ok_or_else(|| "Hoppi list returned no JSON output".to_string())?;
+    let value: Value = serde_json::from_str(line.trim())
+        .map_err(|error| format!("parse Hoppi list output: {error}"))?;
+    let records = value
+        .get("records")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|record| {
+            serde_json::from_value::<MemoryRecord>(record)
+                .map_err(|error| format!("parse Hoppi memory record: {error}"))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(HoppiListCommandResult {
+        records,
+        memory_count: value
+            .get("memoryCount")
+            .and_then(Value::as_u64)
+            .unwrap_or(0),
+        pinned_count: value
+            .get("pinnedCount")
+            .and_then(Value::as_u64)
+            .unwrap_or(0),
+        store_path: value
+            .get("storePath")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|path| !path.is_empty())
+            .map(str::to_string),
+    })
+}
+
+fn run_hoppi_forget_invocation(
+    invocation: &HoppiForgetInvocation,
+) -> Result<HoppiForgetCommandResult, String> {
+    let mut command = Command::new(if cfg!(windows) { "node.exe" } else { "node" });
+    command
+        .arg("-e")
+        .arg(HOPPI_FORGET_NODE_SCRIPT)
+        .arg(&invocation.module_path)
+        .arg(&invocation.cwd)
+        .arg(&invocation.id);
+    let output = run_hoppi_node_output(&mut command, "Hoppi forget", HOPPI_BRIDGE_TIMEOUT)?;
+    if !output.status.success() {
+        let tail = compact_process_output(&[output.stdout, output.stderr].concat());
+        return Err(format!(
+            "Hoppi forget failed with status {}{}{}",
+            output.status,
+            if tail.is_empty() { "" } else { ": " },
+            tail
+        ));
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    parse_hoppi_forget_output(&stdout)
+}
+
+fn parse_hoppi_forget_output(output: &str) -> Result<HoppiForgetCommandResult, String> {
+    let line = output
+        .lines()
+        .rev()
+        .find(|line| !line.trim().is_empty())
+        .ok_or_else(|| "Hoppi forget returned no JSON output".to_string())?;
+    let value: Value = serde_json::from_str(line.trim())
+        .map_err(|error| format!("parse Hoppi forget output: {error}"))?;
+    let id = value
+        .get("id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+        .ok_or_else(|| "Hoppi forget output missing id".to_string())?
+        .to_string();
+    Ok(HoppiForgetCommandResult {
+        id,
+        memory_count: value.get("memoryCount").and_then(Value::as_u64),
+        pinned_count: value.get("pinnedCount").and_then(Value::as_u64),
+        store_path: value
+            .get("storePath")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|path| !path.is_empty())
+            .map(str::to_string),
+    })
+}
+
+fn run_hoppi_pin_invocation(
+    invocation: &HoppiPinInvocation,
+) -> Result<HoppiPinCommandResult, String> {
+    let mut command = Command::new(if cfg!(windows) { "node.exe" } else { "node" });
+    command
+        .arg("-e")
+        .arg(HOPPI_PIN_NODE_SCRIPT)
+        .arg(&invocation.module_path)
+        .arg(&invocation.cwd)
+        .arg(&invocation.id)
+        .arg(if invocation.pinned { "true" } else { "false" });
+    let output = run_hoppi_node_output(&mut command, "Hoppi pin", HOPPI_BRIDGE_TIMEOUT)?;
+    if !output.status.success() {
+        let tail = compact_process_output(&[output.stdout, output.stderr].concat());
+        return Err(format!(
+            "Hoppi pin failed with status {}{}{}",
+            output.status,
+            if tail.is_empty() { "" } else { ": " },
+            tail
+        ));
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    parse_hoppi_pin_output(&stdout)
+}
+
+fn parse_hoppi_pin_output(output: &str) -> Result<HoppiPinCommandResult, String> {
+    let line = output
+        .lines()
+        .rev()
+        .find(|line| !line.trim().is_empty())
+        .ok_or_else(|| "Hoppi pin returned no JSON output".to_string())?;
+    let value: Value = serde_json::from_str(line.trim())
+        .map_err(|error| format!("parse Hoppi pin output: {error}"))?;
+    let id = value
+        .get("id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+        .ok_or_else(|| "Hoppi pin output missing id".to_string())?
+        .to_string();
+    let record = value
+        .get("record")
+        .cloned()
+        .filter(|value| !value.is_null())
+        .map(|record| {
+            serde_json::from_value::<MemoryRecord>(record)
+                .map_err(|error| format!("parse Hoppi pinned memory record: {error}"))
+        })
+        .transpose()?;
+    Ok(HoppiPinCommandResult {
+        id,
+        pinned: value
+            .get("pinned")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        record,
+        memory_count: value.get("memoryCount").and_then(Value::as_u64),
+        pinned_count: value.get("pinnedCount").and_then(Value::as_u64),
+        store_path: value
+            .get("storePath")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|path| !path.is_empty())
+            .map(str::to_string),
+    })
+}
+
+fn run_hoppi_update_invocation(
+    invocation: &HoppiUpdateInvocation,
+) -> Result<HoppiUpdateCommandResult, String> {
+    let patch_json = serde_json::to_string(&invocation.patch)
+        .map_err(|error| format!("serialize Hoppi update patch: {error}"))?;
+    let mut command = Command::new(if cfg!(windows) { "node.exe" } else { "node" });
+    command
+        .arg("-e")
+        .arg(HOPPI_UPDATE_NODE_SCRIPT)
+        .arg(&invocation.module_path)
+        .arg(&invocation.cwd)
+        .arg(&invocation.id)
+        .arg(patch_json);
+    let output = run_hoppi_node_output(&mut command, "Hoppi update", HOPPI_BRIDGE_TIMEOUT)?;
+    if !output.status.success() {
+        let tail = compact_process_output(&[output.stdout, output.stderr].concat());
+        return Err(format!(
+            "Hoppi update failed with status {}{}{}",
+            output.status,
+            if tail.is_empty() { "" } else { ": " },
+            tail
+        ));
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    parse_hoppi_update_output(&stdout)
+}
+
+fn parse_hoppi_update_output(output: &str) -> Result<HoppiUpdateCommandResult, String> {
+    let line = output
+        .lines()
+        .rev()
+        .find(|line| !line.trim().is_empty())
+        .ok_or_else(|| "Hoppi update returned no JSON output".to_string())?;
+    let value: Value = serde_json::from_str(line.trim())
+        .map_err(|error| format!("parse Hoppi update output: {error}"))?;
+    let id = value
+        .get("id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+        .ok_or_else(|| "Hoppi update output missing id".to_string())?
+        .to_string();
+    let record = value
+        .get("record")
+        .cloned()
+        .filter(|value| !value.is_null())
+        .map(|record| {
+            serde_json::from_value::<MemoryRecord>(record)
+                .map_err(|error| format!("parse Hoppi updated memory record: {error}"))
+        })
+        .transpose()?;
+    Ok(HoppiUpdateCommandResult {
+        id,
+        record,
+        memory_count: value.get("memoryCount").and_then(Value::as_u64),
+        pinned_count: value.get("pinnedCount").and_then(Value::as_u64),
+        store_path: value
+            .get("storePath")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|path| !path.is_empty())
+            .map(str::to_string),
+    })
+}
+
+const HOPPI_CONSOLIDATE_NODE_SCRIPT: &str = r#"
+const path = require("node:path");
+const os = require("node:os");
+const { pathToFileURL } = require("node:url");
+
+function coerceCount(value) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) && numeric >= 0 ? Math.floor(numeric) : undefined;
+}
+
+function stringField(entry, keys) {
+  for (const key of keys) {
+    const value = entry && entry[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return undefined;
+}
+
+function numberField(entry, keys) {
+  for (const key of keys) {
+    const value = Number(entry && entry[key]);
+    if (Number.isFinite(value)) return value;
+  }
+  return undefined;
+}
+
+function stringArray(value) {
+  return Array.isArray(value)
+    ? value.map((item) => String(item || "").trim()).filter(Boolean)
+    : [];
+}
+
+function normalizeRecord(entry) {
+  const id = stringField(entry, ["id", "memoryId"]);
+  const content = stringField(entry, ["content", "text", "summary", "body"]);
+  if (!id || !content) return undefined;
+  return {
+    id,
+    content,
+    tags: stringArray(entry && entry.tags),
+    pinned: Boolean(entry && entry.pinned),
+    starred: Boolean(entry && entry.starred),
+    layer: stringField(entry, ["layer"]),
+    confidence: stringField(entry, ["confidence"]),
+    source: stringField(entry, ["source"]),
+    createdAt: stringField(entry, ["createdAt", "created_at", "created"]),
+    updatedAt: stringField(entry, ["updatedAt", "updated_at"]),
+    strength: numberField(entry, ["strength"]),
+    retrievalStrength: numberField(entry, ["retrievalStrength", "retrieval_strength"]),
+    retrievalCount: coerceCount(entry && (entry.retrievalCount ?? entry.retrieval_count ?? entry.useCount ?? entry.use_count)),
+    lastRetrievedAt: stringField(entry, ["lastRetrievedAt", "last_retrieved_at", "retrieved_at", "lastUsedAt", "last_used_at"]),
+    supersededBy: stringField(entry, ["supersededBy", "superseded_by"]),
+    parents: stringArray(entry && entry.parents),
+  };
+}
+
+function firstArray(value, keys) {
+  for (const key of keys) {
+    if (Array.isArray(value && value[key])) return value[key];
+  }
+  return [];
+}
+
+(async () => {
+  const [modulePath, cwd, dryRunRaw, stageRaw, limitRaw, budgetRaw, agentModelRaw, deepModelRaw] = process.argv.slice(1);
+  const dryRun = dryRunRaw === "true";
+  const stage = String(stageRaw || "manual-maintenance").trim() || "manual-maintenance";
+  const limit = coerceCount(limitRaw);
+  const budget = coerceCount(budgetRaw);
+  const modelPreference = {
+    agentModel: typeof agentModelRaw === "string" && agentModelRaw.trim() ? agentModelRaw.trim() : "auto",
+    deepModel: typeof deepModelRaw === "string" && deepModelRaw.trim() ? deepModelRaw.trim() : "auto"
+  };
+  const hoppi = await import(pathToFileURL(path.resolve(modulePath)).href);
+  if (typeof hoppi.createHoppiBackend !== "function") {
+    throw new Error("Installed Hoppi package does not expose createHoppiBackend().");
+  }
+  const root = typeof hoppi.getDefaultHoppiRoot === "function"
+    ? hoppi.getDefaultHoppiRoot()
+    : (process.env.HOPPI_HOME ? path.resolve(process.env.HOPPI_HOME) : path.join(os.homedir(), ".oppi", "hoppi"));
+  const backend = hoppi.createHoppiBackend({ root });
+  if (!backend || typeof backend !== "object") {
+    throw new Error("Installed Hoppi package returned an invalid backend.");
+  }
+  if (typeof backend.init === "function") await backend.init();
+  if (typeof backend.consolidate !== "function") {
+    throw new Error("Installed Hoppi package does not expose backend.consolidate().");
+  }
+  const resolvedCwd = path.resolve(cwd);
+  const project = { cwd: resolvedCwd, displayName: path.basename(resolvedCwd) || undefined };
+  const input = { project, dryRun, stage, source: "oppi:native-shell", modelPreference };
+  if (limit !== undefined && limit > 0) input.limit = limit;
+  if (budget !== undefined && budget > 0) input.budget = budget;
+  const result = (await backend.consolidate(input)) || {};
+  let status = result.status && typeof result.status === "object" ? result.status : undefined;
+  if (typeof backend.status === "function") {
+    try {
+      status = { ...(status || {}), ...((await backend.status(project)) || {}) };
+    } catch {
+      // Consolidation is the main result; status is only used for observability.
+    }
+  }
+  const records = firstArray(result, ["records", "memories", "created", "consolidated"])
+    .map(normalizeRecord)
+    .filter(Boolean);
+  const deletedIds = stringArray(result.deletedIds || result.deleted_ids || result.deleted || result.removedIds);
+  console.log(JSON.stringify({
+    dryRun: Boolean(result.dryRun ?? dryRun),
+    modelUsed: stringField(result, ["modelUsed", "model_used", "model"]) || stringField(status, ["modelUsed", "model_used", "model"]),
+    summary: stringField(result, ["summary", "message"]),
+    records,
+    deletedIds,
+    memoryCount: coerceCount(result.memoryCount ?? result.memory_count ?? (status && (status.memoryCount ?? status.memory_count))) ?? records.length,
+    pinnedCount: coerceCount(result.pinnedCount ?? result.pinned_count ?? (status && (status.pinnedCount ?? status.pinned_count))),
+    storePath: stringField(result, ["storePath", "store_path"]) || stringField(status, ["storePath", "store_path"]),
+    lastConsolidatedAt: stringField(result, ["lastConsolidatedAt", "last_consolidated_at"]) || stringField(status, ["lastConsolidatedAt", "last_consolidated_at"]),
+    queueDepth: coerceCount(result.queueDepth ?? result.queue_depth ?? (status && (status.queueDepth ?? status.queue_depth))),
+  }));
+})().catch((error) => {
+  console.error(error && error.stack ? error.stack : String(error));
+  process.exit(1);
+});
+"#;
+
+fn sanitize_memory_job_component(input: &str) -> String {
+    let mut output = String::new();
+    let mut last_dash = false;
+    for character in input.chars() {
+        let next = if character.is_ascii_alphanumeric() {
+            last_dash = false;
+            Some(character.to_ascii_lowercase())
+        } else if !last_dash {
+            last_dash = true;
+            Some('-')
+        } else {
+            None
+        };
+        if let Some(next) = next {
+            output.push(next);
+        }
+    }
+    let output = output.trim_matches('-');
+    if output.is_empty() {
+        "job".to_string()
+    } else {
+        output.to_string()
+    }
+}
+
+fn next_native_memory_job_id(prefix: &str, stage: &str) -> String {
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis())
+        .unwrap_or(0);
+    format!(
+        "native-{}-{}-{}-{}",
+        sanitize_memory_job_component(prefix),
+        sanitize_memory_job_component(stage),
+        std::process::id(),
+        timestamp
+    )
+}
+
+fn hoppi_dashboard_job_stage() -> &'static str {
+    "dashboard-start"
+}
+
+fn hoppi_dashboard_job_started_params(
+    thread_id: &str,
+    job_id: &str,
+    _invocation: &HoppiDashboardInvocation,
+) -> Value {
+    json!({
+        "threadId": thread_id,
+        "jobId": job_id,
+        "kind": "dashboard",
+        "stage": hoppi_dashboard_job_stage(),
+        "status": "running",
+        "source": "hoppi-dashboard",
+        "message": "Starting Hoppi dashboard.",
+        "backendApplied": false,
+    })
+}
+
+fn hoppi_dashboard_job_finished_params(
+    thread_id: &str,
+    job_id: &str,
+    _invocation: &HoppiDashboardInvocation,
+    result: &HoppiDashboardCommandResult,
+) -> Value {
+    json!({
+        "threadId": thread_id,
+        "jobId": job_id,
+        "kind": "dashboard",
+        "stage": hoppi_dashboard_job_stage(),
+        "status": "succeeded",
+        "source": "hoppi-dashboard",
+        "message": format!("Hoppi dashboard ready: {}.", result.url),
+        "recordCount": result.memory_count,
+        "backendApplied": true,
+    })
+}
+
+fn hoppi_dashboard_job_failed_params(
+    thread_id: &str,
+    job_id: &str,
+    _invocation: &HoppiDashboardInvocation,
+    error: &str,
+) -> Value {
+    json!({
+        "threadId": thread_id,
+        "jobId": job_id,
+        "kind": "dashboard",
+        "stage": hoppi_dashboard_job_stage(),
+        "status": "failed",
+        "source": "hoppi-dashboard",
+        "message": format!("Hoppi dashboard failed: {error}"),
+        "backendApplied": false,
+    })
+}
+
+fn hoppi_list_job_stage(invocation: &HoppiListInvocation) -> String {
+    match (invocation.include_superseded, invocation.pinned_only) {
+        (true, true) => "list-pinned-all".to_string(),
+        (true, false) => "list-all".to_string(),
+        (false, true) => "list-pinned".to_string(),
+        (false, false) => "list".to_string(),
+    }
+}
+
+fn hoppi_list_job_started_params(
+    thread_id: &str,
+    job_id: &str,
+    invocation: &HoppiListInvocation,
+) -> Value {
+    let stage = hoppi_list_job_stage(invocation);
+    json!({
+        "threadId": thread_id,
+        "jobId": job_id,
+        "kind": "list",
+        "stage": stage,
+        "status": "running",
+        "source": "hoppi-list",
+        "message": format!("Loading Hoppi {stage}."),
+        "backendApplied": false,
+    })
+}
+
+fn hoppi_list_job_finished_params(
+    thread_id: &str,
+    job_id: &str,
+    invocation: &HoppiListInvocation,
+    result: &HoppiListCommandResult,
+) -> Value {
+    let stage = hoppi_list_job_stage(invocation);
+    json!({
+        "threadId": thread_id,
+        "jobId": job_id,
+        "kind": "list",
+        "stage": stage,
+        "status": "succeeded",
+        "source": "hoppi-list",
+        "message": format!("Hoppi {stage} loaded {} memories.", result.records.len()),
+        "recordCount": result.records.len(),
+        "backendApplied": true,
+    })
+}
+
+fn hoppi_list_job_failed_params(
+    thread_id: &str,
+    job_id: &str,
+    invocation: &HoppiListInvocation,
+    error: &str,
+) -> Value {
+    let stage = hoppi_list_job_stage(invocation);
+    json!({
+        "threadId": thread_id,
+        "jobId": job_id,
+        "kind": "list",
+        "stage": stage,
+        "status": "failed",
+        "source": "hoppi-list",
+        "message": format!("Hoppi {stage} failed: {error}"),
+        "backendApplied": false,
+    })
+}
+
+fn hoppi_sync_job_stage(invocation: &HoppiSyncInvocation) -> String {
+    format!("sync-{}", invocation.direction.as_str())
+}
+
+fn hoppi_sync_job_source(reason: &str) -> String {
+    format!("hoppi-sync-{}", sanitize_memory_job_component(reason))
+}
+
+fn hoppi_sync_job_started_params(
+    thread_id: &str,
+    job_id: &str,
+    invocation: &HoppiSyncInvocation,
+    reason: &str,
+) -> Value {
+    json!({
+        "threadId": thread_id,
+        "jobId": job_id,
+        "kind": "sync",
+        "stage": hoppi_sync_job_stage(invocation),
+        "status": "running",
+        "source": hoppi_sync_job_source(reason),
+        "message": invocation.message,
+        "backendApplied": false,
+    })
+}
+
+fn hoppi_sync_job_finished_params(
+    thread_id: &str,
+    job_id: &str,
+    invocation: &HoppiSyncInvocation,
+    result: &HoppiSyncCommandResult,
+    reason: &str,
+) -> Value {
+    json!({
+        "threadId": thread_id,
+        "jobId": job_id,
+        "kind": "sync",
+        "stage": hoppi_sync_job_stage(invocation),
+        "status": "succeeded",
+        "source": hoppi_sync_job_source(reason),
+        "message": format_hoppi_sync_report(invocation.direction, result),
+        "recordCount": result.imported + result.exported,
+        "backendApplied": true,
+    })
+}
+
+fn hoppi_sync_job_failed_params(
+    thread_id: &str,
+    job_id: &str,
+    invocation: &HoppiSyncInvocation,
+    error: &str,
+    reason: &str,
+) -> Value {
+    json!({
+        "threadId": thread_id,
+        "jobId": job_id,
+        "kind": "sync",
+        "stage": hoppi_sync_job_stage(invocation),
+        "status": "failed",
+        "source": hoppi_sync_job_source(reason),
+        "message": format!("{} failed: {error}", invocation.message),
+        "backendApplied": false,
+    })
+}
+
+fn hoppi_recall_job_stage(invocation: &HoppiRecallInvocation) -> String {
+    match (invocation.include_startup, invocation.include_task) {
+        (true, true) => "recall-startup-task".to_string(),
+        (true, false) => "recall-startup".to_string(),
+        (false, true) => "recall-task".to_string(),
+        (false, false) => "recall".to_string(),
+    }
+}
+
+fn hoppi_recall_job_started_params(
+    thread_id: &str,
+    job_id: &str,
+    invocation: &HoppiRecallInvocation,
+) -> Value {
+    let stage = hoppi_recall_job_stage(invocation);
+    json!({
+        "threadId": thread_id,
+        "jobId": job_id,
+        "kind": "recall",
+        "stage": stage,
+        "status": "running",
+        "source": "hoppi-recall",
+        "message": format!("Running Hoppi {stage}."),
+        "backendApplied": false,
+    })
+}
+
+fn hoppi_recall_job_finished_params(
+    thread_id: &str,
+    job_id: &str,
+    invocation: &HoppiRecallInvocation,
+    result: &HoppiRecallCommandResult,
+) -> Value {
+    let stage = hoppi_recall_job_stage(invocation);
+    json!({
+        "threadId": thread_id,
+        "jobId": job_id,
+        "kind": "recall",
+        "stage": stage,
+        "status": "succeeded",
+        "source": "hoppi-recall",
+        "message": format!("Hoppi {stage} finished: {} recalled, {} bytes.", result.records.len(), result.context_bytes),
+        "recordCount": result.records.len(),
+        "backendApplied": true,
+    })
+}
+
+fn hoppi_recall_job_failed_params(
+    thread_id: &str,
+    job_id: &str,
+    invocation: &HoppiRecallInvocation,
+    error: &str,
+) -> Value {
+    let stage = hoppi_recall_job_stage(invocation);
+    json!({
+        "threadId": thread_id,
+        "jobId": job_id,
+        "kind": "recall",
+        "stage": stage,
+        "status": "failed",
+        "source": "hoppi-recall",
+        "message": format!("Hoppi {stage} failed: {error}"),
+        "backendApplied": false,
+    })
+}
+
+fn hoppi_remember_job_stage(reason: &str) -> String {
+    sanitize_memory_job_component(reason)
+}
+
+fn hoppi_remember_job_source(reason: &str) -> String {
+    format!("hoppi-remember-{}", hoppi_remember_job_stage(reason))
+}
+
+fn hoppi_remember_job_started_params(
+    thread_id: &str,
+    job_id: &str,
+    _invocation: &HoppiRememberInvocation,
+    reason: &str,
+) -> Value {
+    let stage = hoppi_remember_job_stage(reason);
+    json!({
+        "threadId": thread_id,
+        "jobId": job_id,
+        "kind": "remember",
+        "stage": stage,
+        "status": "running",
+        "source": hoppi_remember_job_source(reason),
+        "message": format!("Saving Hoppi memory ({stage})."),
+        "backendApplied": false,
+    })
+}
+
+fn hoppi_remember_job_finished_params(
+    thread_id: &str,
+    job_id: &str,
+    _invocation: &HoppiRememberInvocation,
+    result: &HoppiRememberCommandResult,
+    reason: &str,
+) -> Value {
+    let stage = hoppi_remember_job_stage(reason);
+    let record_count = if result.saved {
+        result.record.as_ref().map(|_| 1).unwrap_or(1)
+    } else {
+        0
+    };
+    json!({
+        "threadId": thread_id,
+        "jobId": job_id,
+        "kind": "remember",
+        "stage": stage,
+        "status": "succeeded",
+        "source": hoppi_remember_job_source(reason),
+        "message": format!("Hoppi remember {stage} saved {record_count} memory."),
+        "recordCount": record_count,
+        "backendApplied": result.saved,
+    })
+}
+
+fn hoppi_remember_job_failed_params(
+    thread_id: &str,
+    job_id: &str,
+    _invocation: &HoppiRememberInvocation,
+    error: &str,
+    reason: &str,
+) -> Value {
+    let stage = hoppi_remember_job_stage(reason);
+    json!({
+        "threadId": thread_id,
+        "jobId": job_id,
+        "kind": "remember",
+        "stage": stage,
+        "status": "failed",
+        "source": hoppi_remember_job_source(reason),
+        "message": format!("Hoppi remember {stage} failed: {error}"),
+        "backendApplied": false,
+    })
+}
+
+fn hoppi_record_mutation_job_stage(stage: &str) -> String {
+    sanitize_memory_job_component(stage)
+}
+
+fn hoppi_record_mutation_job_started_params(
+    thread_id: &str,
+    job_id: &str,
+    stage: &str,
+    source: &str,
+) -> Value {
+    let stage = hoppi_record_mutation_job_stage(stage);
+    json!({
+        "threadId": thread_id,
+        "jobId": job_id,
+        "kind": "recordMutation",
+        "stage": stage,
+        "status": "running",
+        "source": source,
+        "message": format!("Running Hoppi record {stage}."),
+        "backendApplied": false,
+    })
+}
+
+fn hoppi_record_mutation_job_finished_params(
+    thread_id: &str,
+    job_id: &str,
+    stage: &str,
+    source: &str,
+    record_count: u64,
+    deleted_count: u64,
+) -> Value {
+    let stage = hoppi_record_mutation_job_stage(stage);
+    json!({
+        "threadId": thread_id,
+        "jobId": job_id,
+        "kind": "recordMutation",
+        "stage": stage,
+        "status": "succeeded",
+        "source": source,
+        "message": format!("Hoppi record {stage} finished."),
+        "recordCount": record_count,
+        "deletedCount": deleted_count,
+        "backendApplied": true,
+    })
+}
+
+fn hoppi_record_mutation_job_failed_params(
+    thread_id: &str,
+    job_id: &str,
+    stage: &str,
+    source: &str,
+    error: &str,
+) -> Value {
+    let stage = hoppi_record_mutation_job_stage(stage);
+    json!({
+        "threadId": thread_id,
+        "jobId": job_id,
+        "kind": "recordMutation",
+        "stage": stage,
+        "status": "failed",
+        "source": source,
+        "message": format!("Hoppi record {stage} failed: {error}"),
+        "backendApplied": false,
+    })
+}
+
+fn hoppi_consolidate_job_started_params(
+    thread_id: &str,
+    job_id: &str,
+    invocation: &HoppiConsolidateInvocation,
+    source: &str,
+) -> Value {
+    json!({
+        "threadId": thread_id,
+        "jobId": job_id,
+        "kind": "consolidate",
+        "stage": invocation.stage,
+        "status": "running",
+        "source": source,
+        "message": format!("Running Hoppi {}.", invocation.stage),
+        "dryRun": invocation.dry_run,
+        "backendApplied": false,
+    })
+}
+
+fn hoppi_consolidate_job_finished_params(
+    thread_id: &str,
+    job_id: &str,
+    invocation: &HoppiConsolidateInvocation,
+    result: &HoppiConsolidateCommandResult,
+    source: &str,
+) -> Value {
+    json!({
+        "threadId": thread_id,
+        "jobId": job_id,
+        "kind": "consolidate",
+        "stage": invocation.stage,
+        "status": "succeeded",
+        "source": source,
+        "message": result.summary.clone().unwrap_or_else(|| format!("Hoppi {} finished.", invocation.stage)),
+        "modelUsed": result.model_used.clone(),
+        "recordCount": result.records.len(),
+        "deletedCount": result.deleted_ids.len(),
+        "dryRun": result.dry_run,
+        "backendApplied": !result.dry_run,
+    })
+}
+
+fn hoppi_consolidate_job_failed_params(
+    thread_id: &str,
+    job_id: &str,
+    invocation: &HoppiConsolidateInvocation,
+    error: &str,
+    source: &str,
+) -> Value {
+    json!({
+        "threadId": thread_id,
+        "jobId": job_id,
+        "kind": "consolidate",
+        "stage": invocation.stage,
+        "status": "failed",
+        "source": source,
+        "message": format!("Hoppi {} failed: {error}", invocation.stage),
+        "dryRun": invocation.dry_run,
+        "backendApplied": false,
+    })
+}
+
+fn run_hoppi_consolidate_invocation(
+    invocation: &HoppiConsolidateInvocation,
+) -> Result<HoppiConsolidateCommandResult, String> {
+    let output = Command::new(if cfg!(windows) { "node.exe" } else { "node" })
+        .arg("-e")
+        .arg(HOPPI_CONSOLIDATE_NODE_SCRIPT)
+        .arg(&invocation.module_path)
+        .arg(&invocation.cwd)
+        .arg(if invocation.dry_run { "true" } else { "false" })
+        .arg(&invocation.stage)
+        .arg(
+            invocation
+                .limit
+                .map(|limit| limit.to_string())
+                .unwrap_or_else(|| "0".to_string()),
+        )
+        .arg(
+            invocation
+                .budget
+                .map(|budget| budget.to_string())
+                .unwrap_or_else(|| "0".to_string()),
+        )
+        .arg(&invocation.agent_model)
+        .arg(&invocation.deep_model)
+        .output()
+        .map_err(|error| format!("spawn node Hoppi maintenance: {error}"))?;
+    if !output.status.success() {
+        let tail = compact_process_output(&[output.stdout, output.stderr].concat());
+        return Err(format!(
+            "Hoppi maintenance failed with status {}{}{}",
+            output.status,
+            if tail.is_empty() { "" } else { ": " },
+            tail
+        ));
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    parse_hoppi_consolidate_output(&stdout)
+}
+
+fn parse_hoppi_consolidate_output(output: &str) -> Result<HoppiConsolidateCommandResult, String> {
+    let line = output
+        .lines()
+        .rev()
+        .find(|line| !line.trim().is_empty())
+        .ok_or_else(|| "Hoppi maintenance returned no JSON output".to_string())?;
+    let value: Value = serde_json::from_str(line.trim())
+        .map_err(|error| format!("parse Hoppi maintenance output: {error}"))?;
+    let records = value
+        .get("records")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|record| {
+            serde_json::from_value::<MemoryRecord>(record)
+                .map_err(|error| format!("parse Hoppi consolidated memory record: {error}"))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let deleted_ids = value
+        .get("deletedIds")
+        .and_then(Value::as_array)
+        .map(|ids| {
+            ids.iter()
+                .filter_map(Value::as_str)
+                .map(str::trim)
+                .filter(|id| !id.is_empty())
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    Ok(HoppiConsolidateCommandResult {
+        dry_run: value
+            .get("dryRun")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        model_used: value
+            .get("modelUsed")
+            .or_else(|| value.get("model"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|model| !model.is_empty())
+            .map(str::to_string),
+        summary: value
+            .get("summary")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|summary| !summary.is_empty())
+            .map(str::to_string),
+        records,
+        deleted_ids,
+        memory_count: value
+            .get("memoryCount")
+            .and_then(Value::as_u64)
+            .unwrap_or(0),
+        pinned_count: value.get("pinnedCount").and_then(Value::as_u64),
+        store_path: value
+            .get("storePath")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|path| !path.is_empty())
+            .map(str::to_string),
+        last_consolidated_at: value
+            .get("lastConsolidatedAt")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string),
+        queue_depth: value.get("queueDepth").and_then(Value::as_u64),
+    })
+}
+
+fn run_hoppi_recall_invocation(
+    invocation: &HoppiRecallInvocation,
+) -> Result<HoppiRecallCommandResult, String> {
+    let mut command = Command::new(if cfg!(windows) { "node.exe" } else { "node" });
+    command
+        .arg("-e")
+        .arg(HOPPI_RECALL_NODE_SCRIPT)
+        .arg(&invocation.module_path)
+        .arg(&invocation.cwd)
+        .arg(&invocation.prompt)
+        .arg(if invocation.include_startup {
+            "true"
+        } else {
+            "false"
+        })
+        .arg(if invocation.include_task {
+            "true"
+        } else {
+            "false"
+        })
+        .env(
+            "OPPI_HOPPI_MEMORY_CONTEXT_MAX_BYTES",
+            HOPPI_MEMORY_CONTEXT_MAX_BYTES.to_string(),
+        );
+    let output = run_hoppi_node_output(&mut command, "Hoppi recall", HOPPI_BRIDGE_TIMEOUT)?;
+    if !output.status.success() {
+        let tail = compact_process_output(&[output.stdout, output.stderr].concat());
+        return Err(format!(
+            "Hoppi recall failed with status {}{}{}",
+            output.status,
+            if tail.is_empty() { "" } else { ": " },
+            tail
+        ));
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    parse_hoppi_recall_output(&stdout)
+}
+
+fn parse_hoppi_recall_output(output: &str) -> Result<HoppiRecallCommandResult, String> {
+    let line = output
+        .lines()
+        .rev()
+        .find(|line| !line.trim().is_empty())
+        .ok_or_else(|| "Hoppi recall returned no JSON output".to_string())?;
+    let value: Value = serde_json::from_str(line.trim())
+        .map_err(|error| format!("parse Hoppi recall output: {error}"))?;
+    let context_markdown = value
+        .get("contextMarkdown")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+        .map(str::to_string);
+    let context_bytes = value
+        .get("contextBytes")
+        .and_then(Value::as_u64)
+        .unwrap_or_else(|| {
+            context_markdown
+                .as_ref()
+                .map(|text| text.len() as u64)
+                .unwrap_or(0)
+        });
+    let records = value
+        .get("records")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|record| {
+            serde_json::from_value::<MemoryRecord>(record)
+                .map_err(|error| format!("parse Hoppi recalled memory record: {error}"))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(HoppiRecallCommandResult {
+        context_markdown,
+        context_bytes,
+        memory_count: value
+            .get("memoryCount")
+            .and_then(Value::as_u64)
+            .unwrap_or(0),
+        pinned_count: value.get("pinnedCount").and_then(Value::as_u64),
+        store_path: value
+            .get("storePath")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|path| !path.is_empty())
+            .map(str::to_string),
+        records,
+        omitted_reason: value
+            .get("omittedReason")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|reason| !reason.is_empty())
+            .map(str::to_string),
+        truncated: value
+            .get("truncated")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+    })
+}
+
+const HOPPI_REMEMBER_NODE_SCRIPT: &str = r#"
+const path = require("node:path");
+const os = require("node:os");
+const { pathToFileURL } = require("node:url");
+
+function coerceMemoryCount(value) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) && numeric > 0 ? Math.floor(numeric) : 0;
+}
+
+function parseTags(raw) {
+  try {
+    const tags = JSON.parse(raw || "[]");
+    if (Array.isArray(tags)) return tags.map((tag) => String(tag || "").trim()).filter(Boolean);
+  } catch {
+    // Fall through to the conservative default.
+  }
+  return ["oppi-native-shell"];
+}
+
+function stringField(entry, keys) {
+  for (const key of keys) {
+    const value = entry && entry[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return undefined;
+}
+
+function numberField(entry, keys) {
+  for (const key of keys) {
+    const value = Number(entry && entry[key]);
+    if (Number.isFinite(value)) return value;
+  }
+  return undefined;
+}
+
+function stringArray(value) {
+  return Array.isArray(value)
+    ? value.map((item) => String(item || "").trim()).filter(Boolean)
+    : [];
+}
+
+function normalizeRecord(entry, fallback) {
+  const id = stringField(entry, ["id", "memoryId"]);
+  const content = stringField(entry, ["content", "text", "summary", "body"]) || fallback.content;
+  if (!id || !content) return undefined;
+  const tags = stringArray(entry && entry.tags);
+  return {
+    id,
+    content,
+    tags: tags.length ? tags : fallback.tags,
+    pinned: Boolean(entry && entry.pinned),
+    starred: Boolean(entry && entry.starred),
+    layer: stringField(entry, ["layer"]) || fallback.layer,
+    confidence: stringField(entry, ["confidence"]) || fallback.confidence,
+    source: stringField(entry, ["source"]) || fallback.source,
+    createdAt: stringField(entry, ["createdAt", "created_at", "created"]),
+    updatedAt: stringField(entry, ["updatedAt", "updated_at"]),
+    strength: numberField(entry, ["strength"]),
+    retrievalStrength: numberField(entry, ["retrievalStrength", "retrieval_strength"]),
+    retrievalCount: coerceMemoryCount(entry && (entry.retrievalCount ?? entry.retrieval_count ?? entry.useCount ?? entry.use_count)),
+    lastRetrievedAt: stringField(entry, ["lastRetrievedAt", "last_retrieved_at", "retrieved_at", "lastUsedAt", "last_used_at"]),
+    supersededBy: stringField(entry, ["supersededBy", "superseded_by"]),
+    parents: stringArray(entry && entry.parents),
+  };
+}
+
+(async () => {
+  const [modulePath, cwd] = process.argv.slice(1);
+  const summary = process.env.OPPI_HOPPI_REMEMBER_SUMMARY || "";
+  const tags = parseTags(process.env.OPPI_HOPPI_REMEMBER_TAGS_JSON);
+  const source = String(process.env.OPPI_HOPPI_REMEMBER_SOURCE || "oppi:native-shell").trim();
+  const sourceSessionId = String(process.env.OPPI_HOPPI_REMEMBER_SOURCE_SESSION_ID || "").trim() || null;
+  const layer = String(process.env.OPPI_HOPPI_REMEMBER_LAYER || "").trim();
+  const hoppi = await import(pathToFileURL(path.resolve(modulePath)).href);
+  if (typeof hoppi.createHoppiBackend !== "function") {
+    throw new Error("Installed Hoppi package does not expose createHoppiBackend().");
+  }
+  const root = typeof hoppi.getDefaultHoppiRoot === "function"
+    ? hoppi.getDefaultHoppiRoot()
+    : (process.env.HOPPI_HOME ? path.resolve(process.env.HOPPI_HOME) : path.join(os.homedir(), ".oppi", "hoppi"));
+  const backend = hoppi.createHoppiBackend({ root });
+  if (!backend || typeof backend !== "object") {
+    throw new Error("Installed Hoppi package returned an invalid backend.");
+  }
+  if (typeof backend.init === "function") await backend.init();
+  if (typeof backend.remember !== "function") {
+    throw new Error("Installed Hoppi package does not expose backend.remember().");
+  }
+  const resolvedCwd = path.resolve(cwd);
+  const project = { cwd: resolvedCwd, displayName: path.basename(resolvedCwd) || undefined };
+  const input = {
+    project,
+    content: String(summary || "").trim(),
+    tags,
+    confidence: "observed",
+    source,
+    sourceSessionId,
+  };
+  if (layer) input.layer = layer;
+  const rawRecord = await backend.remember(input);
+  const record = normalizeRecord(rawRecord, input);
+  let memoryCount = record ? 1 : 0;
+  let pinnedCount = record && (record.pinned || record.starred) ? 1 : 0;
+  let storePath;
+  if (typeof backend.status === "function") {
+    try {
+      const status = await backend.status(project);
+      memoryCount = Math.max(memoryCount, coerceMemoryCount(status && status.memoryCount));
+      pinnedCount = Math.max(pinnedCount, coerceMemoryCount(status && status.pinnedCount));
+      if (status && status.storePath) storePath = String(status.storePath);
+    } catch {
+      // The write succeeded; status is only used for footer observability.
+    }
+  }
+  console.log(JSON.stringify({ saved: true, memoryCount, pinnedCount, storePath, record }));
+})().catch((error) => {
+  console.error(error && error.stack ? error.stack : String(error));
+  process.exit(1);
+});
+"#;
+
+fn run_hoppi_remember_invocation(
+    invocation: &HoppiRememberInvocation,
+) -> Result<HoppiRememberCommandResult, String> {
+    let mut command = Command::new(if cfg!(windows) { "node.exe" } else { "node" });
+    command
+        .arg("-e")
+        .arg(HOPPI_REMEMBER_NODE_SCRIPT)
+        .arg(&invocation.module_path)
+        .arg(&invocation.cwd)
+        .env("OPPI_HOPPI_REMEMBER_SUMMARY", &invocation.summary)
+        .env(
+            "OPPI_HOPPI_REMEMBER_TAGS_JSON",
+            serde_json::to_string(&invocation.tags).map_err(|error| error.to_string())?,
+        )
+        .env("OPPI_HOPPI_REMEMBER_SOURCE", &invocation.source)
+        .env(
+            "OPPI_HOPPI_REMEMBER_SOURCE_SESSION_ID",
+            &invocation.source_session_id,
+        )
+        .env(
+            "OPPI_HOPPI_REMEMBER_LAYER",
+            invocation.layer.as_deref().unwrap_or_default(),
+        );
+    let output = run_hoppi_node_output(&mut command, "Hoppi remember", HOPPI_BRIDGE_TIMEOUT)?;
+    if !output.status.success() {
+        let tail = compact_process_output(&[output.stdout, output.stderr].concat());
+        return Err(format!(
+            "Hoppi remember failed with status {}{}{}",
+            output.status,
+            if tail.is_empty() { "" } else { ": " },
+            tail
+        ));
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    parse_hoppi_remember_output(&stdout)
+}
+
+fn parse_hoppi_remember_output(output: &str) -> Result<HoppiRememberCommandResult, String> {
+    let line = output
+        .lines()
+        .rev()
+        .find(|line| !line.trim().is_empty())
+        .ok_or_else(|| "Hoppi remember returned no JSON output".to_string())?;
+    let value: Value = serde_json::from_str(line.trim())
+        .map_err(|error| format!("parse Hoppi remember output: {error}"))?;
+    let record = value
+        .get("record")
+        .filter(|record| !record.is_null())
+        .cloned()
+        .map(|record| {
+            serde_json::from_value::<MemoryRecord>(record)
+                .map_err(|error| format!("parse Hoppi remembered memory record: {error}"))
+        })
+        .transpose()?;
+    Ok(HoppiRememberCommandResult {
+        saved: value.get("saved").and_then(Value::as_bool).unwrap_or(false),
+        memory_count: value
+            .get("memoryCount")
+            .and_then(Value::as_u64)
+            .unwrap_or(0),
+        pinned_count: value.get("pinnedCount").and_then(Value::as_u64),
+        store_path: value
+            .get("storePath")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|path| !path.is_empty())
+            .map(str::to_string),
+        record,
+    })
+}
+
+fn run_hoppi_sync(
+    settings: &MemorySettings,
+    direction: HoppiSyncDirection,
+    reason: &str,
+) -> Result<HoppiSyncRunResult, String> {
+    let invocation = hoppi_sync_invocation_from_settings(
+        settings,
+        direction,
+        reason,
+        hoppi_module_path_for_sync()?,
+    )?;
+    let result = run_hoppi_sync_invocation(&invocation)?;
+    Ok(HoppiSyncRunResult { invocation, result })
+}
+
+fn run_hoppi_sync_invocation(
+    invocation: &HoppiSyncInvocation,
+) -> Result<HoppiSyncCommandResult, String> {
+    let mut command = Command::new(if cfg!(windows) { "node.exe" } else { "node" });
+    command
+        .arg("-e")
+        .arg(HOPPI_SYNC_NODE_SCRIPT)
+        .arg(&invocation.module_path)
+        .arg(&invocation.repo_path)
+        .arg(invocation.direction.as_str())
+        .arg(&invocation.conflict_mode)
+        .arg(&invocation.message)
+        .arg(invocation.remote.as_deref().unwrap_or(""));
+    if let Some(passphrase) = &invocation.passphrase {
+        command.env("OPPI_HOPPI_SYNC_RUNTIME_PASSPHRASE", passphrase);
+    } else {
+        command.env_remove("OPPI_HOPPI_SYNC_RUNTIME_PASSPHRASE");
+    }
+    let output = run_hoppi_node_output(&mut command, "Hoppi sync", HOPPI_BRIDGE_TIMEOUT)?;
+    if !output.status.success() {
+        let tail = compact_process_output(&[output.stdout, output.stderr].concat());
+        return Err(format!(
+            "Hoppi sync failed with status {}{}{}",
+            output.status,
+            if tail.is_empty() { "" } else { ": " },
+            tail
+        ));
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let result = parse_hoppi_sync_output(&stdout)?;
+    Ok(result)
+}
+
+fn parse_hoppi_sync_output(output: &str) -> Result<HoppiSyncCommandResult, String> {
+    let line = output
+        .lines()
+        .rev()
+        .find(|line| !line.trim().is_empty())
+        .ok_or_else(|| "Hoppi sync returned no JSON output".to_string())?;
+    let value: Value = serde_json::from_str(line.trim())
+        .map_err(|error| format!("parse Hoppi sync output: {error}"))?;
+    let conflicts = value
+        .get("conflicts")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .map(|item| {
+                    item.as_str()
+                        .map(str::to_string)
+                        .unwrap_or_else(|| item.to_string())
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    Ok(HoppiSyncCommandResult {
+        imported: value.get("imported").and_then(Value::as_u64).unwrap_or(0),
+        exported: value.get("exported").and_then(Value::as_u64).unwrap_or(0),
+        committed: value
+            .get("committed")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        pushed: value
+            .get("pushed")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        conflicts,
+        embeddings_rebuild_recommended: value
+            .get("embeddingsRebuildRecommended")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        rebuilt_embeddings: value
+            .get("rebuiltEmbeddings")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+    })
+}
+
+fn hoppi_sync_result_from_value(value: &Value) -> HoppiSyncCommandResult {
+    let conflicts = value
+        .get("conflicts")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .map(|item| {
+                    item.as_str()
+                        .map(str::to_string)
+                        .unwrap_or_else(|| item.to_string())
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    HoppiSyncCommandResult {
+        imported: value.get("imported").and_then(Value::as_u64).unwrap_or(0),
+        exported: value.get("exported").and_then(Value::as_u64).unwrap_or(0),
+        committed: value
+            .get("committed")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        pushed: value
+            .get("pushed")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        conflicts,
+        embeddings_rebuild_recommended: value
+            .get("embeddingsRebuildRecommended")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        rebuilt_embeddings: value
+            .get("rebuiltEmbeddings")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+    }
+}
+
+fn hoppi_sync_result_json(result: &HoppiSyncCommandResult) -> Value {
+    json!({
+        "imported": result.imported,
+        "exported": result.exported,
+        "committed": result.committed,
+        "pushed": result.pushed,
+        "conflicts": result.conflicts.clone(),
+        "embeddingsRebuildRecommended": result.embeddings_rebuild_recommended,
+        "rebuiltEmbeddings": result.rebuilt_embeddings,
+    })
+}
+
+fn format_hoppi_sync_report(
+    direction: HoppiSyncDirection,
+    result: &HoppiSyncCommandResult,
+) -> String {
+    let mut parts = vec![
+        format!("Hoppi sync {}", direction.as_str()),
+        format!("pulled {}", result.imported),
+    ];
+    if result.exported > 0 {
+        parts.push(format!("exported {}", result.exported));
+    }
+    if result.committed {
+        parts.push("committed".to_string());
+    }
+    if result.pushed {
+        parts.push("pushed".to_string());
+    }
+    if !result.conflicts.is_empty() {
+        parts.push(format!("{} conflicts", result.conflicts.len()));
+    }
+    if result.embeddings_rebuild_recommended && result.rebuilt_embeddings {
+        parts.push("embeddings rebuilt".to_string());
+    }
+    parts.join(" · ")
 }
 
 fn base_url_host_port(base: &str) -> Option<(String, u16)> {
@@ -7731,6 +21485,7 @@ fn meridian_status_panel() -> String {
 fn meridian_provider_config(model: Option<&str>) -> OpenAiCompatibleConfig {
     with_default_reasoning_effort(OpenAiCompatibleConfig {
         flavor: DirectProviderFlavor::OpenAiCompatible,
+        provider_id: None,
         model: model
             .map(str::trim)
             .filter(|value| !value.is_empty())
@@ -7781,8 +21536,12 @@ fn provider_status_panel(
 ) -> String {
     match provider {
         ProviderConfig::Mock => format!(
-            "provider: mock scripted\nauth: not required\nliveCalls: none\nselectedModel: {}\nregisteredModels: {}\n{}",
-            session.selected_model.as_deref().unwrap_or("mock-scripted"),
+            "provider: {MOCK_PROVIDER_DISPLAY_LABEL}\nauth: not required\nliveCalls: none\nselectedModel: {}\nregisteredModels: {}\n{}",
+            session
+                .selected_model
+                .as_deref()
+                .map(display_model_id)
+                .unwrap_or(MOCK_MODEL_DISPLAY_LABEL),
             models.len(),
             format_role_profiles(
                 &session.role_models,
@@ -8107,8 +21866,15 @@ fn format_suggestion_debug(suggestion: &SuggestedNextMessage) -> String {
     )
 }
 
+fn native_usage_status_note() -> &'static str {
+    "provider-neutral/local only; do not claim subscription remaining limits; native shell turns do not automatically inject recalled memory yet"
+}
+
 fn format_usage_panel(session: &ShellSession, provider: &ProviderConfig) -> String {
-    let model = session.session_model(provider).unwrap_or("none");
+    let model = session
+        .session_model(provider)
+        .map(display_model_id)
+        .unwrap_or("none");
     let todos_total = session.todo_state.todos.len();
     let todos_active = session
         .todo_state
@@ -8121,18 +21887,58 @@ fn format_usage_panel(session: &ShellSession, provider: &ProviderConfig) -> Stri
         .as_ref()
         .map(|suggestion| format!("{}%", (suggestion.confidence * 100.0).round() as u32))
         .unwrap_or_else(|| "none".to_string());
+    let usage = &session.usage_state;
+    let context = usage.context_footer_label();
+    let memory = session
+        .memory_status
+        .as_ref()
+        .map(|status| {
+            format!(
+                "{} backend={} scope={} memories={}",
+                if status.enabled {
+                    "enabled"
+                } else {
+                    "disabled"
+                },
+                status.backend,
+                status.scope,
+                status.memory_count
+            )
+        })
+        .unwrap_or_else(|| "unknown".to_string());
+    let footer = usage
+        .weekly_footer_label()
+        .map(|weekly| {
+            format!(
+                "{} · {} · {}",
+                usage.session_footer_label(),
+                weekly,
+                context
+            )
+        })
+        .unwrap_or_else(|| format!("{} · {}", usage.session_footer_label(), context));
     format!(
-        "usage/status:\nprovider: {}\nmodel: {}\nthread: {}\npermission: {} ({})\ngoal: {}\ntodos: {}/{} active\nqueued follow-ups: {}\nsuggestion: {}\nnote: native usage is provider-neutral/local only; use stable Pi /usage for live subscription windows until native provider usage is designed.",
-        provider_name(provider),
+        "usage/status:\nprovider: {}\nmodel: {}\nthread: {}\npermission: {} ({})\nsession tokens: total={} input={} output={} providerCalls={}\ncontext: {}\n{}\nfooter: {}\nmemory: {}\ngoal: {}\ntodos: {}/{} active\nqueued follow-ups: {}\nqueued steering: {}\nsuggestion: {}{}",
+        display_provider_id(provider),
         model,
         session.thread_id,
         session.permission_mode.as_str(),
         session.permission_mode_source,
+        usage.session.total_tokens,
+        usage.session.input_tokens,
+        usage.session.output_tokens,
+        usage.session.provider_calls,
+        context,
+        usage.panel_limits_line(),
+        footer,
+        memory,
         session.goal_status_label(),
         todos_active,
         todos_total,
         session.follow_up_queue.len(),
-        suggestion
+        session.steering_queue.len(),
+        suggestion,
+        native_usage_status_note()
     )
 }
 
@@ -8147,6 +21953,7 @@ fn format_role_profiles(
             .get(role)
             .map(String::as_str)
             .unwrap_or(inherited);
+        let model = display_model_id(model);
         let suffix = if role_models.contains_key(role) {
             ""
         } else {
@@ -8155,6 +21962,18 @@ fn format_role_profiles(
         lines.push(format!("  {role}: {model}{suffix}"));
     }
     lines.join("\n")
+}
+
+fn parse_models_command_args(args: &str) -> (bool, String) {
+    let mut show_all = false;
+    let mut filter = Vec::<&str>::new();
+    for part in args.split_whitespace() {
+        match part {
+            "--all" | "-a" => show_all = true,
+            _ => filter.push(part),
+        }
+    }
+    (show_all, filter.join(" "))
 }
 
 fn filter_models(models: &[ModelRef], filter: &str) -> Vec<ModelRef> {
@@ -8177,11 +21996,22 @@ fn filter_models(models: &[ModelRef], filter: &str) -> Vec<ModelRef> {
         .collect()
 }
 
+#[cfg(test)]
 fn format_model_list(
     models: &[ModelRef],
     selected: Option<&str>,
     filter: &str,
     role_models: &BTreeMap<String, String>,
+) -> String {
+    format_model_list_with_diagnostics(models, selected, filter, role_models, &[])
+}
+
+fn format_model_list_with_diagnostics(
+    models: &[ModelRef],
+    selected: Option<&str>,
+    filter: &str,
+    role_models: &BTreeMap<String, String>,
+    diagnostics: &[String],
 ) -> String {
     let filtered = filter_models(models, filter);
     let mut lines = vec![format!(
@@ -8206,13 +22036,24 @@ fn format_model_list(
                 .role
                 .map(|role| format!(" role={role}"))
                 .unwrap_or_default();
+            let display = if model.display_name != model.id {
+                format!(" ({})", model.display_name)
+            } else {
+                String::new()
+            };
             lines.push(format!(
-                "{marker} {} [{}]{}",
-                model.id, model.provider, role
+                "{marker} {}{} [{}]{}",
+                model.id, display, model.provider, role
             ));
         }
     }
     lines.push(format_role_profiles(role_models, selected));
+    if !diagnostics.is_empty() {
+        lines.push("diagnostics:".to_string());
+        for diagnostic in diagnostics {
+            lines.push(format!("  - {diagnostic}"));
+        }
+    }
     lines.join("\n")
 }
 
@@ -8239,9 +22080,119 @@ fn format_scoped_models(session: &ShellSession, provider: &ProviderConfig) -> St
     lines.join("\n")
 }
 
+fn format_scoped_models_from_registry(
+    provider: &ProviderConfig,
+    registry: &ModelRegistryListResult,
+) -> String {
+    let resolved = scoped_model_refs_from_registry(provider, registry)
+        .into_iter()
+        .map(|model| model.id.clone())
+        .collect::<Vec<_>>();
+    let mut lines = vec!["scoped models:".to_string()];
+    if registry.scope.is_empty() {
+        lines.push("  all current provider models (no scope configured)".to_string());
+    } else {
+        lines.push(format!("  patterns: {}", registry.scope.join(", ")));
+        if resolved.is_empty() {
+            lines.push("  resolved: none for current provider".to_string());
+        } else {
+            lines.push(format!("  resolved: {}", resolved.join(", ")));
+        }
+    }
+    lines.push(format!("  current provider: {}", registry.provider));
+    lines.push(format!(
+        "  registry: {}",
+        registry
+            .items
+            .iter()
+            .map(format_model_ref_for_scoped_registry)
+            .collect::<Vec<_>>()
+            .join(", ")
+    ));
+    if !registry.diagnostics.is_empty() {
+        lines.push("diagnostics:".to_string());
+        for diagnostic in &registry.diagnostics {
+            lines.push(format!("  - {}", diagnostic.message));
+        }
+    }
+    lines.push("usage: /scoped-models enable <model|provider/model|glob>, /scoped-models disable <pattern>, /scoped-models clear".to_string());
+    lines.join("\n").replace(
+        &format!("current provider: {}", registry.provider),
+        &format!("current provider: {}", provider_name(provider)),
+    )
+}
+
+fn scoped_model_refs_from_registry<'a>(
+    provider: &ProviderConfig,
+    registry: &'a ModelRegistryListResult,
+) -> Vec<&'a ModelRef> {
+    if registry.scope.is_empty() {
+        return Vec::new();
+    }
+    let mut seen = BTreeSet::<String>::new();
+    let mut out = Vec::new();
+    for pattern in &registry.scope {
+        for model in &registry.items {
+            if model_matches_scope_pattern(provider, &model.id, pattern)
+                && seen.insert(model.id.clone())
+            {
+                out.push(model);
+            }
+        }
+    }
+    out
+}
+
+fn format_model_ref_for_scoped_registry(model: &ModelRef) -> String {
+    if model.display_name != model.id {
+        format!("{} ({})", model.id, model.display_name)
+    } else {
+        model.id.clone()
+    }
+}
+
 #[cfg(test)]
 fn format_thread_tree(threads: &[Thread], active_thread_id: &str) -> String {
     format_thread_tree_with_folded(threads, active_thread_id, &BTreeSet::new())
+}
+
+fn format_thread_tree_with_filter(
+    threads: &[Thread],
+    active_thread_id: &str,
+    folded_threads: &BTreeSet<String>,
+    filter_mode: TreeFilterMode,
+) -> String {
+    let filtered = threads
+        .iter()
+        .filter(|thread| tree_thread_visible(thread, active_thread_id, filter_mode))
+        .cloned()
+        .collect::<Vec<_>>();
+    let tree = format_thread_tree_with_folded(&filtered, active_thread_id, folded_threads);
+    tree.replacen(
+        "threads:",
+        &format!("threads:\nfilter: {}", filter_mode.as_str()),
+        1,
+    )
+}
+
+fn tree_thread_visible(
+    thread: &Thread,
+    active_thread_id: &str,
+    filter_mode: TreeFilterMode,
+) -> bool {
+    if thread.id == active_thread_id {
+        return true;
+    }
+    match filter_mode {
+        TreeFilterMode::All => true,
+        TreeFilterMode::LabeledOnly => thread
+            .title
+            .as_deref()
+            .is_some_and(|title| !title.trim().is_empty()),
+        TreeFilterMode::Default | TreeFilterMode::NoTools | TreeFilterMode::UserOnly => {
+            thread.status != ThreadStatus::Archived
+        }
+    }
 }
 
 fn format_thread_tree_with_folded(
@@ -8408,7 +22359,10 @@ fn format_resume_session_list(
 
 fn normalize_theme_name(raw: &str) -> Option<String> {
     match raw.trim().to_ascii_lowercase().as_str() {
-        "oppi" | "dark" | "light" | "plain" => Some(raw.trim().to_ascii_lowercase()),
+        "oppi-cyan-dark" => Some("oppi-cyan".to_string()),
+        "oppi" | "oppi-cyan" | "oppi-cyan-light" | "dark" | "light" | "plain" => {
+            Some(raw.trim().to_ascii_lowercase())
+        }
         _ => None,
     }
 }
@@ -8423,13 +22377,46 @@ fn load_theme_file() -> Result<Option<String>, String> {
     }
     let raw = std::fs::read_to_string(&path)
         .map_err(|error| format!("read {}: {error}", path.display()))?;
-    let theme = normalize_theme_name(raw.lines().next().unwrap_or_default()).ok_or_else(|| {
-        format!(
-            "{} must contain one of: oppi, dark, light, plain",
-            path.display()
-        )
-    })?;
-    Ok(Some(theme))
+    let theme = raw.lines().next().unwrap_or_default().trim();
+    if theme.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(theme.to_string()))
+}
+
+fn loaded_shell_theme_from_load_result(
+    value: &Value,
+    requested_name: &str,
+) -> Result<LoadedShellTheme, String> {
+    let theme = value.get("theme").cloned().unwrap_or_else(|| json!({}));
+    let name = theme
+        .get("name")
+        .and_then(Value::as_str)
+        .filter(|name| !name.trim().is_empty())
+        .unwrap_or(requested_name.trim())
+        .to_string();
+    let source = theme
+        .get("source")
+        .and_then(Value::as_str)
+        .filter(|source| !source.trim().is_empty())
+        .unwrap_or("custom")
+        .to_string();
+    let colors = value
+        .get("colors")
+        .cloned()
+        .ok_or_else(|| "theme/load returned no colors".to_string())?;
+    let export = value
+        .get("export")
+        .filter(|export| !export.is_null())
+        .cloned();
+    let line_tokens = line_theme_tokens_from_pi_theme_values(&colors)?;
+    Ok(LoadedShellTheme {
+        name,
+        source,
+        colors,
+        export,
+        line_tokens,
+    })
 }
 
 fn normalize_prompt_variant(raw: &str) -> Option<String> {
@@ -8449,6 +22436,39 @@ fn prompt_variant_append(variant: &str) -> Option<String> {
         "caveman" => Some("Caveman variant: short words, direct actions, no fluff; still follow OPPi safety rules.".to_string()),
         _ => None,
     }
+}
+
+fn command_prepare_params_json(
+    thread_id: &str,
+    command: &str,
+    args: &str,
+    role: &str,
+    role_model: Option<String>,
+    role_effort: Option<String>,
+    prompt_variant_append: Option<String>,
+) -> Value {
+    json!({
+        "threadId": thread_id,
+        "command": command.trim_start_matches('/'),
+        "args": args,
+        "context": {
+            "role": role,
+            "roleModel": role_model,
+            "roleEffort": role_effort,
+        },
+        "promptVariantAppend": prompt_variant_append,
+    })
+}
+
+fn is_command_prepare_unknown_error(error: &str) -> bool {
+    error.contains("command_prepare_unknown") || error.contains("prompt_template_not_found")
+}
+
+fn theme_load_params_json(thread_id: &str, name: &str) -> Value {
+    json!({
+        "threadId": thread_id,
+        "name": name.trim(),
+    })
 }
 
 fn prompt_variant_feature_routing_append(variant: &str) -> Option<&'static str> {
@@ -8475,6 +22495,10 @@ fn apply_prompt_variant_to_provider(provider: &mut Value, variant: &str) {
         return;
     };
     append_system_prompt_to_provider(provider, "OPPi prompt variant", append.as_str());
+}
+
+fn append_hoppi_memory_context_to_provider(provider: &mut Value, context: &str) {
+    append_system_prompt_to_provider_once(provider, HOPPI_MEMORY_SYSTEM_HEADING, context);
 }
 
 fn append_system_prompt_to_provider_once(provider: &mut Value, heading: &str, append: &str) {
@@ -8557,6 +22581,7 @@ fn parse_args(args: Vec<String>) -> Result<ShellCommand, String> {
     let mut system_prompt = None;
     let mut temperature = None;
     let mut reasoning_effort = None;
+    let mut reasoning_effort_explicit = false;
     let mut max_output_tokens = None;
     let mut stream = true;
     let mut index = 0;
@@ -8647,6 +22672,7 @@ fn parse_args(args: Vec<String>) -> Result<ShellCommand, String> {
                     index,
                     args[index - 1].as_str(),
                 )?);
+                reasoning_effort_explicit = true;
                 provider_requested = true;
             }
             "--max-output-tokens" => {
@@ -8683,10 +22709,12 @@ fn parse_args(args: Vec<String>) -> Result<ShellCommand, String> {
             }
             arg if arg.starts_with("--effort=") => {
                 reasoning_effort = Some(arg.trim_start_matches("--effort=").to_string());
+                reasoning_effort_explicit = true;
                 provider_requested = true;
             }
             arg if arg.starts_with("--reasoning-effort=") => {
                 reasoning_effort = Some(arg.trim_start_matches("--reasoning-effort=").to_string());
+                reasoning_effort_explicit = true;
                 provider_requested = true;
             }
             arg if arg.starts_with("--max-output-tokens=") => {
@@ -8745,6 +22773,7 @@ fn parse_args(args: Vec<String>) -> Result<ShellCommand, String> {
             ProviderConfig::OpenAiCompatible(with_default_reasoning_effort(
                 OpenAiCompatibleConfig {
                     flavor: provider_flavor,
+                    provider_id: None,
                     model,
                     base_url,
                     api_key_env: if matches!(
@@ -8790,6 +22819,7 @@ fn parse_args(args: Vec<String>) -> Result<ShellCommand, String> {
         interactive,
         raw,
         ratatui,
+        reasoning_effort_explicit,
         provider,
     })
 }
@@ -9082,6 +23112,311 @@ fn codex_auth_present_at(path: &Path) -> bool {
                 .and_then(Value::as_str)
                 .is_some_and(|value| !value.trim().is_empty())
     })
+}
+
+fn read_codex_usage_auth_at(path: &Path) -> Result<CodexUsageAuth, String> {
+    let data = read_json_or_empty(path)?;
+    let credential = data.get(OPENAI_CODEX_PROVIDER_ID).ok_or_else(|| {
+        format!(
+            "ChatGPT/Codex auth missing in {}; run `/login subscription codex`",
+            path.display()
+        )
+    })?;
+    if credential.get("type").and_then(Value::as_str) != Some("oauth") {
+        return Err(format!(
+            "ChatGPT/Codex credential in {} is not an OAuth credential",
+            path.display()
+        ));
+    }
+    Ok(CodexUsageAuth {
+        access_token: credential
+            .get("access")
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| "ChatGPT/Codex credential is missing access token".to_string())?
+            .to_string(),
+        refresh_token: credential
+            .get("refresh")
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| "ChatGPT/Codex credential is missing refresh token".to_string())?
+            .to_string(),
+        expires: credential
+            .get("expires")
+            .and_then(Value::as_i64)
+            .ok_or_else(|| "ChatGPT/Codex credential is missing expiry".to_string())?,
+        account_id: credential
+            .get("accountId")
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| "ChatGPT/Codex credential is missing account id".to_string())?
+            .to_string(),
+    })
+}
+
+fn read_or_refresh_codex_usage_auth(agent: &ureq::Agent) -> Result<CodexUsageAuth, String> {
+    let path = auth_store_path();
+    let auth = read_codex_usage_auth_at(&path)?;
+    let now = current_time_ms().unwrap_or_default().min(i64::MAX as u64) as i64;
+    if auth.expires > now.saturating_add(60_000) {
+        return Ok(auth);
+    }
+    let _lock = CodexAuthLock::acquire(&path)?;
+    let auth = read_codex_usage_auth_at(&path)?;
+    let now = current_time_ms().unwrap_or_default().min(i64::MAX as u64) as i64;
+    if auth.expires > now.saturating_add(60_000) {
+        return Ok(auth);
+    }
+    let body = codex_token_form(&[
+        ("grant_type", "refresh_token"),
+        ("refresh_token", &auth.refresh_token),
+        ("client_id", OPENAI_CODEX_CLIENT_ID),
+    ]);
+    let value = agent
+        .post(OPENAI_CODEX_TOKEN_URL)
+        .set("content-type", "application/x-www-form-urlencoded")
+        .send_string(&body)
+        .map_err(|error| match error {
+            ureq::Error::Status(status, _) => {
+                format!("Codex OAuth refresh failed with HTTP {status}")
+            }
+            other => format!("Codex OAuth refresh failed: {other}"),
+        })?
+        .into_json::<Value>()
+        .map_err(|error| format!("Codex OAuth refresh returned invalid JSON: {error}"))?;
+    let access = value
+        .get("access_token")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "Codex OAuth refresh did not return access_token".to_string())?;
+    let refresh = value
+        .get("refresh_token")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "Codex OAuth refresh did not return refresh_token".to_string())?;
+    let expires_in = value
+        .get("expires_in")
+        .and_then(Value::as_i64)
+        .filter(|value| *value > 0)
+        .ok_or_else(|| "Codex OAuth refresh did not return expires_in".to_string())?;
+    let account_id = codex_account_id(access)?;
+    let expires = current_time_ms()
+        .unwrap_or_default()
+        .saturating_add((expires_in as u64).saturating_mul(1000))
+        .min(i64::MAX as u64) as i64;
+    let mut data = read_json_or_empty(&path)?;
+    if !data.is_object() {
+        data = json!({});
+    }
+    data[OPENAI_CODEX_PROVIDER_ID] = json!({
+        "type": "oauth",
+        "access": access,
+        "refresh": refresh,
+        "expires": expires,
+        "accountId": account_id,
+    });
+    write_private_json(&path, &data)?;
+    read_codex_usage_auth_at(&path)
+}
+
+fn codex_usage_provider_config(provider: &ProviderConfig) -> Option<&OpenAiCompatibleConfig> {
+    match provider {
+        ProviderConfig::OpenAiCompatible(config)
+            if config.flavor == DirectProviderFlavor::OpenAiCodex =>
+        {
+            Some(config)
+        }
+        _ => None,
+    }
+}
+
+fn normalize_codex_usage_base_url(config: &OpenAiCompatibleConfig) -> String {
+    config
+        .base_url
+        .clone()
+        .or_else(|| env::var("OPPI_OPENAI_CODEX_BASE_URL").ok())
+        .unwrap_or_else(|| OPENAI_CODEX_DEFAULT_BASE_URL.to_string())
+        .trim()
+        .trim_end_matches('/')
+        .to_string()
+}
+
+fn fetch_openai_codex_live_usage(
+    config: &OpenAiCompatibleConfig,
+) -> Result<NativeLiveUsage, String> {
+    let agent = ureq::AgentBuilder::new()
+        .timeout(USAGE_FETCH_TIMEOUT)
+        .build();
+    let auth = read_or_refresh_codex_usage_auth(&agent)?;
+    let base = normalize_codex_usage_base_url(config);
+    let urls = [
+        format!("{base}/wham/usage"),
+        format!("{base}/api/codex/usage"),
+    ];
+    let mut last_error = None;
+    for url in urls {
+        let response = agent
+            .get(&url)
+            .set("authorization", &format!("Bearer {}", auth.access_token))
+            .set("chatgpt-account-id", &auth.account_id)
+            .set("originator", "pi")
+            .set("accept", "application/json")
+            .set("user-agent", "oppi-shell-usage/0.1.0")
+            .call();
+        match response {
+            Ok(response) => {
+                let payload = response
+                    .into_json::<Value>()
+                    .map_err(|error| format!("usage response was invalid JSON: {error}"))?;
+                if let Some(snapshot) = openai_codex_usage_from_payload(&payload, &config.model) {
+                    return Ok(snapshot);
+                }
+                last_error = Some("usage response did not include rate limit windows".to_string());
+            }
+            Err(ureq::Error::Status(status, response)) => {
+                let body = response.into_string().unwrap_or_default();
+                last_error = Some(format!("HTTP {status}: {}", compact_usage_error(&body)));
+            }
+            Err(error) => {
+                last_error = Some(error.to_string());
+            }
+        }
+    }
+    Err(last_error.unwrap_or_else(|| "could not fetch ChatGPT/Codex usage".to_string()))
+}
+
+fn openai_codex_usage_from_payload(payload: &Value, model: &str) -> Option<NativeLiveUsage> {
+    let plan_type = payload
+        .get("plan_type")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let mut snapshots = Vec::new();
+    snapshots.push((Some("codex".to_string()), None, payload.get("rate_limit")));
+    if let Some(additional) = payload
+        .get("additional_rate_limits")
+        .and_then(Value::as_array)
+    {
+        for item in additional {
+            snapshots.push((
+                item.get("metered_feature")
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
+                item.get("limit_name")
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
+                item.get("rate_limit"),
+            ));
+        }
+    }
+    let selected = snapshots
+        .iter()
+        .find(|(id, name, raw)| {
+            raw.is_some() && usage_limit_matches_model(id.as_deref(), name.as_deref(), model)
+        })
+        .or_else(|| {
+            snapshots
+                .iter()
+                .find(|(id, _, raw)| raw.is_some() && id.as_deref() == Some("codex"))
+        })
+        .or_else(|| snapshots.iter().find(|(_, _, raw)| raw.is_some()))?;
+    let windows = [
+        selected.2?.get("primary_window"),
+        selected.2?.get("secondary_window"),
+    ]
+    .into_iter()
+    .flatten()
+    .filter_map(parse_openai_usage_window)
+    .collect::<Vec<_>>();
+    if windows.is_empty() {
+        return None;
+    }
+    let five_hour = windows
+        .iter()
+        .position(|window| window.label == "5h")
+        .or(Some(0))
+        .and_then(|index| windows.get(index).cloned());
+    let weekly = windows
+        .iter()
+        .find(|window| window.label == "week")
+        .or_else(|| {
+            windows
+                .iter()
+                .rev()
+                .find(|window| Some(*window) != five_hour.as_ref())
+        })
+        .cloned();
+    Some(NativeLiveUsage {
+        source: "openai-codex".to_string(),
+        plan_type,
+        five_hour,
+        weekly,
+        fetched_at_ms: current_time_ms().unwrap_or_default(),
+    })
+}
+
+fn parse_openai_usage_window(raw: &Value) -> Option<NativeUsageWindow> {
+    if raw.is_null() {
+        return None;
+    }
+    let seconds = number_f64(raw.get("limit_window_seconds"));
+    let label = match seconds {
+        Some(value) if (value - 18_000.0).abs() <= 300.0 => "5h".to_string(),
+        Some(value) if (value - 604_800.0).abs() <= 1_800.0 => "week".to_string(),
+        Some(value) if value < 3_600.0 => format!("{}m", (value / 60.0).round() as i64),
+        Some(value) if value < 86_400.0 => format!("{}h", (value / 3_600.0).round() as i64),
+        Some(value) => format!("{}d", (value / 86_400.0).round() as i64),
+        None => "limit".to_string(),
+    };
+    let resets_at = raw.get("reset_at").and_then(Value::as_u64).or_else(|| {
+        let reset_after = number_f64(raw.get("reset_after_seconds"))?;
+        let now = current_time_ms()? / 1000;
+        Some(now.saturating_add(reset_after.max(0.0).round() as u64))
+    });
+    Some(NativeUsageWindow {
+        label,
+        used_percent: number_f64(raw.get("used_percent")).map(|value| value.clamp(0.0, 100.0)),
+        resets_at,
+    })
+}
+
+fn number_f64(value: Option<&Value>) -> Option<f64> {
+    value.and_then(|value| {
+        value
+            .as_f64()
+            .or_else(|| value.as_i64().map(|n| n as f64))
+            .or_else(|| value.as_u64().map(|n| n as f64))
+    })
+}
+
+fn usage_limit_matches_model(id: Option<&str>, name: Option<&str>, model: &str) -> bool {
+    let model = normalize_usage_search(model);
+    let haystack = normalize_usage_search(&format!(
+        "{} {}",
+        id.unwrap_or_default(),
+        name.unwrap_or_default()
+    ));
+    !haystack.is_empty() && (haystack.contains(&model) || model.contains(&haystack))
+}
+
+fn normalize_usage_search(value: &str) -> String {
+    value
+        .chars()
+        .filter(|ch| ch.is_ascii_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+fn compact_usage_error(raw: &str) -> String {
+    let compact = raw
+        .replace(['\r', '\n', '\t'], " ")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    if compact.len() > 220 {
+        format!("{}...", &compact[..220])
+    } else {
+        compact
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -9735,12 +24070,1323 @@ fn save_permission_mode_setting(path: &Path, mode: PermissionMode) -> Result<(),
     write_settings_json(path, &data)
 }
 
+fn load_permission_review_settings(path: &Path) -> GuardianReviewSettings {
+    let default = GuardianReviewSettings {
+        timeout_ms: DEFAULT_PERMISSION_REVIEW_TIMEOUT_MS,
+        reviewer_model: None,
+    };
+    let Ok(data) = read_settings_json(path) else {
+        return default;
+    };
+    let Some(permissions) = data
+        .get("oppi")
+        .and_then(|oppi| oppi.get("permissions"))
+        .and_then(Value::as_object)
+    else {
+        return default;
+    };
+    let timeout_ms = permissions
+        .get("reviewTimeoutMs")
+        .and_then(Value::as_u64)
+        .filter(|value| *value > 0)
+        .unwrap_or(default.timeout_ms);
+    let reviewer_model = permissions
+        .get("reviewerModel")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty() && !value.eq_ignore_ascii_case("auto"))
+        .map(str::to_string);
+    GuardianReviewSettings {
+        timeout_ms,
+        reviewer_model,
+    }
+}
+
+fn save_permission_review_settings(
+    path: &Path,
+    settings: &GuardianReviewSettings,
+) -> Result<(), String> {
+    let mut data = read_settings_json(path)?;
+    if !data.is_object() {
+        data = json!({});
+    }
+    if !data.get("oppi").is_some_and(Value::is_object) {
+        data["oppi"] = json!({});
+    }
+    if !data["oppi"]
+        .get("permissions")
+        .is_some_and(Value::is_object)
+    {
+        data["oppi"]["permissions"] = json!({});
+    }
+    data["oppi"]["permissions"]["reviewTimeoutMs"] = json!(settings.timeout_ms);
+    data["oppi"]["permissions"]["reviewerModel"] =
+        json!(settings.reviewer_model.as_deref().unwrap_or("auto"));
+    write_settings_json(path, &data)
+}
+
+fn load_permission_sandbox_settings(path: &Path) -> PermissionSandboxSettings {
+    let Ok(data) = read_settings_json(path) else {
+        return PermissionSandboxSettings::default();
+    };
+    let Some(permissions) = data
+        .get("oppi")
+        .and_then(|oppi| oppi.get("permissions"))
+        .and_then(Value::as_object)
+    else {
+        return PermissionSandboxSettings::default();
+    };
+    let protected_patterns = permissions
+        .get("sandbox")
+        .and_then(|sandbox| sandbox.get("protectedPatterns"))
+        .or_else(|| permissions.get("protectedPatterns"))
+        .map(normalize_string_array)
+        .unwrap_or_default();
+    let project_roots = permissions
+        .get("sandbox")
+        .and_then(|sandbox| sandbox.get("projectRoots"))
+        .or_else(|| permissions.get("projectRoots"))
+        .map(normalize_string_array)
+        .unwrap_or_default();
+    let readable_roots = permissions
+        .get("sandbox")
+        .and_then(|sandbox| sandbox.get("readableRoots"))
+        .or_else(|| permissions.get("readableRoots"))
+        .map(normalize_string_array)
+        .unwrap_or_default();
+    let writable_roots = permissions
+        .get("sandbox")
+        .and_then(|sandbox| sandbox.get("writableRoots"))
+        .or_else(|| permissions.get("writableRoots"))
+        .map(normalize_string_array)
+        .unwrap_or_default();
+    let allow_internet = permissions
+        .get("sandbox")
+        .and_then(|sandbox| sandbox.get("allowInternet"))
+        .or_else(|| permissions.get("allowInternet"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let allow_ssh = permissions
+        .get("sandbox")
+        .and_then(|sandbox| sandbox.get("allowSsh"))
+        .or_else(|| permissions.get("allowSsh"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    PermissionSandboxSettings {
+        allow_internet,
+        allow_ssh,
+        project_roots,
+        readable_roots,
+        writable_roots,
+        protected_patterns,
+    }
+}
+
+fn save_permission_sandbox_settings(
+    path: &Path,
+    settings: &PermissionSandboxSettings,
+) -> Result<(), String> {
+    let mut data = read_settings_json(path)?;
+    if !data.is_object() {
+        data = json!({});
+    }
+    if !data.get("oppi").is_some_and(Value::is_object) {
+        data["oppi"] = json!({});
+    }
+    if !data["oppi"]
+        .get("permissions")
+        .is_some_and(Value::is_object)
+    {
+        data["oppi"]["permissions"] = json!({});
+    }
+    if !data["oppi"]["permissions"]
+        .get("sandbox")
+        .is_some_and(Value::is_object)
+    {
+        data["oppi"]["permissions"]["sandbox"] = json!({});
+    }
+    data["oppi"]["permissions"]["sandbox"]["allowInternet"] = json!(settings.allow_internet);
+    data["oppi"]["permissions"]["sandbox"]["allowSsh"] = json!(settings.allow_ssh);
+    data["oppi"]["permissions"]["sandbox"]["projectRoots"] =
+        json!(normalize_string_slice(&settings.project_roots));
+    data["oppi"]["permissions"]["sandbox"]["readableRoots"] =
+        json!(normalize_string_slice(&settings.readable_roots));
+    data["oppi"]["permissions"]["sandbox"]["writableRoots"] =
+        json!(normalize_string_slice(&settings.writable_roots));
+    data["oppi"]["permissions"]["sandbox"]["protectedPatterns"] =
+        json!(normalize_string_slice(&settings.protected_patterns));
+    write_settings_json(path, &data)
+}
+
+fn load_oppi_compact_settings(path: &Path) -> OppiCompactSettings {
+    let default = OppiCompactSettings::default();
+    let Ok(data) = read_settings_json(path) else {
+        return default;
+    };
+    let Some(oppi) = data.get("oppi").and_then(Value::as_object) else {
+        return default;
+    };
+    let idle = oppi.get("idleCompact");
+    let smart = oppi.get("smartCompact");
+    OppiCompactSettings {
+        idle_enabled: idle
+            .and_then(|value| value.get("enabled"))
+            .and_then(Value::as_bool)
+            .unwrap_or(default.idle_enabled),
+        idle_minutes: idle
+            .and_then(|value| value.get("idleMinutes"))
+            .and_then(Value::as_u64)
+            .filter(|value| VALID_IDLE_COMPACT_MINUTES.contains(value))
+            .unwrap_or(default.idle_minutes),
+        idle_threshold_percent: idle
+            .and_then(|value| value.get("thresholdPercent"))
+            .and_then(Value::as_u64)
+            .filter(|value| VALID_IDLE_COMPACT_THRESHOLDS.contains(value))
+            .unwrap_or(default.idle_threshold_percent),
+        smart_threshold_percent: smart
+            .and_then(|value| value.get("thresholdPercent"))
+            .and_then(Value::as_u64)
+            .filter(|value| VALID_SMART_COMPACT_THRESHOLDS.contains(value))
+            .unwrap_or(default.smart_threshold_percent),
+    }
+}
+
+fn save_oppi_compact_settings(path: &Path, settings: &OppiCompactSettings) -> Result<(), String> {
+    let mut data = read_settings_json(path)?;
+    if !data.is_object() {
+        data = json!({});
+    }
+    if !data.get("oppi").is_some_and(Value::is_object) {
+        data["oppi"] = json!({});
+    }
+    data["oppi"]["idleCompact"] = json!({
+        "enabled": settings.idle_enabled,
+        "idleMinutes": settings.idle_minutes,
+        "thresholdPercent": settings.idle_threshold_percent,
+    });
+    data["oppi"]["smartCompact"] = json!({
+        "thresholdPercent": settings.smart_threshold_percent,
+    });
+    write_settings_json(path, &data)
+}
+
+fn oppi_compact_settings_json(settings: &OppiCompactSettings) -> Value {
+    json!({
+        "idleCompact": {
+            "enabled": settings.idle_enabled,
+            "idleMinutes": settings.idle_minutes,
+            "thresholdPercent": settings.idle_threshold_percent,
+        },
+        "smartCompact": {
+            "thresholdPercent": settings.smart_threshold_percent,
+        },
+    })
+}
+
+fn compaction_enabled_label(enabled: bool) -> &'static str {
+    if enabled { "enabled" } else { "disabled" }
+}
+
+fn compaction_toggle_arg(enabled: bool) -> &'static str {
+    if enabled { "off" } else { "on" }
+}
+
+fn format_compaction_minutes_label(minutes: u64) -> String {
+    format!("{minutes}m")
+}
+
+fn format_compaction_threshold_label(percent: u64) -> String {
+    format!("{percent}%")
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CompactionTriggerTelemetry {
+    context_tokens: Option<i64>,
+    context_window: Option<u64>,
+    context_percent: Option<u64>,
+    idle_state: String,
+    smart_state: String,
+    active_todos: usize,
+}
+
+fn compaction_context_percent(
+    context_tokens: Option<i64>,
+    context_window: Option<u64>,
+) -> Option<u64> {
+    let tokens = context_tokens.filter(|tokens| *tokens > 0)? as u128;
+    let window = context_window.filter(|window| *window > 0)? as u128;
+    Some((((tokens * 100) + (window / 2)) / window).min(999) as u64)
+}
+
+fn compaction_context_meets_threshold(
+    context_tokens: Option<i64>,
+    context_window: Option<u64>,
+    threshold_percent: u64,
+) -> bool {
+    let Some(tokens) = context_tokens.filter(|tokens| *tokens > 0) else {
+        return false;
+    };
+    let Some(window) = context_window.filter(|window| *window > 0) else {
+        return false;
+    };
+    (tokens as u128).saturating_mul(100)
+        >= (threshold_percent as u128).saturating_mul(window as u128)
+}
+
+fn compaction_trigger_telemetry(
+    settings: &OppiCompactSettings,
+    context_tokens: Option<i64>,
+    context_window: Option<u64>,
+    active_todos: usize,
+) -> CompactionTriggerTelemetry {
+    let context_percent = compaction_context_percent(context_tokens, context_window);
+    let idle_state = if !settings.idle_enabled {
+        "idle disabled".to_string()
+    } else if context_tokens.is_none() {
+        "idle waiting for provider usage".to_string()
+    } else if context_window.is_none() {
+        "idle waiting for context window".to_string()
+    } else if compaction_context_meets_threshold(
+        context_tokens,
+        context_window,
+        settings.idle_threshold_percent,
+    ) {
+        format!(
+            "idle ready at {} threshold after {} idle",
+            format_compaction_threshold_label(settings.idle_threshold_percent),
+            format_compaction_minutes_label(settings.idle_minutes)
+        )
+    } else {
+        format!(
+            "idle waiting for {} threshold",
+            format_compaction_threshold_label(settings.idle_threshold_percent)
+        )
+    };
+    let smart_state = if active_todos == 0 {
+        "smart waiting for active todos".to_string()
+    } else if context_tokens.is_none() {
+        "smart waiting for provider usage".to_string()
+    } else if context_window.is_none() {
+        "smart waiting for context window".to_string()
+    } else if compaction_context_meets_threshold(
+        context_tokens,
+        context_window,
+        settings.smart_threshold_percent,
+    ) {
+        format!(
+            "smart ready at {} threshold with {} active todos",
+            format_compaction_threshold_label(settings.smart_threshold_percent),
+            active_todos
+        )
+    } else {
+        format!(
+            "smart waiting for {} threshold with {} active todos",
+            format_compaction_threshold_label(settings.smart_threshold_percent),
+            active_todos
+        )
+    };
+    CompactionTriggerTelemetry {
+        context_tokens,
+        context_window,
+        context_percent,
+        idle_state,
+        smart_state,
+        active_todos,
+    }
+}
+
+fn format_compaction_context_label(telemetry: &CompactionTriggerTelemetry) -> String {
+    match (
+        telemetry.context_tokens,
+        telemetry.context_window,
+        telemetry.context_percent,
+    ) {
+        (Some(tokens), Some(window), Some(percent)) => format!(
+            "context {}/{} ({}%)",
+            format_compact_tokens(tokens),
+            format_compact_tokens(window.min(i64::MAX as u64) as i64),
+            percent
+        ),
+        (Some(tokens), None, _) => {
+            format!("context {} (window unknown)", format_compact_tokens(tokens))
+        }
+        _ => "context pending".to_string(),
+    }
+}
+
+fn format_compaction_trigger_telemetry(telemetry: &CompactionTriggerTelemetry) -> String {
+    format!(
+        "trigger: {}; {}; {}",
+        format_compaction_context_label(telemetry),
+        telemetry.idle_state,
+        telemetry.smart_state
+    )
+}
+
+fn compaction_trigger_state_kind(state: &str) -> &'static str {
+    if state.contains("ready") {
+        "ready"
+    } else if state.contains("disabled") {
+        "disabled"
+    } else {
+        "waiting"
+    }
+}
+
+fn compaction_trigger_telemetry_json(telemetry: &CompactionTriggerTelemetry) -> Value {
+    json!({
+        "contextTokens": telemetry.context_tokens,
+        "contextWindow": telemetry.context_window,
+        "contextPercent": telemetry.context_percent,
+        "activeTodos": telemetry.active_todos,
+        "idle": {
+            "state": compaction_trigger_state_kind(&telemetry.idle_state),
+            "detail": telemetry.idle_state,
+        },
+        "smart": {
+            "state": compaction_trigger_state_kind(&telemetry.smart_state),
+            "detail": telemetry.smart_state,
+        },
+    })
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CompactionOfferKind {
+    Smart,
+    Idle,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CompactionOffer {
+    kind: CompactionOfferKind,
+    key: String,
+    message: String,
+}
+
+fn compaction_offer_key(
+    kind: CompactionOfferKind,
+    settings: &OppiCompactSettings,
+    telemetry: &CompactionTriggerTelemetry,
+) -> String {
+    let kind = match kind {
+        CompactionOfferKind::Smart => "smart",
+        CompactionOfferKind::Idle => "idle",
+    };
+    format!(
+        "{kind}:tokens={}:window={}:percent={}:todos={}:idle={}:idle_threshold={}:smart_threshold={}",
+        telemetry.context_tokens.unwrap_or(-1),
+        telemetry.context_window.unwrap_or(0),
+        telemetry.context_percent.unwrap_or(0),
+        telemetry.active_todos,
+        settings.idle_minutes,
+        settings.idle_threshold_percent,
+        settings.smart_threshold_percent
+    )
+}
+
+fn compaction_offer_plan(
+    settings: &OppiCompactSettings,
+    telemetry: &CompactionTriggerTelemetry,
+    idle_elapsed: Option<Duration>,
+) -> Option<CompactionOffer> {
+    if telemetry.active_todos > 0
+        && compaction_context_meets_threshold(
+            telemetry.context_tokens,
+            telemetry.context_window,
+            settings.smart_threshold_percent,
+        )
+    {
+        return Some(CompactionOffer {
+            kind: CompactionOfferKind::Smart,
+            key: compaction_offer_key(CompactionOfferKind::Smart, settings, telemetry),
+            message: format!(
+                "smart compact ready: {} with {} active todos. Run `/idle-compact compact` to create a todo-aware handoff now.",
+                format_compaction_context_label(telemetry),
+                telemetry.active_todos
+            ),
+        });
+    }
+
+    let idle_required = Duration::from_secs(settings.idle_minutes.saturating_mul(60));
+    if settings.idle_enabled
+        && idle_elapsed.is_some_and(|elapsed| elapsed >= idle_required)
+        && compaction_context_meets_threshold(
+            telemetry.context_tokens,
+            telemetry.context_window,
+            settings.idle_threshold_percent,
+        )
+    {
+        return Some(CompactionOffer {
+            kind: CompactionOfferKind::Idle,
+            key: compaction_offer_key(CompactionOfferKind::Idle, settings, telemetry),
+            message: format!(
+                "idle compact ready: {} after {} idle. Run `/idle-compact compact` to create a handoff now.",
+                format_compaction_context_label(telemetry),
+                format_compaction_minutes_label(settings.idle_minutes)
+            ),
+        });
+    }
+
+    None
+}
+
+fn format_oppi_compact_settings_status(
+    settings: &OppiCompactSettings,
+    telemetry: Option<&CompactionTriggerTelemetry>,
+) -> String {
+    let mut status = format!(
+        "compaction: idle {}; idle time {}; idle threshold {}; smart threshold {}",
+        compaction_enabled_label(settings.idle_enabled),
+        format_compaction_minutes_label(settings.idle_minutes),
+        format_compaction_threshold_label(settings.idle_threshold_percent),
+        format_compaction_threshold_label(settings.smart_threshold_percent)
+    );
+    if let Some(telemetry) = telemetry {
+        status.push('\n');
+        status.push_str(&format_compaction_trigger_telemetry(telemetry));
+    }
+    status
+}
+
+fn load_footer_settings(path: &Path) -> FooterSettings {
+    let default = FooterSettings::default();
+    let Ok(data) = read_settings_json(path) else {
+        return default;
+    };
+    let Some(footer) = data
+        .get("oppi")
+        .and_then(|oppi| oppi.get("footer"))
+        .and_then(Value::as_object)
+    else {
+        return default;
+    };
+    FooterSettings {
+        show_path: footer_bool_setting(footer.get("showPath"), default.show_path),
+        show_help_bar: footer_bool_setting(footer.get("showHelpBar"), default.show_help_bar),
+        usage_display: footer
+            .get("usageDisplay")
+            .and_then(Value::as_str)
+            .and_then(|value| parse_footer_usage_display(value).ok())
+            .unwrap_or(default.usage_display),
+        show_model: footer_bool_setting(footer.get("showModel"), default.show_model),
+        show_permission: footer_bool_setting(footer.get("showPermission"), default.show_permission),
+        show_memory: footer_bool_setting(footer.get("showMemory"), default.show_memory),
+        show_context: footer_bool_setting(footer.get("showContext"), default.show_context),
+    }
+}
+
+fn footer_bool_setting(value: Option<&Value>, default: bool) -> bool {
+    value.and_then(Value::as_bool).unwrap_or(default)
+}
+
+fn save_footer_settings(path: &Path, settings: &FooterSettings) -> Result<(), String> {
+    let mut data = read_settings_json(path)?;
+    if !data.is_object() {
+        data = json!({});
+    }
+    if !data.get("oppi").is_some_and(Value::is_object) {
+        data["oppi"] = json!({});
+    }
+    if !data["oppi"].get("footer").is_some_and(Value::is_object) {
+        data["oppi"]["footer"] = json!({});
+    }
+    data["oppi"]["footer"]["showPath"] = json!(settings.show_path);
+    data["oppi"]["footer"]["showHelpBar"] = json!(settings.show_help_bar);
+    data["oppi"]["footer"]["usageDisplay"] = json!(settings.usage_display.as_str());
+    data["oppi"]["footer"]["showModel"] = json!(settings.show_model);
+    data["oppi"]["footer"]["showPermission"] = json!(settings.show_permission);
+    data["oppi"]["footer"]["showMemory"] = json!(settings.show_memory);
+    data["oppi"]["footer"]["showContext"] = json!(settings.show_context);
+    write_settings_json(path, &data)
+}
+
+fn footer_settings_json(settings: &FooterSettings) -> Value {
+    json!({
+        "showPath": settings.show_path,
+        "showHelpBar": settings.show_help_bar,
+        "usageDisplay": settings.usage_display.as_str(),
+        "showModel": settings.show_model,
+        "showPermission": settings.show_permission,
+        "showMemory": settings.show_memory,
+        "showContext": settings.show_context,
+    })
+}
+
+fn footer_visibility_label(shown: bool) -> &'static str {
+    if shown { "shown" } else { "hidden" }
+}
+
+fn footer_toggle_arg(shown: bool) -> &'static str {
+    if shown { "off" } else { "on" }
+}
+
+fn format_footer_settings_status(settings: &FooterSettings) -> String {
+    format!(
+        "footer: path {}; help {}; usage {}; model {}; permission {}; memory {}; context {}",
+        footer_visibility_label(settings.show_path),
+        footer_visibility_label(settings.show_help_bar),
+        settings.usage_display.label(),
+        footer_visibility_label(settings.show_model),
+        footer_visibility_label(settings.show_permission),
+        footer_visibility_label(settings.show_memory),
+        footer_visibility_label(settings.show_context)
+    )
+}
+
+fn load_image_settings(path: &Path) -> ImageSettings {
+    let default = ImageSettings::default();
+    let Ok(data) = read_settings_json(path) else {
+        return default;
+    };
+    let Some(oppi) = data.get("oppi").and_then(Value::as_object) else {
+        return default;
+    };
+    let images = oppi.get("images").and_then(Value::as_object);
+    let get = |key: &str| {
+        images
+            .and_then(|images| images.get(key))
+            .or_else(|| oppi.get(key))
+    };
+    ImageSettings {
+        show_images: get("showImages")
+            .and_then(Value::as_bool)
+            .unwrap_or(default.show_images),
+        image_width_cells: get("imageWidthCells")
+            .and_then(Value::as_u64)
+            .filter(|value| VALID_IMAGE_WIDTH_CELLS.contains(value))
+            .unwrap_or(default.image_width_cells),
+        auto_resize_images: get("autoResizeImages")
+            .and_then(Value::as_bool)
+            .unwrap_or(default.auto_resize_images),
+        block_images: get("blockImages")
+            .and_then(Value::as_bool)
+            .unwrap_or(default.block_images),
+        preview_protocol: get("previewProtocol")
+            .and_then(Value::as_str)
+            .and_then(|value| parse_image_preview_protocol_override(value).ok())
+            .unwrap_or(default.preview_protocol),
+    }
+}
+
+fn save_image_settings(path: &Path, settings: &ImageSettings) -> Result<(), String> {
+    let mut data = read_settings_json(path)?;
+    if !data.is_object() {
+        data = json!({});
+    }
+    if !data.get("oppi").is_some_and(Value::is_object) {
+        data["oppi"] = json!({});
+    }
+    if !data["oppi"].get("images").is_some_and(Value::is_object) {
+        data["oppi"]["images"] = json!({});
+    }
+    data["oppi"]["images"]["showImages"] = json!(settings.show_images);
+    data["oppi"]["images"]["imageWidthCells"] = json!(settings.image_width_cells);
+    data["oppi"]["images"]["autoResizeImages"] = json!(settings.auto_resize_images);
+    data["oppi"]["images"]["blockImages"] = json!(settings.block_images);
+    data["oppi"]["images"]["previewProtocol"] = json!(settings.preview_protocol.as_str());
+    write_settings_json(path, &data)
+}
+
+fn image_settings_json(settings: &ImageSettings) -> Value {
+    json!({
+        "showImages": settings.show_images,
+        "imageWidthCells": settings.image_width_cells,
+        "autoResizeImages": settings.auto_resize_images,
+        "blockImages": settings.block_images,
+        "previewProtocol": settings.preview_protocol.as_str(),
+    })
+}
+
+fn image_visibility_label(shown: bool) -> &'static str {
+    if shown { "shown" } else { "hidden" }
+}
+
+fn enabled_label(enabled: bool) -> &'static str {
+    if enabled { "enabled" } else { "disabled" }
+}
+
+fn image_block_label(blocked: bool) -> &'static str {
+    if blocked { "blocked" } else { "allowed" }
+}
+
+fn image_show_toggle_arg(shown: bool) -> &'static str {
+    if shown { "off" } else { "on" }
+}
+
+fn image_enabled_toggle_arg(enabled: bool) -> &'static str {
+    if enabled { "off" } else { "on" }
+}
+
+fn image_block_toggle_arg(blocked: bool) -> &'static str {
+    if blocked { "off" } else { "on" }
+}
+
+fn format_image_settings_status(settings: &ImageSettings) -> String {
+    format!(
+        "images: previews {}; width {}; auto-resize {}; provider image sending {}; preview protocol {}",
+        image_visibility_label(settings.show_images),
+        settings.image_width_cells,
+        enabled_label(settings.auto_resize_images),
+        image_block_label(settings.block_images),
+        settings.preview_protocol.as_str()
+    )
+}
+
+fn load_memory_settings(path: &Path) -> MemorySettings {
+    let default = MemorySettings::default();
+    let Ok(data) = read_settings_json(path) else {
+        return default;
+    };
+    let Some(memory) = data
+        .get("oppi")
+        .and_then(|oppi| oppi.get("memory"))
+        .and_then(Value::as_object)
+    else {
+        return default;
+    };
+    let sync = memory.get("sync");
+    MemorySettings {
+        enabled: memory
+            .get("enabled")
+            .and_then(Value::as_bool)
+            .unwrap_or(default.enabled),
+        agent_model: memory
+            .get("agentModel")
+            .and_then(Value::as_str)
+            .filter(|value| VALID_MEMORY_AGENT_MODELS.contains(value))
+            .unwrap_or(&default.agent_model)
+            .to_string(),
+        deep_model: memory
+            .get("deepModel")
+            .and_then(Value::as_str)
+            .filter(|value| VALID_DEEP_MEMORY_MODELS.contains(value))
+            .unwrap_or(&default.deep_model)
+            .to_string(),
+        startup_recall: memory
+            .get("startupRecall")
+            .and_then(Value::as_bool)
+            .unwrap_or(default.startup_recall),
+        task_start_recall: memory
+            .get("taskStartRecall")
+            .and_then(Value::as_bool)
+            .unwrap_or(default.task_start_recall),
+        turn_summaries: memory
+            .get("turnSummaries")
+            .and_then(Value::as_bool)
+            .unwrap_or(default.turn_summaries),
+        idle_consolidation: memory
+            .get("idleConsolidation")
+            .and_then(Value::as_bool)
+            .unwrap_or(default.idle_consolidation),
+        dashboard_port: memory
+            .get("dashboardPort")
+            .and_then(|value| {
+                if value.as_str() == Some("auto") {
+                    Some(None)
+                } else {
+                    value
+                        .as_u64()
+                        .and_then(|port| u16::try_from(port).ok())
+                        .filter(|port| *port > 0)
+                        .map(Some)
+                }
+            })
+            .unwrap_or(default.dashboard_port),
+        hoppi_install_offer: memory
+            .get("hoppiInstallOffer")
+            .and_then(Value::as_str)
+            .filter(|value| VALID_HOPPI_INSTALL_OFFERS.contains(value))
+            .unwrap_or(&default.hoppi_install_offer)
+            .to_string(),
+        sync_enabled: sync
+            .and_then(|sync| sync.get("enabled"))
+            .and_then(Value::as_bool)
+            .unwrap_or(default.sync_enabled),
+        sync_repo_path: sync
+            .and_then(|sync| sync.get("repoPath"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string),
+        sync_repo_url: sync
+            .and_then(|sync| sync.get("repoUrl"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string),
+        sync_pull_on_startup: sync
+            .and_then(|sync| sync.get("pullOnStartup"))
+            .and_then(Value::as_bool)
+            .unwrap_or(default.sync_pull_on_startup),
+        sync_push_on_exit: sync
+            .and_then(|sync| sync.get("pushOnExit"))
+            .and_then(Value::as_bool)
+            .unwrap_or(default.sync_push_on_exit),
+        sync_background: sync
+            .and_then(|sync| sync.get("backgroundSync"))
+            .and_then(Value::as_str)
+            .filter(|value| VALID_SYNC_BACKGROUND.contains(value))
+            .unwrap_or(&default.sync_background)
+            .to_string(),
+        sync_encryption: sync
+            .and_then(|sync| sync.get("encryption"))
+            .and_then(Value::as_str)
+            .filter(|value| matches!(*value, "none" | "passphrase"))
+            .unwrap_or(&default.sync_encryption)
+            .to_string(),
+        sync_passphrase_source: sync
+            .and_then(|sync| sync.get("passphraseSource"))
+            .and_then(Value::as_str)
+            .filter(|value| matches!(*value, "env" | "file"))
+            .unwrap_or(&default.sync_passphrase_source)
+            .to_string(),
+        sync_passphrase_env: sync
+            .and_then(|sync| sync.get("passphraseEnv"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or(&default.sync_passphrase_env)
+            .to_string(),
+        sync_passphrase_file: sync
+            .and_then(|sync| sync.get("passphraseFile"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string),
+        sync_conflict_mode: sync
+            .and_then(|sync| sync.get("conflictMode"))
+            .and_then(Value::as_str)
+            .filter(|value| VALID_SYNC_CONFLICT_MODES.contains(value))
+            .unwrap_or(&default.sync_conflict_mode)
+            .to_string(),
+    }
+}
+
+fn set_optional_json_string(target: &mut Value, key: &str, value: Option<&str>) {
+    if let Some(object) = target.as_object_mut() {
+        if let Some(value) = value {
+            object.insert(key.to_string(), json!(value));
+        } else {
+            object.remove(key);
+        }
+    }
+}
+
+fn save_memory_settings(path: &Path, settings: &MemorySettings) -> Result<(), String> {
+    let mut data = read_settings_json(path)?;
+    if !data.is_object() {
+        data = json!({});
+    }
+    if !data.get("oppi").is_some_and(Value::is_object) {
+        data["oppi"] = json!({});
+    }
+    if !data["oppi"].get("memory").is_some_and(Value::is_object) {
+        data["oppi"]["memory"] = json!({});
+    }
+    if !data["oppi"]["memory"]
+        .get("sync")
+        .is_some_and(Value::is_object)
+    {
+        data["oppi"]["memory"]["sync"] = json!({});
+    }
+    data["oppi"]["memory"]["enabled"] = json!(settings.enabled);
+    data["oppi"]["memory"]["agentModel"] = json!(settings.agent_model);
+    data["oppi"]["memory"]["deepModel"] = json!(settings.deep_model);
+    data["oppi"]["memory"]["startupRecall"] = json!(settings.startup_recall);
+    data["oppi"]["memory"]["taskStartRecall"] = json!(settings.task_start_recall);
+    data["oppi"]["memory"]["turnSummaries"] = json!(settings.turn_summaries);
+    data["oppi"]["memory"]["idleConsolidation"] = json!(settings.idle_consolidation);
+    data["oppi"]["memory"]["dashboardPort"] = settings
+        .dashboard_port
+        .map(|port| json!(port))
+        .unwrap_or_else(|| json!("auto"));
+    data["oppi"]["memory"]["hoppiInstallOffer"] = json!(settings.hoppi_install_offer);
+    let sync = &mut data["oppi"]["memory"]["sync"];
+    sync["enabled"] = json!(settings.sync_enabled);
+    sync["provider"] = json!("github");
+    set_optional_json_string(sync, "repoPath", settings.sync_repo_path.as_deref());
+    set_optional_json_string(sync, "repoUrl", settings.sync_repo_url.as_deref());
+    sync["pullOnStartup"] = json!(settings.sync_pull_on_startup);
+    sync["pushOnExit"] = json!(settings.sync_push_on_exit);
+    sync["backgroundSync"] = json!(settings.sync_background);
+    sync["encryption"] = json!(settings.sync_encryption);
+    sync["passphraseSource"] = json!(settings.sync_passphrase_source);
+    sync["passphraseEnv"] = json!(settings.sync_passphrase_env);
+    set_optional_json_string(
+        sync,
+        "passphraseFile",
+        settings.sync_passphrase_file.as_deref(),
+    );
+    sync["conflictMode"] = json!(settings.sync_conflict_mode);
+    write_settings_json(path, &data)
+}
+
+fn memory_settings_json(settings: &MemorySettings) -> Value {
+    json!({
+        "enabled": settings.enabled,
+        "agentModel": settings.agent_model,
+        "deepModel": settings.deep_model,
+        "startupRecall": settings.startup_recall,
+        "taskStartRecall": settings.task_start_recall,
+        "turnSummaries": settings.turn_summaries,
+        "idleConsolidation": settings.idle_consolidation,
+        "dashboardPort": settings.dashboard_port.map(|port| json!(port)).unwrap_or_else(|| json!("auto")),
+        "hoppiInstallOffer": settings.hoppi_install_offer,
+        "sync": {
+            "enabled": settings.sync_enabled,
+            "provider": "github",
+            "repoPath": settings.sync_repo_path,
+            "repoUrl": settings.sync_repo_url,
+            "pullOnStartup": settings.sync_pull_on_startup,
+            "pushOnExit": settings.sync_push_on_exit,
+            "backgroundSync": settings.sync_background,
+            "encryption": settings.sync_encryption,
+            "passphraseSource": settings.sync_passphrase_source,
+            "passphraseEnv": settings.sync_passphrase_env,
+            "passphraseFile": settings.sync_passphrase_file,
+            "conflictMode": settings.sync_conflict_mode,
+        },
+    })
+}
+
+fn optional_memory_setting_label(value: Option<&str>) -> String {
+    value.unwrap_or("not configured").to_string()
+}
+
+fn memory_setting_toggle_arg(enabled: bool) -> &'static str {
+    if enabled { "off" } else { "on" }
+}
+
+fn hoppi_install_offer_toggle_arg(value: &str) -> &'static str {
+    if value == "dismissed" {
+        "ask"
+    } else {
+        "dismissed"
+    }
+}
+
+fn format_memory_settings_status(settings: &MemorySettings) -> String {
+    let repo = optional_memory_setting_label(settings.sync_repo_path.as_deref());
+    let remote = optional_memory_setting_label(settings.sync_repo_url.as_deref());
+    let passphrase = if settings.sync_encryption == "passphrase" {
+        if settings.sync_passphrase_source == "file" {
+            optional_memory_setting_label(settings.sync_passphrase_file.as_deref())
+        } else {
+            settings.sync_passphrase_env.clone()
+        }
+    } else {
+        "not used".to_string()
+    };
+    format!(
+        "memory settings: memory {}; agent model {}; deep dream model {}; startup recall {}; task-start recall {}; turn summaries {}; idle dream {}; dashboard port {}; first-start install offer {}; sync {}; repo {}; remote {}; pull startup {}; push exit {}; background {}; encryption {}/{}; passphrase {}; conflict {}",
+        enabled_label(settings.enabled),
+        settings.agent_model,
+        settings.deep_model,
+        enabled_label(settings.startup_recall),
+        enabled_label(settings.task_start_recall),
+        enabled_label(settings.turn_summaries),
+        enabled_label(settings.idle_consolidation),
+        settings
+            .dashboard_port
+            .map(|port| port.to_string())
+            .unwrap_or_else(|| "auto".to_string()),
+        settings.hoppi_install_offer,
+        enabled_label(settings.sync_enabled),
+        repo,
+        remote,
+        enabled_label(settings.sync_pull_on_startup),
+        enabled_label(settings.sync_push_on_exit),
+        settings.sync_background,
+        settings.sync_encryption,
+        settings.sync_passphrase_source,
+        passphrase,
+        settings.sync_conflict_mode
+    )
+}
+
+struct FooterStatusParts<'a> {
+    settings: &'a FooterSettings,
+    cwd: &'a str,
+    model: &'a str,
+    permission: &'a str,
+    usage: &'a str,
+    weekly: Option<&'a str>,
+    context: &'a str,
+    memory: &'a str,
+    todos: usize,
+    queued: usize,
+    goal: &'a str,
+    variant: &'a str,
+    theme: &'a str,
+    thread: &'a str,
+}
+
+fn format_footer_status_line(parts: FooterStatusParts<'_>) -> String {
+    let mut segments = vec!["status: role=executor".to_string()];
+    if parts.settings.show_path {
+        segments.push(format!("workspace={}", parts.cwd));
+    }
+    if parts.settings.show_model {
+        segments.push(format!("model={}", parts.model));
+    }
+    if parts.settings.show_permission {
+        segments.push(format!("permissions={}", parts.permission));
+    }
+    let usage = format_usage_footer_line(parts.settings, parts.usage, parts.weekly, parts.context);
+    if usage != "off" {
+        segments.push(usage);
+    }
+    if parts.settings.show_memory {
+        segments.push(format!("memory={}", parts.memory));
+    }
+    segments.push(format!("todos={}", parts.todos));
+    segments.push(format!("queued={}", parts.queued));
+    segments.push(format!("goal={}", parts.goal));
+    segments.push("diagnostics=line-mode/raw-deferred".to_string());
+    segments.push(format!("variant={}", parts.variant));
+    segments.push(format!("theme={}", parts.theme));
+    segments.push(format!("thread={}", parts.thread));
+    segments.join(" ")
+}
+
+fn format_usage_footer_line(
+    settings: &FooterSettings,
+    usage: &str,
+    weekly: Option<&str>,
+    context: &str,
+) -> String {
+    let mut parts = Vec::new();
+    match settings.usage_display {
+        FooterUsageDisplay::SessionWeekly => {
+            parts.push(usage.to_string());
+            if let Some(weekly) = weekly {
+                parts.push(weekly.to_string());
+            }
+        }
+        FooterUsageDisplay::Session => parts.push(usage.to_string()),
+        FooterUsageDisplay::Weekly => {
+            if let Some(weekly) = weekly {
+                parts.push(weekly.to_string());
+            }
+        }
+        FooterUsageDisplay::Off => {}
+    }
+    if settings.show_context {
+        parts.push(context.to_string());
+    }
+    if parts.is_empty() {
+        "off".to_string()
+    } else {
+        parts.join(" · ")
+    }
+}
+
+fn normalize_string_array(value: &Value) -> Vec<String> {
+    value
+        .as_array()
+        .map(|items| {
+            normalize_string_slice(
+                &items
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_string)
+                    .collect::<Vec<_>>(),
+            )
+        })
+        .unwrap_or_default()
+}
+
+fn normalize_string_slice(values: &[String]) -> Vec<String> {
+    let mut normalized = Vec::new();
+    for value in values {
+        let value = value.trim();
+        if value.is_empty() {
+            continue;
+        }
+        let value = value.to_string();
+        if !normalized.contains(&value) {
+            normalized.push(value);
+        }
+    }
+    normalized
+}
+
+fn load_ask_user_settings(path: &Path) -> AskUserSettings {
+    let default = AskUserSettings {
+        timeout_ms: DEFAULT_ASK_USER_TIMEOUT_MS,
+    };
+    let Ok(data) = read_settings_json(path) else {
+        return default;
+    };
+    let Some(ask_user) = data
+        .get("oppi")
+        .and_then(|oppi| oppi.get("askUser"))
+        .and_then(Value::as_object)
+    else {
+        return default;
+    };
+    let timeout_ms = ask_user
+        .get("timeoutMinutes")
+        .and_then(Value::as_u64)
+        .and_then(ask_user_timeout_minutes_to_ms)
+        .or_else(|| {
+            ask_user
+                .get("timeoutMs")
+                .and_then(Value::as_u64)
+                .filter(|value| ask_user_timeout_ms_to_minutes(*value).is_some())
+        })
+        .unwrap_or(default.timeout_ms);
+    AskUserSettings { timeout_ms }
+}
+
+fn save_ask_user_settings(path: &Path, settings: &AskUserSettings) -> Result<(), String> {
+    let timeout_minutes = ask_user_timeout_ms_to_minutes(settings.timeout_ms)
+        .ok_or_else(|| "ask_user timeout must be off, 1, 2, 5, or 10 minutes".to_string())?;
+    let mut data = read_settings_json(path)?;
+    if !data.is_object() {
+        data = json!({});
+    }
+    if !data.get("oppi").is_some_and(Value::is_object) {
+        data["oppi"] = json!({});
+    }
+    if !data["oppi"].get("askUser").is_some_and(Value::is_object) {
+        data["oppi"]["askUser"] = json!({});
+    }
+    data["oppi"]["askUser"]["timeoutMinutes"] = json!(timeout_minutes);
+    write_settings_json(path, &data)
+}
+
+fn load_follow_up_mode_setting(path: &Path) -> FollowUpMode {
+    read_settings_json(path)
+        .ok()
+        .and_then(|data| {
+            data.get("followUpMode")
+                .and_then(Value::as_str)
+                .and_then(parse_follow_up_mode)
+        })
+        .unwrap_or_default()
+}
+
+fn save_follow_up_mode_setting(path: &Path, mode: FollowUpMode) -> Result<(), String> {
+    let mut data = read_settings_json(path)?;
+    if !data.is_object() {
+        data = json!({});
+    }
+    data["followUpMode"] = json!(mode.as_str());
+    write_settings_json(path, &data)
+}
+
+fn load_steering_mode_setting(path: &Path) -> SteeringMode {
+    read_settings_json(path)
+        .ok()
+        .and_then(|data| {
+            data.get("steeringMode")
+                .and_then(Value::as_str)
+                .and_then(parse_steering_mode)
+                .or_else(|| {
+                    data.get("queueMode")
+                        .and_then(Value::as_str)
+                        .and_then(parse_steering_mode)
+                })
+        })
+        .unwrap_or_default()
+}
+
+fn save_steering_mode_setting(path: &Path, mode: SteeringMode) -> Result<(), String> {
+    let mut data = read_settings_json(path)?;
+    if !data.is_object() {
+        data = json!({});
+    }
+    data["steeringMode"] = json!(mode.as_str());
+    write_settings_json(path, &data)
+}
+
+fn load_quiet_startup_setting(path: &Path) -> bool {
+    read_settings_json(path)
+        .ok()
+        .and_then(|data| data.get("quietStartup").and_then(Value::as_bool))
+        .unwrap_or(false)
+}
+
+fn save_quiet_startup_setting(path: &Path, quiet_startup: bool) -> Result<(), String> {
+    let mut data = read_settings_json(path)?;
+    if !data.is_object() {
+        data = json!({});
+    }
+    data["quietStartup"] = json!(quiet_startup);
+    write_settings_json(path, &data)
+}
+
+fn load_show_hardware_cursor_setting(path: &Path) -> bool {
+    read_settings_json(path)
+        .ok()
+        .and_then(|data| data.get("showHardwareCursor").and_then(Value::as_bool))
+        .unwrap_or_else(default_show_hardware_cursor)
+}
+
+fn save_show_hardware_cursor_setting(path: &Path, enabled: bool) -> Result<(), String> {
+    let mut data = read_settings_json(path)?;
+    if !data.is_object() {
+        data = json!({});
+    }
+    data["showHardwareCursor"] = json!(enabled);
+    write_settings_json(path, &data)
+}
+
+fn default_show_hardware_cursor() -> bool {
+    env::var("PI_HARDWARE_CURSOR")
+        .ok()
+        .is_some_and(|value| value.trim() == "1")
+}
+
+fn load_editor_padding_x_setting(path: &Path) -> usize {
+    read_settings_json(path)
+        .ok()
+        .and_then(|data| {
+            data.get("editorPaddingX")
+                .and_then(Value::as_u64)
+                .and_then(|value| usize::try_from(value).ok())
+                .and_then(normalize_editor_padding_x)
+        })
+        .unwrap_or(DEFAULT_EDITOR_PADDING_X)
+}
+
+fn save_editor_padding_x_setting(path: &Path, padding_x: usize) -> Result<(), String> {
+    let padding_x =
+        normalize_editor_padding_x(padding_x).ok_or_else(|| editor_usage().to_string())?;
+    let mut data = read_settings_json(path)?;
+    if !data.is_object() {
+        data = json!({});
+    }
+    data["editorPaddingX"] = json!(padding_x);
+    write_settings_json(path, &data)
+}
+
+fn load_double_escape_action_setting(path: &Path) -> DoubleEscapeAction {
+    read_settings_json(path)
+        .ok()
+        .and_then(|data| {
+            data.get("doubleEscapeAction")
+                .and_then(Value::as_str)
+                .and_then(|raw| parse_double_escape_action(raw).ok())
+        })
+        .unwrap_or(DoubleEscapeAction::Tree)
+}
+
+fn save_double_escape_action_setting(
+    path: &Path,
+    action: DoubleEscapeAction,
+) -> Result<(), String> {
+    let mut data = read_settings_json(path)?;
+    if !data.is_object() {
+        data = json!({});
+    }
+    data["doubleEscapeAction"] = json!(action.as_str());
+    write_settings_json(path, &data)
+}
+
+fn load_tree_filter_mode_setting(path: &Path) -> TreeFilterMode {
+    read_settings_json(path)
+        .ok()
+        .and_then(|data| {
+            data.get("treeFilterMode")
+                .and_then(Value::as_str)
+                .and_then(|raw| parse_tree_filter_mode(raw).ok())
+        })
+        .unwrap_or(TreeFilterMode::Default)
+}
+
+fn save_tree_filter_mode_setting(path: &Path, mode: TreeFilterMode) -> Result<(), String> {
+    let mut data = read_settings_json(path)?;
+    if !data.is_object() {
+        data = json!({});
+    }
+    data["treeFilterMode"] = json!(mode.as_str());
+    write_settings_json(path, &data)
+}
+
+fn load_show_terminal_progress_setting(path: &Path) -> bool {
+    read_settings_json(path)
+        .ok()
+        .and_then(|data| data.get("showTerminalProgress").and_then(Value::as_bool))
+        .unwrap_or(true)
+}
+
+fn save_show_terminal_progress_setting(path: &Path, enabled: bool) -> Result<(), String> {
+    let mut data = read_settings_json(path)?;
+    if !data.is_object() {
+        data = json!({});
+    }
+    data["showTerminalProgress"] = json!(enabled);
+    write_settings_json(path, &data)
+}
+
+fn load_terminal_clear_on_shrink_setting(path: &Path) -> bool {
+    read_settings_json(path)
+        .ok()
+        .and_then(|data| data.get("terminalClearOnShrink").and_then(Value::as_bool))
+        .unwrap_or(true)
+}
+
+fn save_terminal_clear_on_shrink_setting(path: &Path, enabled: bool) -> Result<(), String> {
+    let mut data = read_settings_json(path)?;
+    if !data.is_object() {
+        data = json!({});
+    }
+    data["terminalClearOnShrink"] = json!(enabled);
+    write_settings_json(path, &data)
+}
+
+fn load_skill_commands_setting(path: &Path) -> bool {
+    read_settings_json(path)
+        .ok()
+        .and_then(|data| data.get("enableSkillCommands").and_then(Value::as_bool))
+        .unwrap_or(true)
+}
+
+fn save_skill_commands_setting(path: &Path, enabled: bool) -> Result<(), String> {
+    let mut data = read_settings_json(path)?;
+    if !data.is_object() {
+        data = json!({});
+    }
+    data["enableSkillCommands"] = json!(enabled);
+    write_settings_json(path, &data)
+}
+
+fn load_autocomplete_max_visible_setting(path: &Path) -> usize {
+    read_settings_json(path)
+        .ok()
+        .and_then(|data| {
+            data.get("autocompleteMaxVisible")
+                .and_then(Value::as_u64)
+                .and_then(|value| usize::try_from(value).ok())
+                .and_then(normalize_autocomplete_max_visible)
+        })
+        .unwrap_or(DEFAULT_AUTOCOMPLETE_MAX_VISIBLE)
+}
+
+fn save_autocomplete_max_visible_setting(path: &Path, max_visible: usize) -> Result<(), String> {
+    let max_visible = normalize_autocomplete_max_visible(max_visible)
+        .ok_or_else(|| autocomplete_usage().to_string())?;
+    let mut data = read_settings_json(path)?;
+    if !data.is_object() {
+        data = json!({});
+    }
+    data["autocompleteMaxVisible"] = json!(max_visible);
+    write_settings_json(path, &data)
+}
+
 fn load_reasoning_effort_setting(path: &Path) -> Option<ThinkingLevel> {
     read_settings_json(path).ok().and_then(|data| {
-        data.get("oppi")
-            .and_then(|oppi| oppi.get("reasoningEffort"))
+        data.get("defaultThinkingLevel")
             .and_then(Value::as_str)
             .and_then(normalize_thinking_level)
+            .or_else(|| {
+                data.get("oppi")
+                    .and_then(|oppi| oppi.get("reasoningEffort"))
+                    .and_then(Value::as_str)
+                    .and_then(normalize_thinking_level)
+            })
     })
 }
 
@@ -9752,6 +25398,7 @@ fn save_reasoning_effort_setting(path: &Path, level: ThinkingLevel) -> Result<()
     if !data.get("oppi").is_some_and(Value::is_object) {
         data["oppi"] = json!({});
     }
+    data["defaultThinkingLevel"] = json!(level.as_str());
     data["oppi"]["reasoningEffort"] = json!(level.as_str());
     write_settings_json(path, &data)
 }
@@ -9866,6 +25513,10 @@ fn format_ask_user_panel(request: &AskUserRequest) -> String {
         "question: {}",
         request.title.as_deref().unwrap_or("user input requested")
     )];
+    lines.push(format!(
+        "  timeout: {}",
+        format_ask_user_timeout_label(request.timeout_ms)
+    ));
     for question in &request.questions {
         lines.push(format!("  {}: {}", question.id, question.question));
         for option in &question.options {
@@ -9874,6 +25525,83 @@ fn format_ask_user_panel(request: &AskUserRequest) -> String {
     }
     lines.push("  action: /answer <text-or-option-id>".to_string());
     lines.join("\n")
+}
+
+fn ask_user_input_answers(request: &AskUserRequest, answer: &str) -> Vec<AskUserAnswer> {
+    request
+        .questions
+        .iter()
+        .map(|question| {
+            if let Some(option) = question.options.iter().find(|option| option.id == answer) {
+                AskUserAnswer {
+                    question_id: question.id.clone(),
+                    option_id: Some(option.id.clone()),
+                    label: Some(option.label.clone()),
+                    text: None,
+                    skipped: false,
+                }
+            } else {
+                AskUserAnswer {
+                    question_id: question.id.clone(),
+                    option_id: None,
+                    label: None,
+                    text: Some(answer.to_string()),
+                    skipped: false,
+                }
+            }
+        })
+        .collect()
+}
+
+fn ask_user_timeout_answers(request: &AskUserRequest) -> Vec<AskUserAnswer> {
+    request
+        .questions
+        .iter()
+        .map(|question| {
+            let default_option = question
+                .default_option_id
+                .as_ref()
+                .and_then(|default_id| {
+                    question
+                        .options
+                        .iter()
+                        .find(|option| option.id == *default_id)
+                })
+                .or_else(|| question.options.first());
+            if let Some(option) = default_option {
+                return AskUserAnswer {
+                    question_id: question.id.clone(),
+                    option_id: Some(option.id.clone()),
+                    label: Some(option.label.clone()),
+                    text: None,
+                    skipped: false,
+                };
+            }
+            if !question.required {
+                return AskUserAnswer {
+                    question_id: question.id.clone(),
+                    option_id: None,
+                    label: None,
+                    text: None,
+                    skipped: true,
+                };
+            }
+            AskUserAnswer {
+                question_id: question.id.clone(),
+                option_id: None,
+                label: None,
+                text: Some("No recommended answer was available before timeout.".to_string()),
+                skipped: false,
+            }
+        })
+        .collect()
+}
+
+fn ask_user_deadline_at(request: &AskUserRequest) -> Option<Instant> {
+    if request.timeout_ms == 0 {
+        return None;
+    }
+    Instant::now().checked_add(Duration::from_millis(request.timeout_ms))
 }
 
 fn compact_json(value: &Value) -> String {
@@ -10182,7 +25910,7 @@ fn render_event_line(event: &Event) -> Option<String> {
     render_event_line_themed(event, "plain", &BTreeMap::new())
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct ThemeTokens {
     accent: &'static str,
     dim: &'static str,
@@ -10244,6 +25972,92 @@ fn ansi_theme_tokens(name: &str) -> ThemeTokens {
     }
 }
 
+fn line_theme_tokens_from_pi_theme_values(colors: &Value) -> Result<ThemeTokens, String> {
+    let base = ansi_theme_tokens("oppi");
+    Ok(ThemeTokens {
+        accent: line_theme_color(colors, "accent", base.accent)?,
+        dim: line_theme_color(colors, "dim", base.dim)?,
+        code: line_theme_color_any(colors, &["mdCode", "syntaxString"], base.code)?,
+        success: line_theme_color(colors, "success", base.success)?,
+        warning: line_theme_color(colors, "warning", base.warning)?,
+        error: line_theme_color(colors, "error", base.error)?,
+        reset: base.reset,
+    })
+}
+
+fn line_theme_color(
+    colors: &Value,
+    key: &str,
+    fallback: &'static str,
+) -> Result<&'static str, String> {
+    line_theme_color_any(colors, &[key], fallback)
+}
+
+fn line_theme_color_any(
+    colors: &Value,
+    keys: &[&str],
+    fallback: &'static str,
+) -> Result<&'static str, String> {
+    for key in keys {
+        if let Some(value) = colors.get(*key) {
+            return ansi_escape_for_pi_color(value, *key, fallback);
+        }
+    }
+    Ok(fallback)
+}
+
+fn ansi_escape_for_pi_color(
+    value: &Value,
+    key: &str,
+    fallback: &'static str,
+) -> Result<&'static str, String> {
+    if let Some(index) = value.as_u64() {
+        let index = u8::try_from(index)
+            .map_err(|_| format!("theme token {key} ANSI index is outside 0-255"))?;
+        return Ok(leak_ansi_escape(format!("\x1b[38;5;{index}m")));
+    }
+    let Some(raw) = value.as_str() else {
+        return Err(format!("theme token {key} must be a string or ANSI index"));
+    };
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return Ok(fallback);
+    }
+    if let Some((red, green, blue)) = parse_hex_rgb(raw) {
+        return Ok(leak_ansi_escape(format!("\x1b[38;2;{red};{green};{blue}m")));
+    }
+    if let Ok(index) = raw.parse::<u8>() {
+        return Ok(leak_ansi_escape(format!("\x1b[38;5;{index}m")));
+    }
+    Err(format!(
+        "theme token {key} has unsupported color value: {raw}"
+    ))
+}
+
+fn parse_hex_rgb(raw: &str) -> Option<(u8, u8, u8)> {
+    let hex = raw.strip_prefix('#')?;
+    match hex.len() {
+        3 => {
+            let mut chars = hex.chars();
+            let red = chars.next()?.to_digit(16)? as u8;
+            let green = chars.next()?.to_digit(16)? as u8;
+            let blue = chars.next()?.to_digit(16)? as u8;
+            Some((red * 17, green * 17, blue * 17))
+        }
+        6 => {
+            let red = u8::from_str_radix(&hex[0..2], 16).ok()?;
+            let green = u8::from_str_radix(&hex[2..4], 16).ok()?;
+            let blue = u8::from_str_radix(&hex[4..6], 16).ok()?;
+            Some((red, green, blue))
+        }
+        _ => None,
+    }
+}
+
+fn leak_ansi_escape(value: String) -> &'static str {
+    Box::leak(value.into_boxed_str())
+}
+
 fn ansi_enabled() -> bool {
     env::var_os("NO_COLOR").is_none() && env::var("TERM").map(|term| term != "dumb").unwrap_or(true)
 }
@@ -10257,12 +26071,21 @@ fn paint(tokens: ThemeTokens, color: &'static str, text: impl AsRef<str>) -> Str
     }
 }
 
+#[cfg(test)]
 fn render_event_line_themed(
     event: &Event,
     theme: &str,
     calls: &BTreeMap<String, ToolCall>,
 ) -> Option<String> {
     let tokens = theme_tokens(theme);
+    render_event_line_with_tokens(event, tokens, calls)
+}
+
+fn render_event_line_with_tokens(
+    event: &Event,
+    tokens: ThemeTokens,
+    calls: &BTreeMap<String, ToolCall>,
+) -> Option<String> {
     match &event.kind {
         EventKind::ThreadStarted { thread } => Some(format!(
             "thread {} started",
@@ -10294,20 +26117,16 @@ fn render_event_line_themed(
             "turn {} started",
             paint(tokens, tokens.dim, &turn.id)
         )),
-        EventKind::TurnPhaseChanged { phase } => Some(format!(
-            "phase: {}",
-            paint(tokens, tokens.dim, format!("{phase:?}"))
-        )),
+        EventKind::TurnPhaseChanged { .. } => None,
         EventKind::ItemCompleted { item } => match &item.kind {
             oppi_protocol::ItemKind::UserMessage { text } => Some(format!("user: {text}")),
-            oppi_protocol::ItemKind::AssistantMessage { text } => {
-                Some(format!("assistant:\n{}", render_markdown(text, theme)))
-            }
+            oppi_protocol::ItemKind::AssistantMessage { text } => Some(format!(
+                "assistant:\n{}",
+                render_markdown_with_tokens(text, tokens)
+            )),
             _ => None,
         },
-        EventKind::ItemDelta { delta, .. } => {
-            Some(format!("assistant Δ {}", render_markdown(delta, theme)))
-        }
+        EventKind::ItemDelta { .. } => None,
         EventKind::ToolCallStarted { call } => Some(format_tool_call_started(call, tokens)),
         EventKind::ToolCallCompleted { result } => Some(format_tool_result_digest(
             result,
@@ -10327,12 +26146,13 @@ fn render_event_line_themed(
             render_markdown(output, "plain")
         )),
         EventKind::ApprovalRequested { request } => Some(format_approval_panel(request)),
+        EventKind::PermissionReviewStarted { record }
+        | EventKind::PermissionReviewCompleted { record } => {
+            Some(format_permission_review_line(record, tokens))
+        }
         EventKind::AskUserRequested { request } => Some(format_ask_user_panel(request)),
-        EventKind::Diagnostic { diagnostic } => Some(format!("diagnostic: {}", diagnostic.message)),
-        EventKind::TurnCompleted { turn_id } => Some(format!(
-            "turn {} completed",
-            paint(tokens, tokens.success, turn_id)
-        )),
+        EventKind::Diagnostic { .. } => None,
+        EventKind::TurnCompleted { .. } => None,
         EventKind::TurnAborted { reason } => Some(format!(
             "turn aborted: {}",
             paint(tokens, tokens.error, reason)
@@ -10345,8 +26165,103 @@ fn render_event_line_themed(
     }
 }
 
+fn format_permission_review_line(
+    record: &oppi_protocol::GuardianReviewRecord,
+    tokens: ThemeTokens,
+) -> String {
+    let status = guardian_review_status_label(record.status);
+    let color = match record.status {
+        oppi_protocol::GuardianReviewStatus::Approved
+        | oppi_protocol::GuardianReviewStatus::Cached => tokens.success,
+        oppi_protocol::GuardianReviewStatus::Denied
+        | oppi_protocol::GuardianReviewStatus::FailedClosed
+        | oppi_protocol::GuardianReviewStatus::CircuitBlocked => tokens.warning,
+        oppi_protocol::GuardianReviewStatus::Reviewing => tokens.dim,
+    };
+    let mut details = vec![
+        format!("risk={}", guardian_review_risk_label(record)),
+        format!("auth={}", guardian_review_auth_label(record)),
+    ];
+    if let Some(scope) = record
+        .decision
+        .as_ref()
+        .and_then(|decision| decision.cache_scope)
+    {
+        details.push(format!("cache={}", guardian_cache_scope_label(scope)));
+    }
+    format!(
+        "guardian review {}: {} {}",
+        paint(tokens, color, status),
+        paint(tokens, tokens.code, record.tool_name.trim()),
+        paint(tokens, tokens.dim, details.join(" "))
+    )
+}
+
+fn guardian_review_status_label(status: oppi_protocol::GuardianReviewStatus) -> &'static str {
+    match status {
+        oppi_protocol::GuardianReviewStatus::Reviewing => "reviewing",
+        oppi_protocol::GuardianReviewStatus::Approved => "auto-approved",
+        oppi_protocol::GuardianReviewStatus::Denied => "denied",
+        oppi_protocol::GuardianReviewStatus::FailedClosed => "fail-closed",
+        oppi_protocol::GuardianReviewStatus::Cached => "cached",
+        oppi_protocol::GuardianReviewStatus::CircuitBlocked => "circuit-blocked",
+    }
+}
+
+fn guardian_review_risk_label(record: &oppi_protocol::GuardianReviewRecord) -> String {
+    record
+        .decision
+        .as_ref()
+        .map(|decision| risk_level_label(decision.risk_level).to_string())
+        .unwrap_or_else(|| {
+            let category = record.risk.category.trim();
+            if category.is_empty() {
+                "unknown".to_string()
+            } else {
+                category.to_string()
+            }
+        })
+}
+
+fn risk_level_label(level: oppi_protocol::RiskLevel) -> &'static str {
+    match level {
+        oppi_protocol::RiskLevel::Low => "low",
+        oppi_protocol::RiskLevel::Medium => "medium",
+        oppi_protocol::RiskLevel::High => "high",
+        oppi_protocol::RiskLevel::Critical => "critical",
+    }
+}
+
+fn guardian_review_auth_label(record: &oppi_protocol::GuardianReviewRecord) -> &'static str {
+    record
+        .decision
+        .as_ref()
+        .map(|decision| guardian_authorization_label(decision.user_authorization))
+        .unwrap_or("unknown")
+}
+
+fn guardian_authorization_label(auth: oppi_protocol::GuardianAuthorizationLevel) -> &'static str {
+    match auth {
+        oppi_protocol::GuardianAuthorizationLevel::Unknown => "unknown",
+        oppi_protocol::GuardianAuthorizationLevel::Low => "low",
+        oppi_protocol::GuardianAuthorizationLevel::Medium => "medium",
+        oppi_protocol::GuardianAuthorizationLevel::High => "high",
+    }
+}
+
+fn guardian_cache_scope_label(scope: oppi_protocol::GuardianCacheScope) -> &'static str {
+    match scope {
+        oppi_protocol::GuardianCacheScope::None => "none",
+        oppi_protocol::GuardianCacheScope::Exact => "exact",
+    }
+}
+
 fn render_markdown(text: &str, theme: &str) -> String {
     let tokens = theme_tokens(theme);
+    render_markdown_with_tokens(text, tokens)
+}
+
+fn render_markdown_with_tokens(text: &str, tokens: ThemeTokens) -> String {
     let mut in_code = false;
     let mut lines = Vec::new();
     for line in text.lines() {
@@ -10396,6 +26311,9 @@ fn format_tool_result_digest(
     call: Option<&ToolCall>,
     tokens: ThemeTokens,
 ) -> String {
+    if let Some(line) = format_running_agent_tool_result(result, call) {
+        return line;
+    }
     let status = match result.status {
         oppi_protocol::ToolResultStatus::Ok => paint(tokens, tokens.success, "ok"),
         oppi_protocol::ToolResultStatus::Denied => paint(tokens, tokens.warning, "denied"),
@@ -10430,6 +26348,32 @@ fn format_tool_result_digest(
         line.push_str(&format!("\n{}", paint(tokens, tokens.error, error)));
     }
     line
+}
+
+fn format_running_agent_tool_result(
+    result: &oppi_protocol::ToolResult,
+    call: Option<&ToolCall>,
+) -> Option<String> {
+    if !matches!(result.status, oppi_protocol::ToolResultStatus::Ok) {
+        return None;
+    }
+    let call = call?;
+    if call.name != "AgentTool" {
+        return None;
+    }
+    let value: Value = serde_json::from_str(result.output.as_deref()?.trim()).ok()?;
+    if value.get("status").and_then(Value::as_str) != Some("running") {
+        return None;
+    }
+    let agent_name = value
+        .get("agentName")
+        .and_then(Value::as_str)
+        .or_else(|| call.arguments.get("agent").and_then(Value::as_str))?;
+    let run_id = value.get("runId").and_then(Value::as_str)?;
+    let execution_root = value.get("executionRoot").and_then(Value::as_str)?;
+    Some(format!(
+        "agent {agent_name} running as {run_id} in {execution_root}"
+    ))
 }
 
 fn format_agent_started(run: &AgentRun, tokens: ThemeTokens) -> String {
@@ -10475,7 +26419,95 @@ fn format_agent_started(run: &AgentRun, tokens: ThemeTokens) -> String {
     )
 }
 
+fn format_agent_poll_result(result: &AgentRunPollResult) -> String {
+    let run = &result.run;
+    let execution_root = run
+        .execution_root
+        .as_deref()
+        .unwrap_or("unknown execution root");
+    match run.status {
+        AgentRunStatus::Running => {
+            format!(
+                "agent {} running as {} in {}",
+                run.agent_name, run.id, execution_root
+            )
+        }
+        AgentRunStatus::Blocked => {
+            format!(
+                "agent {} blocked as {} in {}",
+                run.agent_name, run.id, execution_root
+            )
+        }
+        AgentRunStatus::Completed => {
+            let suffix = result
+                .output
+                .as_deref()
+                .filter(|output| !output.trim().is_empty())
+                .map(|output| format!(": {}", trim_output_tail(output.trim(), 600)))
+                .unwrap_or_default();
+            format!(
+                "agent {} completed as {} in {}{}",
+                run.agent_name, run.id, execution_root, suffix
+            )
+        }
+        AgentRunStatus::Failed => {
+            format!(
+                "agent {} failed as {} in {}",
+                run.agent_name, run.id, execution_root
+            )
+        }
+    }
+}
+
+fn format_side_question_result(value: &Value) -> Result<String, String> {
+    let side_thread_id = value
+        .get("sideThreadId")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "side-question/ask returned no sideThreadId".to_string())?;
+    let answer = value
+        .get("answer")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim();
+    if answer.is_empty() {
+        Ok(format!("btw {side_thread_id}"))
+    } else {
+        Ok(format!("btw {side_thread_id}\n{answer}"))
+    }
+}
+
 fn format_artifact_created(artifact: &ArtifactMetadata, tokens: ThemeTokens) -> String {
+    format_artifact_created_inner(artifact, tokens, None, None)
+}
+
+fn format_artifact_created_with_image_settings(
+    artifact: &ArtifactMetadata,
+    tokens: ThemeTokens,
+    settings: &ImageSettings,
+) -> String {
+    format_artifact_created_with_image_settings_and_protocol(
+        artifact,
+        tokens,
+        settings,
+        Some(TerminalImageProtocol::KittyLocalFile),
+    )
+}
+
+fn format_artifact_created_with_image_settings_and_protocol(
+    artifact: &ArtifactMetadata,
+    tokens: ThemeTokens,
+    settings: &ImageSettings,
+    protocol: Option<TerminalImageProtocol>,
+) -> String {
+    format_artifact_created_inner(artifact, tokens, Some(settings), protocol)
+}
+
+fn format_artifact_created_inner(
+    artifact: &ArtifactMetadata,
+    tokens: ThemeTokens,
+    image_settings: Option<&ImageSettings>,
+    image_protocol: Option<TerminalImageProtocol>,
+) -> String {
     let mut line = format!(
         "artifact {} created: {}",
         paint(tokens, tokens.accent, &artifact.id),
@@ -10506,7 +26538,571 @@ fn format_artifact_created(artifact: &ArtifactMetadata, tokens: ThemeTokens) -> 
     if let Some(mask) = artifact.mask.as_deref() {
         line.push_str(&format!("\nmask: {mask}"));
     }
+    if let Some(settings) = image_settings {
+        if is_image_artifact(artifact) {
+            if settings.show_images {
+                if let Some(protocol) = image_protocol {
+                    if let Some(sequence) = terminal_image_preview_sequence(
+                        artifact,
+                        settings.image_width_cells,
+                        protocol,
+                    ) {
+                        line.push_str("\nimage preview:");
+                        line.push('\n');
+                        line.push_str(&sequence);
+                    } else {
+                        line.push_str(
+                            "\nimage preview: unsupported image format for native inline preview",
+                        );
+                    }
+                } else {
+                    line.push_str(
+                        "\nimage preview: terminal does not advertise native inline image support",
+                    );
+                }
+            } else {
+                line.push_str("\nEnable terminal images to preview inline.");
+            }
+        }
+    }
     line
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TerminalImageProtocol {
+    KittyLocalFile,
+    Iterm2InlineFile,
+    Sixel,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct TerminalImageProtocolDetection {
+    protocol: Option<TerminalImageProtocol>,
+    source: &'static str,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct TerminalSixelDetection {
+    detected: bool,
+    source: Option<String>,
+    status: &'static str,
+}
+
+const PREVIEW_IMAGE_FORMATS: [&str; 5] = ["png", "jpeg", "jpg", "webp", "gif"];
+const IMAGE_PREVIEW_PROTOCOL_ENV: &str = "OPPI_IMAGE_PREVIEW_PROTOCOL";
+
+fn terminal_image_protocol_from_env() -> Option<TerminalImageProtocol> {
+    terminal_image_protocol_detection_from_env().protocol
+}
+
+fn terminal_image_protocol_detection_from_env() -> TerminalImageProtocolDetection {
+    let override_value = env::var(IMAGE_PREVIEW_PROTOCOL_ENV).ok();
+    let term = env::var("TERM").ok();
+    let term_program = env::var("TERM_PROGRAM").ok();
+    let kitty_window_id = env::var("KITTY_WINDOW_ID").ok();
+    let wezterm_executable = env::var("WEZTERM_EXECUTABLE").ok();
+    terminal_image_protocol_detection_from_env_values_with_override(
+        override_value.as_deref(),
+        term.as_deref(),
+        term_program.as_deref(),
+        kitty_window_id.as_deref(),
+        wezterm_executable.as_deref(),
+    )
+}
+
+fn terminal_image_protocol_from_env_values(
+    term: Option<&str>,
+    term_program: Option<&str>,
+    kitty_window_id: Option<&str>,
+    wezterm_executable: Option<&str>,
+) -> Option<TerminalImageProtocol> {
+    terminal_image_protocol_detection_from_env_values_with_override(
+        None,
+        term,
+        term_program,
+        kitty_window_id,
+        wezterm_executable,
+    )
+    .protocol
+}
+
+fn terminal_image_protocol_from_env_values_with_override(
+    override_value: Option<&str>,
+    term: Option<&str>,
+    term_program: Option<&str>,
+    kitty_window_id: Option<&str>,
+    wezterm_executable: Option<&str>,
+) -> Option<TerminalImageProtocol> {
+    terminal_image_protocol_detection_from_env_values_with_override(
+        override_value,
+        term,
+        term_program,
+        kitty_window_id,
+        wezterm_executable,
+    )
+    .protocol
+}
+
+fn terminal_image_protocol_detection_from_env_values(
+    term: Option<&str>,
+    term_program: Option<&str>,
+    kitty_window_id: Option<&str>,
+    wezterm_executable: Option<&str>,
+) -> TerminalImageProtocolDetection {
+    terminal_image_protocol_detection_from_env_values_with_override(
+        None,
+        term,
+        term_program,
+        kitty_window_id,
+        wezterm_executable,
+    )
+}
+
+fn terminal_image_protocol_detection_from_env_values_with_override(
+    override_value: Option<&str>,
+    term: Option<&str>,
+    term_program: Option<&str>,
+    kitty_window_id: Option<&str>,
+    wezterm_executable: Option<&str>,
+) -> TerminalImageProtocolDetection {
+    terminal_image_protocol_detection_from_env_values_with_override_and_setting(
+        override_value,
+        ImagePreviewProtocolOverride::Auto,
+        term,
+        term_program,
+        kitty_window_id,
+        wezterm_executable,
+    )
+}
+
+fn terminal_image_protocol_detection_from_env_values_with_override_and_setting(
+    override_value: Option<&str>,
+    preview_protocol: ImagePreviewProtocolOverride,
+    term: Option<&str>,
+    term_program: Option<&str>,
+    kitty_window_id: Option<&str>,
+    wezterm_executable: Option<&str>,
+) -> TerminalImageProtocolDetection {
+    if let Some(detection) = terminal_image_protocol_override_detection(override_value) {
+        return detection;
+    }
+    if let Some(detection) = terminal_image_protocol_setting_detection(preview_protocol) {
+        return detection;
+    }
+
+    if non_empty_env_value(kitty_window_id) {
+        TerminalImageProtocolDetection {
+            protocol: Some(TerminalImageProtocol::KittyLocalFile),
+            source: "KITTY_WINDOW_ID",
+        }
+    } else if non_empty_env_value(wezterm_executable) {
+        TerminalImageProtocolDetection {
+            protocol: Some(TerminalImageProtocol::KittyLocalFile),
+            source: "WEZTERM_EXECUTABLE",
+        }
+    } else if env_value_contains(term, "xterm-kitty") {
+        TerminalImageProtocolDetection {
+            protocol: Some(TerminalImageProtocol::KittyLocalFile),
+            source: "TERM=xterm-kitty",
+        }
+    } else if env_value_contains(term, "ghostty") {
+        TerminalImageProtocolDetection {
+            protocol: Some(TerminalImageProtocol::KittyLocalFile),
+            source: "TERM=xterm-ghostty",
+        }
+    } else if env_value_contains(term_program, "ghostty") {
+        TerminalImageProtocolDetection {
+            protocol: Some(TerminalImageProtocol::KittyLocalFile),
+            source: "TERM_PROGRAM=ghostty",
+        }
+    } else if env_value_contains(term_program, "wezterm") {
+        TerminalImageProtocolDetection {
+            protocol: Some(TerminalImageProtocol::KittyLocalFile),
+            source: "TERM_PROGRAM=WezTerm",
+        }
+    } else if env_value_contains(term_program, "iterm") {
+        TerminalImageProtocolDetection {
+            protocol: Some(TerminalImageProtocol::Iterm2InlineFile),
+            source: "TERM_PROGRAM=iTerm",
+        }
+    } else if terminal_sixel_detection_from_env_values(term).detected {
+        TerminalImageProtocolDetection {
+            protocol: Some(TerminalImageProtocol::Sixel),
+            source: "TERM=sixel",
+        }
+    } else {
+        TerminalImageProtocolDetection {
+            protocol: None,
+            source: "none",
+        }
+    }
+}
+
+fn terminal_image_protocol_override_detection(
+    override_value: Option<&str>,
+) -> Option<TerminalImageProtocolDetection> {
+    let value = override_value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?;
+    let lower = value.to_ascii_lowercase();
+    Some(match lower.as_str() {
+        "kitty" => TerminalImageProtocolDetection {
+            protocol: Some(TerminalImageProtocol::KittyLocalFile),
+            source: "OPPI_IMAGE_PREVIEW_PROTOCOL=kitty",
+        },
+        "kitty-local-file" => TerminalImageProtocolDetection {
+            protocol: Some(TerminalImageProtocol::KittyLocalFile),
+            source: "OPPI_IMAGE_PREVIEW_PROTOCOL=kitty-local-file",
+        },
+        "wezterm" => TerminalImageProtocolDetection {
+            protocol: Some(TerminalImageProtocol::KittyLocalFile),
+            source: "OPPI_IMAGE_PREVIEW_PROTOCOL=wezterm",
+        },
+        "iterm" => TerminalImageProtocolDetection {
+            protocol: Some(TerminalImageProtocol::Iterm2InlineFile),
+            source: "OPPI_IMAGE_PREVIEW_PROTOCOL=iterm",
+        },
+        "iterm2" => TerminalImageProtocolDetection {
+            protocol: Some(TerminalImageProtocol::Iterm2InlineFile),
+            source: "OPPI_IMAGE_PREVIEW_PROTOCOL=iterm2",
+        },
+        "iterm2-inline-file" => TerminalImageProtocolDetection {
+            protocol: Some(TerminalImageProtocol::Iterm2InlineFile),
+            source: "OPPI_IMAGE_PREVIEW_PROTOCOL=iterm2-inline-file",
+        },
+        "sixel" => TerminalImageProtocolDetection {
+            protocol: Some(TerminalImageProtocol::Sixel),
+            source: "OPPI_IMAGE_PREVIEW_PROTOCOL=sixel",
+        },
+        "off" => TerminalImageProtocolDetection {
+            protocol: None,
+            source: "OPPI_IMAGE_PREVIEW_PROTOCOL=off",
+        },
+        "none" => TerminalImageProtocolDetection {
+            protocol: None,
+            source: "OPPI_IMAGE_PREVIEW_PROTOCOL=none",
+        },
+        "disabled" | "disable" => TerminalImageProtocolDetection {
+            protocol: None,
+            source: "OPPI_IMAGE_PREVIEW_PROTOCOL=disabled",
+        },
+        _ => TerminalImageProtocolDetection {
+            protocol: None,
+            source: "OPPI_IMAGE_PREVIEW_PROTOCOL=unsupported",
+        },
+    })
+}
+
+fn terminal_image_protocol_setting_detection(
+    preview_protocol: ImagePreviewProtocolOverride,
+) -> Option<TerminalImageProtocolDetection> {
+    Some(match preview_protocol {
+        ImagePreviewProtocolOverride::Auto => return None,
+        ImagePreviewProtocolOverride::Kitty => TerminalImageProtocolDetection {
+            protocol: Some(TerminalImageProtocol::KittyLocalFile),
+            source: "oppi.images.previewProtocol=kitty",
+        },
+        ImagePreviewProtocolOverride::Wezterm => TerminalImageProtocolDetection {
+            protocol: Some(TerminalImageProtocol::KittyLocalFile),
+            source: "oppi.images.previewProtocol=wezterm",
+        },
+        ImagePreviewProtocolOverride::Iterm2 => TerminalImageProtocolDetection {
+            protocol: Some(TerminalImageProtocol::Iterm2InlineFile),
+            source: "oppi.images.previewProtocol=iterm2",
+        },
+        ImagePreviewProtocolOverride::Sixel => TerminalImageProtocolDetection {
+            protocol: Some(TerminalImageProtocol::Sixel),
+            source: "oppi.images.previewProtocol=sixel",
+        },
+        ImagePreviewProtocolOverride::Off => TerminalImageProtocolDetection {
+            protocol: None,
+            source: "oppi.images.previewProtocol=off",
+        },
+    })
+}
+
+fn terminal_image_protocol_label(protocol: TerminalImageProtocol) -> &'static str {
+    match protocol {
+        TerminalImageProtocol::KittyLocalFile => "kitty-local-file",
+        TerminalImageProtocol::Iterm2InlineFile => "iterm2-inline-file",
+        TerminalImageProtocol::Sixel => "sixel",
+    }
+}
+
+fn terminal_sixel_detection_from_env_values(term: Option<&str>) -> TerminalSixelDetection {
+    if let Some(term) = term.map(str::trim).filter(|term| !term.is_empty()) {
+        if term.to_ascii_lowercase().contains("sixel") {
+            return TerminalSixelDetection {
+                detected: true,
+                source: Some(format!("TERM={term}")),
+                status: "renderer-enabled",
+            };
+        }
+    }
+    TerminalSixelDetection {
+        detected: false,
+        source: None,
+        status: "not-detected",
+    }
+}
+
+fn image_preview_capabilities_from_env(settings: &ImageSettings) -> Value {
+    let override_value = env::var(IMAGE_PREVIEW_PROTOCOL_ENV).ok();
+    let term = env::var("TERM").ok();
+    let term_program = env::var("TERM_PROGRAM").ok();
+    let kitty_window_id = env::var("KITTY_WINDOW_ID").ok();
+    let wezterm_executable = env::var("WEZTERM_EXECUTABLE").ok();
+    image_preview_capabilities_from_env_values_with_override(
+        settings,
+        override_value.as_deref(),
+        term.as_deref(),
+        term_program.as_deref(),
+        kitty_window_id.as_deref(),
+        wezterm_executable.as_deref(),
+    )
+}
+
+fn image_preview_capabilities_from_env_values(
+    settings: &ImageSettings,
+    term: Option<&str>,
+    term_program: Option<&str>,
+    kitty_window_id: Option<&str>,
+    wezterm_executable: Option<&str>,
+) -> Value {
+    image_preview_capabilities_from_env_values_with_override(
+        settings,
+        None,
+        term,
+        term_program,
+        kitty_window_id,
+        wezterm_executable,
+    )
+}
+
+fn image_preview_capabilities_from_env_values_with_override(
+    settings: &ImageSettings,
+    override_value: Option<&str>,
+    term: Option<&str>,
+    term_program: Option<&str>,
+    kitty_window_id: Option<&str>,
+    wezterm_executable: Option<&str>,
+) -> Value {
+    let detection = terminal_image_protocol_detection_from_env_values_with_override_and_setting(
+        override_value,
+        settings.preview_protocol,
+        term,
+        term_program,
+        kitty_window_id,
+        wezterm_executable,
+    );
+    let protocol = detection.protocol.map(terminal_image_protocol_label);
+    let max_inline_bytes = match detection.protocol {
+        Some(TerminalImageProtocol::Iterm2InlineFile) => Some(ITERM2_INLINE_IMAGE_MAX_BYTES),
+        Some(TerminalImageProtocol::Sixel) => Some(SIXEL_INLINE_IMAGE_MAX_BYTES),
+        _ => None,
+    };
+    let sixel_detection = if detection.protocol == Some(TerminalImageProtocol::Sixel)
+        && explicit_image_protocol_source(detection.source)
+    {
+        TerminalSixelDetection {
+            detected: true,
+            source: Some(detection.source.to_string()),
+            status: "renderer-enabled",
+        }
+    } else {
+        terminal_sixel_detection_from_env_values(term)
+    };
+    json!({
+        "showImages": settings.show_images,
+        "imageWidthCells": settings.image_width_cells,
+        "autoResizeImages": settings.auto_resize_images,
+        "blockImages": settings.block_images,
+        "previewProtocol": settings.preview_protocol.as_str(),
+        "protocol": protocol,
+        "source": detection.source,
+        "protocolAvailable": detection.protocol.is_some(),
+        "inlinePreviews": settings.show_images && detection.protocol.is_some(),
+        "supportedFormats": PREVIEW_IMAGE_FORMATS,
+        "sixelDetected": sixel_detection.detected,
+        "sixelSource": sixel_detection.source,
+        "sixelSupported": sixel_detection.detected,
+        "sixelStatus": sixel_detection.status,
+        "activeProbePerformed": false,
+        "activeProbeStatus": "not-attempted",
+        "activeProbeReason": "transcript-safe-env-and-settings-only",
+        "maxInlineBytes": max_inline_bytes,
+    })
+}
+
+fn format_image_preview_capabilities(capabilities: &Value) -> String {
+    let show_images = capabilities
+        .get("showImages")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let inline_previews = capabilities
+        .get("inlinePreviews")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let protocol = capabilities.get("protocol").and_then(Value::as_str);
+    let source = capabilities
+        .get("source")
+        .and_then(Value::as_str)
+        .unwrap_or("none");
+    let width = capabilities
+        .get("imageWidthCells")
+        .and_then(Value::as_u64)
+        .unwrap_or(VALID_IMAGE_WIDTH_CELLS[1]);
+    let formats = capabilities
+        .get("supportedFormats")
+        .and_then(Value::as_array)
+        .map(|formats| {
+            formats
+                .iter()
+                .filter_map(Value::as_str)
+                .collect::<Vec<_>>()
+                .join("/")
+        })
+        .filter(|formats| !formats.is_empty())
+        .unwrap_or_else(|| PREVIEW_IMAGE_FORMATS.join("/"));
+    let max_inline = capabilities.get("maxInlineBytes").and_then(Value::as_u64);
+    let sixel_detected = capabilities
+        .get("sixelDetected")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let sixel_source = capabilities
+        .get("sixelSource")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown source");
+    let sixel_supported = capabilities
+        .get("sixelSupported")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+
+    let mut parts = Vec::new();
+    if show_images {
+        if explicit_image_protocol_source(source) && protocol.is_none() {
+            parts.push(format!(
+                "inline image protocol override disabled ({source})"
+            ));
+        } else if inline_previews {
+            let protocol = protocol.unwrap_or("unknown");
+            parts.push(format!("inline previews enabled via {protocol} ({source})"));
+        } else {
+            parts.push("terminal does not advertise native inline image support".to_string());
+        }
+    } else {
+        parts.push("previews disabled in settings".to_string());
+        if let Some(protocol) = protocol {
+            parts.push(format!("detected {protocol} ({source})"));
+        } else {
+            parts.push("terminal does not advertise native inline image support".to_string());
+        }
+    }
+    parts.push(format!("width {width} cells"));
+    parts.push(format!("formats {formats}"));
+    if sixel_detected {
+        if sixel_supported {
+            parts.push(format!("sixel renderer enabled via {sixel_source}"));
+        } else {
+            parts.push(format!(
+                "sixel detected via {sixel_source}; renderer unavailable"
+            ));
+        }
+    } else {
+        parts.push("sixel unsupported".to_string());
+    }
+    if let Some(max_inline) = max_inline {
+        parts.push(format!("inline byte cap {}", format_bytes(max_inline)));
+    }
+    if capabilities
+        .get("activeProbePerformed")
+        .and_then(Value::as_bool)
+        == Some(false)
+    {
+        let reason = capabilities
+            .get("activeProbeReason")
+            .and_then(Value::as_str)
+            .unwrap_or("not-attempted");
+        parts.push(format!("active probe not attempted ({reason})"));
+    }
+
+    format!("image preview capabilities: {}", parts.join("; "))
+}
+
+fn explicit_image_protocol_source(source: &str) -> bool {
+    source.starts_with(IMAGE_PREVIEW_PROTOCOL_ENV)
+        || source.starts_with("oppi.images.previewProtocol=")
+}
+
+fn non_empty_env_value(value: Option<&str>) -> bool {
+    value.is_some_and(|value| !value.trim().is_empty())
+}
+
+fn env_value_contains(value: Option<&str>, needle: &str) -> bool {
+    value.is_some_and(|value| value.to_ascii_lowercase().contains(needle))
+}
+
+fn is_image_artifact(artifact: &ArtifactMetadata) -> bool {
+    artifact
+        .mime_type
+        .as_deref()
+        .is_some_and(|mime| mime.to_ascii_lowercase().starts_with("image/"))
+        || artifact_extension(artifact)
+            .as_deref()
+            .is_some_and(|extension| matches!(extension, "png" | "jpg" | "jpeg" | "webp" | "gif"))
+}
+
+fn terminal_image_preview_sequence(
+    artifact: &ArtifactMetadata,
+    width_cells: u64,
+    protocol: TerminalImageProtocol,
+) -> Option<String> {
+    match protocol {
+        TerminalImageProtocol::KittyLocalFile => is_local_file_preview_image_artifact(artifact)
+            .then(|| {
+                let encoded_path = STANDARD.encode(artifact.output_path.as_bytes());
+                format!("\x1b_Ga=T,f=100,t=f,c={width_cells},q=2;{encoded_path}\x1b\\")
+            }),
+        TerminalImageProtocol::Iterm2InlineFile => {
+            if !is_local_file_preview_image_artifact(artifact) {
+                return None;
+            }
+            if artifact
+                .bytes
+                .is_some_and(|bytes| bytes > ITERM2_INLINE_IMAGE_MAX_BYTES)
+            {
+                return None;
+            }
+            let bytes = fs::read(&artifact.output_path).ok()?;
+            if bytes.len() as u64 > ITERM2_INLINE_IMAGE_MAX_BYTES {
+                return None;
+            }
+            let encoded = STANDARD.encode(bytes);
+            Some(format!(
+                "\x1b]1337;File=inline=1;width={width_cells};preserveAspectRatio=1:{encoded}\x07"
+            ))
+        }
+        TerminalImageProtocol::Sixel => None,
+    }
+}
+
+fn is_local_file_preview_image_artifact(artifact: &ArtifactMetadata) -> bool {
+    artifact.mime_type.as_deref().is_some_and(|mime| {
+        matches!(
+            mime.to_ascii_lowercase().as_str(),
+            "image/png" | "image/jpeg" | "image/jpg" | "image/webp" | "image/gif"
+        )
+    }) || artifact_extension(artifact)
+        .as_deref()
+        .is_some_and(|extension| matches!(extension, "png" | "jpg" | "jpeg" | "webp" | "gif"))
+}
+
+fn artifact_extension(artifact: &ArtifactMetadata) -> Option<String> {
+    Path::new(&artifact.output_path)
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .map(|extension| extension.trim_start_matches('.').to_ascii_lowercase())
+        .filter(|extension| !extension.is_empty())
 }
 
 fn artifact_hint(output: &str) -> Option<String> {
@@ -10664,6 +27260,13 @@ mod tests {
 
     #[test]
     fn parses_session_list_flag_as_non_interactive() {
+        let parsed = parse_args(vec!["--mock".into(), "--list-sessions".into()]).unwrap();
+        assert!(parsed.list_sessions);
+        assert!(!parsed.interactive);
+    }
+
+    #[test]
+    fn parses_session_list_flag_defaults_to_mock_when_no_provider_flag() {
         let parsed = parse_args(vec!["--list-sessions".into()]).unwrap();
         assert!(parsed.list_sessions);
         assert!(!parsed.interactive);
@@ -10721,28 +27324,31 @@ mod tests {
             id: 1,
             thread_id: "thread-1".to_string(),
             turn_id: Some("turn-1".to_string()),
+            created_at_ms: 1,
             kind: EventKind::ItemDelta {
                 item_id: "item-1".to_string(),
                 delta: "hi".to_string(),
             },
         };
-        assert_eq!(
-            render_event_line(&event),
-            Some("assistant Δ hi".to_string())
-        );
+        assert_eq!(render_event_line(&event), None);
 
         let agent_started = Event {
             id: 2,
             thread_id: "thread-1".to_string(),
             turn_id: Some("turn-1".to_string()),
+            created_at_ms: 2,
             kind: EventKind::AgentStarted {
                 run: AgentRun {
                     id: "agent-run-1".to_string(),
                     thread_id: "thread-1".to_string(),
+                    parent_thread_id: None,
+                    child_thread_id: None,
+                    child_turn_id: None,
                     agent_name: "general-purpose".to_string(),
                     status: oppi_protocol::AgentRunStatus::Running,
                     task: "inspect".to_string(),
                     worktree_root: None,
+                    execution_root: None,
                     background: false,
                     role: Some("subagent".to_string()),
                     model: Some("gpt-sub".to_string()),
@@ -10766,15 +27372,162 @@ mod tests {
 
         let memory_panel = format_memory_control(&json!({
             "title": "Hoppi memory dashboard",
-            "summary": "client-hosted Hoppi controls; no hidden model session was started",
-            "status": { "enabled": true, "backend": "client", "scope": "project", "memoryCount": 3 },
+            "summary": "runtime-owned backend broker; default adapter is bounded Node/TypeScript",
+            "status": {
+                "enabled": true,
+                "initialized": true,
+                "backend": "hoppi",
+                "scope": "project",
+                "memoryCount": 3,
+                "pinnedCount": 1,
+                "storePath": "C:/Users/matth/.oppi/hoppi",
+                "dashboardUrl": "http://hoppi.localhost:49152",
+                "executionOwner": "runtime",
+                "executionAdapter": "hoppi-node-bridge"
+            },
             "controls": [
                 { "id": "maintenance", "label": "Preview maintenance", "command": "/memory maintenance dry-run", "description": "Explicit only" }
             ]
         }));
         assert!(memory_panel.contains("Hoppi memory dashboard"));
-        assert!(memory_panel.contains("status: enabled backend=client"));
+        assert!(memory_panel.contains("status: enabled backend=hoppi"));
+        assert!(memory_panel.contains("owner=runtime"));
+        assert!(memory_panel.contains("adapter=hoppi-node-bridge"));
+        assert!(memory_panel.contains("initialized"));
+        assert!(memory_panel.contains("pinned=1"));
+        assert!(memory_panel.contains("store=C:/Users/matth/.oppi/hoppi"));
+        assert!(memory_panel.contains("dashboard=http://hoppi.localhost:49152"));
         assert!(memory_panel.contains("/memory maintenance dry-run"));
+
+        let dashboard_panel = format_memory_dashboard(&json!({
+            "available": true,
+            "url": "http://hoppi.localhost:49152",
+            "fallbackUrl": "http://localhost:49152",
+            "message": "Hoppi dashboard is available from runtime memory status.",
+            "status": {
+                "memoryCount": 3,
+                "pinnedCount": 1,
+                "storePath": "C:/Users/matth/.oppi/hoppi"
+            }
+        }));
+        assert!(dashboard_panel.contains("Hoppi dashboard: http://hoppi.localhost:49152"));
+        assert!(dashboard_panel.contains("Fallback: http://localhost:49152"));
+        assert!(dashboard_panel.contains("memories=3 pinned=1"));
+        assert!(dashboard_panel.contains("store: C:/Users/matth/.oppi/hoppi"));
+
+        let status_summary = format_memory_status_summary(&json!({
+            "enabled": true,
+            "backend": "hoppi",
+            "scope": "project",
+            "memoryCount": 3,
+            "executionOwner": "runtime",
+            "executionAdapter": "hoppi-node-bridge"
+        }));
+        assert!(status_summary.contains("owner runtime"));
+        assert!(status_summary.contains("adapter hoppi-node-bridge"));
+    }
+
+    #[test]
+    fn tool_result_renderer_summarizes_running_agent_handle() {
+        let call = ToolCall {
+            id: "call-agent-1".to_string(),
+            name: "AgentTool".to_string(),
+            namespace: Some("oppi".to_string()),
+            arguments: json!({
+                "agent": "verification",
+                "task": "verify slowly",
+                "background": true
+            }),
+        };
+        let result = oppi_protocol::ToolResult {
+            call_id: call.id.clone(),
+            status: ToolResultStatus::Ok,
+            output: Some(
+                json!({
+                    "status": "running",
+                    "agentName": "verification",
+                    "runId": "agent-run-7",
+                    "executionRoot": "E:\\RepositoryV2\\oppi\\worktrees\\verification"
+                })
+                .to_string(),
+            ),
+            error: None,
+        };
+
+        let rendered = format_tool_result_digest(&result, Some(&call), theme_tokens("plain"));
+
+        assert_eq!(
+            rendered,
+            "agent verification running as agent-run-7 in E:\\RepositoryV2\\oppi\\worktrees\\verification"
+        );
+    }
+
+    #[test]
+    fn formats_btw_side_question_result_with_side_thread_id() {
+        let rendered = format_side_question_result(&json!({
+            "sideThreadId": "thread-side-7",
+            "sideTurnId": "turn-side-9",
+            "answer": "Guardian sees bounded context."
+        }))
+        .unwrap();
+
+        assert_eq!(
+            rendered,
+            "btw thread-side-7\nGuardian sees bounded context."
+        );
+    }
+
+    #[test]
+    fn btw_request_params_include_provider_sandbox_and_blocking_mode() {
+        let provider = ProviderConfig::OpenAiCompatible(OpenAiCompatibleConfig {
+            flavor: DirectProviderFlavor::OpenAiCodex,
+            provider_id: None,
+            model: "gpt-test".to_string(),
+            base_url: None,
+            api_key_env: Some("OPPI_TEST_API_KEY".to_string()),
+            system_prompt: None,
+            temperature: None,
+            reasoning_effort: Some("medium".to_string()),
+            max_output_tokens: None,
+            stream: true,
+        });
+
+        let params = side_question_request_params(
+            "thread-1",
+            "What context does Guardian get?",
+            &provider,
+            "E:\\RepositoryV2\\oppi",
+            PermissionMode::AutoReview,
+            &PermissionSandboxSettings {
+                allow_internet: true,
+                project_roots: vec!["E:\\RepositoryV2\\oppi".to_string()],
+                readable_roots: vec![
+                    "E:\\RepositoryV2\\oppi".to_string(),
+                    "E:\\RepositoryV2\\shared-read".to_string(),
+                ],
+                ..PermissionSandboxSettings::default()
+            },
+            "off",
+        );
+
+        assert_eq!(params["threadId"], json!("thread-1"));
+        assert_eq!(params["question"], json!("What context does Guardian get?"));
+        assert_eq!(params["executionMode"], json!("blocking"));
+        assert_eq!(
+            params["sandboxPolicy"]["permissionProfile"]["mode"],
+            json!("auto-review")
+        );
+        assert_eq!(params["sandboxPolicy"]["network"], json!("enabled"));
+        assert_eq!(
+            params["sandboxPolicy"]["permissionProfile"]["readableRoots"],
+            json!(["E:\\RepositoryV2\\oppi", "E:\\RepositoryV2\\shared-read"])
+        );
+        assert_eq!(
+            params["sandboxPolicy"]["permissionProfile"]["writableRoots"],
+            json!(["E:\\RepositoryV2\\oppi"])
+        );
+        assert_eq!(params["modelProvider"]["model"], json!("gpt-test"));
+        assert_eq!(params["maxContinuations"], json!(8));
     }
 
     #[test]
@@ -10798,6 +27551,46 @@ mod tests {
             EditorAction::None
         );
         assert_eq!(editor.handle(EditorInput::Escape), EditorAction::Cleared);
+        assert_eq!(
+            editor.handle(EditorInput::Escape),
+            EditorAction::EmptyEscape
+        );
+        let now = Instant::now();
+        assert_eq!(
+            editor.resolve_empty_escape(DoubleEscapeAction::Tree, now),
+            EditorAction::None
+        );
+        assert_eq!(
+            editor.resolve_empty_escape(DoubleEscapeAction::Tree, now + Duration::from_millis(100)),
+            EditorAction::OpenTree
+        );
+        assert_eq!(
+            editor.handle(EditorInput::Escape),
+            EditorAction::EmptyEscape
+        );
+        assert_eq!(
+            editor.resolve_empty_escape(DoubleEscapeAction::Fork, now + Duration::from_secs(1)),
+            EditorAction::None
+        );
+        assert_eq!(
+            editor.handle(EditorInput::Escape),
+            EditorAction::EmptyEscape
+        );
+        assert_eq!(
+            editor.resolve_empty_escape(
+                DoubleEscapeAction::Fork,
+                now + Duration::from_secs(1) + Duration::from_millis(100)
+            ),
+            EditorAction::OpenFork
+        );
+        assert_eq!(
+            editor.handle(EditorInput::Escape),
+            EditorAction::EmptyEscape
+        );
+        assert_eq!(
+            editor.resolve_empty_escape(DoubleEscapeAction::None, now + Duration::from_secs(2)),
+            EditorAction::None
+        );
         assert_eq!(editor.handle(EditorInput::CtrlD), EditorAction::Exit);
 
         assert_eq!(
@@ -10895,6 +27688,78 @@ mod tests {
         assert_eq!(parser.finish(), Vec::<EditorInput>::new());
     }
 
+    fn test_skill(
+        name: &str,
+        description: &str,
+        source: oppi_protocol::SkillSource,
+    ) -> oppi_protocol::ResolvedSkill {
+        oppi_protocol::ResolvedSkill {
+            active: oppi_protocol::SkillRef {
+                id: format!("skill:{name}"),
+                name: name.to_string(),
+                description: description.to_string(),
+                source,
+                path: None,
+                priority: 0,
+            },
+            shadowed: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn skill_slash_suggestions_include_active_skills_when_enabled() {
+        let skills = vec![
+            test_skill(
+                "imagegen",
+                "Generate or edit images",
+                oppi_protocol::SkillSource::BuiltIn,
+            ),
+            test_skill(
+                "mermaid-diagrams",
+                "Create concise Mermaid diagrams",
+                oppi_protocol::SkillSource::Plugin,
+            ),
+        ];
+
+        let items = skill_slash_command_items(&skills, true, "/skill:i");
+
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].label, "/skill:imagegen");
+        assert_eq!(items[0].insert, "/skill:imagegen ");
+        assert!(items[0].detail.contains("built-in"));
+        assert!(items[0].detail.contains("Generate or edit images"));
+        assert!(skill_slash_command_items(&skills, false, "/skill:").is_empty());
+    }
+
+    #[test]
+    fn slash_palette_lists_dynamic_skill_commands_from_runtime_cache() {
+        let skills = vec![
+            test_skill(
+                "imagegen",
+                "Generate or edit images",
+                oppi_protocol::SkillSource::BuiltIn,
+            ),
+            test_skill(
+                "mermaid-diagrams",
+                "Create concise Mermaid diagrams",
+                oppi_protocol::SkillSource::Project,
+            ),
+        ];
+
+        let palette =
+            slash_palette_for_buffer_with_skills("/skill:m", 0, &skills, true).expect("palette");
+
+        assert_eq!(palette.mode, SlashPaletteMode::Commands);
+        assert_eq!(palette.items.len(), 1);
+        assert_eq!(palette.items[0].insert, "/skill:mermaid-diagrams ");
+        assert!(palette.items[0].detail.contains("project"));
+        assert!(
+            palette.items[0]
+                .detail
+                .contains("Create concise Mermaid diagrams")
+        );
+    }
+
     #[test]
     fn slash_palette_lists_commands_filters_and_accepts_arguments() {
         let all = slash_palette_for_buffer("/", 0).expect("slash palette should open");
@@ -10961,13 +27826,61 @@ mod tests {
 
         let help = slash_command_help_text();
         assert!(help.contains("/login [subscription|api]"));
-        assert!(help.contains("/permissions [mode]"));
+        assert!(
+            help.contains(
+                "/permissions [status|history|timeout|reviewer-model|clear-session|mode]"
+            )
+        );
         assert!(!help.lines().any(|line| line.starts_with("- /commands")));
         assert!(help.contains("Tab completes"));
     }
 
     #[test]
+    fn sandbox_is_compatibility_route_not_visible_slash_surface() {
+        assert!(
+            find_slash_command_spec("/sandbox").is_none(),
+            "/sandbox should not be registered as a top-level slash command"
+        );
+        assert!(
+            !visible_slash_command_specs()
+                .iter()
+                .any(|spec| spec.command == "/sandbox"
+                    || spec.aliases.iter().any(|alias| *alias == "/sandbox"))
+        );
+        assert!(
+            slash_arg_suggestions("/sandbox", "").is_empty(),
+            "/sandbox should not advertise its own argument completions"
+        );
+
+        let all = slash_palette_for_buffer("/", 0).expect("slash palette should open");
+        assert!(!all.items.iter().any(|item| item.insert == "/sandbox"));
+        let help = slash_command_help_text();
+        assert!(!help.contains("/sandbox"));
+    }
+
+    #[test]
     fn slash_palette_includes_pi_package_compatibility_commands() {
+        let idle_compact_args = slash_arg_suggestions("/idle-compact", "");
+        assert!(
+            idle_compact_args
+                .iter()
+                .any(|item| item.insert == "/idle-compact compact"),
+            "/idle-compact should expose a one-command compaction action"
+        );
+        let permissions_args = slash_arg_suggestions("/permissions", "sandbox read");
+        assert!(
+            permissions_args
+                .iter()
+                .any(|item| item.insert == "/permissions sandbox read add "),
+            "/permissions should expose sandbox readable-root append"
+        );
+        assert!(
+            permissions_args
+                .iter()
+                .any(|item| item.insert == "/permissions sandbox read remove "),
+            "/permissions should expose sandbox readable-root removal"
+        );
+
         let aliases = [
             ("/effort", "/effort"),
             ("/exit", "/exit"),
@@ -10985,6 +27898,8 @@ mod tests {
             ("/meridian", "/meridian"),
             ("/permissions", "/permissions"),
             ("/prompt-variant", "/prompt-variant"),
+            ("/prompts", "/prompts"),
+            ("/prompt-templates", "/prompts"),
             ("/runtime-loop", "/runtime-loop"),
             ("/review", "/review"),
             ("/suggest-next", "/suggest-next"),
@@ -10997,6 +27912,7 @@ mod tests {
             ("/clear", "/new"),
             ("/reset", "/new"),
             ("/btw", "/btw"),
+            ("/mcp", "/mcp"),
         ];
         for (alias, canonical) in aliases {
             let spec = find_slash_command_spec(alias).expect(alias);
@@ -11032,6 +27948,356 @@ mod tests {
         assert!(help.contains("/idle-compact"));
         assert!(help.contains("/oppi-terminal-setup"));
         assert!(help.contains("/btw <question>"));
+        assert!(help.contains("/prompts"));
+        assert!(help.contains("/mcp [list|connect|test|reload|auth|trust-plugin|disable-plugin]"));
+    }
+
+    #[test]
+    fn mcp_status_formatter_shows_state_without_secret_values() {
+        let rendered = format_mcp_status_list(&json!({
+            "items": [{
+                "id": "fs",
+                "source": "project",
+                "status": "enabled",
+                "transport": {
+                    "kind": "stdio",
+                    "command": "node",
+                    "args": ["server.js"],
+                    "env": { "API_TOKEN": "should-not-render" }
+                },
+                "trusted": true,
+                "tools": ["read_file", "write_file", "search", "stat", "list", "extra"],
+                "resourceSubscriptions": [
+                    {
+                        "uri": "file:///repo/README.md",
+                        "updateCount": 2,
+                        "lastUpdatedAt": "2026-05-31T12:00:00Z"
+                    }
+                ],
+                "diagnostics": [{
+                    "code": "mcp_connected",
+                    "message": "MCP server initialized."
+                }]
+            }]
+        }));
+
+        assert!(rendered.contains("fs [project stdio enabled] tools=6"));
+        assert!(rendered.contains("read_file, write_file, search, stat, list (+1 more)"));
+        assert!(rendered.contains("subscriptions=1"));
+        assert!(rendered.contains("file:///repo/README.md (updates=2, last=2026-05-31T12:00:00Z)"));
+        assert!(rendered.contains("mcp_connected: MCP server initialized."));
+        assert!(!rendered.contains("should-not-render"));
+        assert!(!rendered.contains("API_TOKEN"));
+    }
+
+    #[test]
+    fn mcp_resources_formatter_shows_resource_metadata_without_secret_values() {
+        let rendered = format_mcp_resources_list(&json!({
+            "serverId": "docs",
+            "status": "ok",
+            "resources": [{
+                "uri": "file:///repo/README.md",
+                "name": "readme",
+                "title": "Project README",
+                "description": "Human-facing project overview with token should-not-render",
+                "mimeType": "text/markdown",
+                "size": 2048,
+                "annotations": {
+                    "secret": "should-not-render"
+                }
+            }],
+            "nextCursor": "page-2"
+        }));
+
+        assert!(rendered.contains("mcp resources docs: 1 resource"));
+        assert!(rendered.contains("Project README <file:///repo/README.md>"));
+        assert!(rendered.contains("text/markdown, 2048 bytes"));
+        assert!(rendered.contains("next cursor: page-2"));
+        assert!(!rendered.contains("secret"));
+        assert!(!rendered.contains("should-not-render"));
+    }
+
+    #[test]
+    fn mcp_status_formatter_shows_server_capabilities() {
+        let rendered = format_mcp_status_list(&json!({
+            "items": [{
+                "id": "docs",
+                "source": "project",
+                "status": "enabled",
+                "transport": { "kind": "stdio" },
+                "tools": ["read"],
+                "capabilities": {
+                    "tools": { "listChanged": true },
+                    "resources": { "subscribe": true, "listChanged": true },
+                    "prompts": { "listChanged": false },
+                    "sampling": {},
+                    "elicitation": {},
+                    "tasks": {}
+                }
+            }]
+        }));
+
+        assert!(rendered.contains("capabilities=tools.listChanged, resources.subscribe, resources.listChanged, prompts.listChanged=false, sampling(deferred), elicitation(deferred), tasks(deferred)"));
+    }
+
+    #[test]
+    fn mcp_status_formatter_shows_list_refresh_hints() {
+        let rendered = format_mcp_status_list(&json!({
+            "items": [{
+                "id": "docs",
+                "source": "project",
+                "status": "enabled",
+                "transport": { "kind": "stdio" },
+                "tools": ["read"],
+                "listRefreshHints": {
+                    "resources": { "refreshCount": 1 },
+                    "prompts": { "refreshCount": 2 }
+                }
+            }]
+        }));
+
+        assert!(rendered.contains("refresh=resources:1, prompts:2"));
+    }
+
+    #[test]
+    fn mcp_action_formatter_shows_auth_required_without_ok_headline() {
+        let rendered = format_mcp_action_result(
+            "auth",
+            "remote",
+            &json!({
+                "events": [
+                    {
+                        "kind": {
+                            "type": "mcpServerRegistered",
+                            "server": {
+                                "id": "remote",
+                                "status": "authRequired",
+                                "tools": []
+                            }
+                        }
+                    },
+                    {
+                        "kind": {
+                            "type": "diagnostic",
+                            "diagnostic": {
+                                "message": "MCP auth required for remote: MCP OAuth/browser auth is deferred in Rust-native OPPi; configure an env-backed authRef such as authRef: \"env:MCP_TOKEN\" in the MCP server config, then run /mcp connect."
+                            }
+                        }
+                    }
+                ]
+            }),
+        );
+
+        let first_line = rendered.lines().next().unwrap_or_default();
+        assert_eq!(first_line, "mcp auth remote: authRequired");
+        assert!(rendered.contains("OAuth/browser auth is deferred"));
+        assert!(rendered.contains("authRef"));
+    }
+
+    #[test]
+    fn mcp_resource_read_formatter_shows_text_and_blob_summaries() {
+        let rendered = format_mcp_resource_read_result(&json!({
+            "serverId": "docs",
+            "uri": "file:///repo/README.md",
+            "status": "ok",
+            "contents": [
+                {
+                    "uri": "file:///repo/README.md",
+                    "mimeType": "text/markdown",
+                    "text": "# README\nNative MCP resources can be read."
+                },
+                {
+                    "uri": "file:///repo/logo.png",
+                    "mimeType": "image/png",
+                    "blob": "aW1hZ2U="
+                }
+            ]
+        }));
+
+        assert!(rendered.contains("mcp read docs: file:///repo/README.md"));
+        assert!(rendered.contains("text/markdown text"));
+        assert!(rendered.contains("# README"));
+        assert!(rendered.contains("image/png blob, 8 base64 chars"));
+        assert!(!rendered.contains("aW1hZ2U="));
+    }
+
+    #[test]
+    fn mcp_resource_subscription_formatter_shows_compact_state() {
+        let subscribed = format_mcp_resource_subscription_result(
+            "subscribe",
+            &json!({
+                "serverId": "docs",
+                "uri": "file:///repo/README.md",
+                "status": "ok",
+                "subscribed": true
+            }),
+        );
+        assert!(subscribed.contains("mcp subscribe docs: file:///repo/README.md"));
+        assert!(subscribed.contains("subscribed"));
+
+        let denied = format_mcp_resource_subscription_result(
+            "subscribe",
+            &json!({
+                "serverId": "docs",
+                "uri": "file:///repo/secret.md",
+                "status": "denied",
+                "subscribed": false,
+                "error": "MCP server does not advertise resources.subscribe"
+            }),
+        );
+        assert!(denied.contains("mcp subscribe docs: denied"));
+        assert!(denied.contains("resources.subscribe"));
+        assert!(!denied.contains("secret.md"));
+    }
+
+    #[test]
+    fn mcp_resource_templates_formatter_shows_template_metadata_without_secret_values() {
+        let rendered = format_mcp_resource_templates_list(&json!({
+            "serverId": "docs",
+            "status": "ok",
+            "resourceTemplates": [{
+                "uriTemplate": "file:///repo/{path}",
+                "name": "repo-file",
+                "title": "Repository file",
+                "description": "Read a repository file by path with token should-not-render",
+                "mimeType": "text/plain",
+                "annotations": {
+                    "secret": "should-not-render"
+                }
+            }],
+            "nextCursor": "template-page-2"
+        }));
+
+        assert!(rendered.contains("mcp templates docs: 1 template"));
+        assert!(rendered.contains("Repository file <file:///repo/{path}>"));
+        assert!(rendered.contains("text/plain"));
+        assert!(rendered.contains("next cursor: template-page-2"));
+        assert!(!rendered.contains("secret"));
+        assert!(!rendered.contains("should-not-render"));
+    }
+
+    #[test]
+    fn mcp_prompts_formatters_show_prompt_metadata_and_bounded_messages() {
+        let listed = format_mcp_prompts_list(&json!({
+            "serverId": "docs",
+            "status": "ok",
+            "prompts": [{
+                "name": "review-change",
+                "title": "Review change",
+                "description": "Review a diff with token should-not-render",
+                "arguments": [{
+                    "name": "focus",
+                    "title": "Focus",
+                    "description": "Do not print this secret should-not-render",
+                    "required": true
+                }]
+            }],
+            "nextCursor": "page-2"
+        }));
+
+        assert!(listed.contains("mcp prompts docs: 1 prompt"));
+        assert!(listed.contains("Review change <review-change>"));
+        assert!(listed.contains("args: focus required"));
+        assert!(listed.contains("next cursor: page-2"));
+        assert!(!listed.contains("should-not-render"));
+
+        let fetched = format_mcp_prompt_get_result(&json!({
+            "serverId": "docs",
+            "name": "review-change",
+            "status": "ok",
+            "description": "Review prompt",
+            "messages": [{
+                "role": "user",
+                "content": {
+                    "type": "text",
+                    "text": "Review this change for security.\nPrefer concrete findings."
+                }
+            }, {
+                "role": "assistant",
+                "content": {
+                    "type": "resource",
+                    "resource": {
+                        "uri": "file:///repo/README.md",
+                        "mimeType": "text/markdown",
+                        "text": "resource body should-not-render"
+                    }
+                }
+            }]
+        }));
+
+        assert!(fetched.contains("mcp prompt docs/review-change: ok"));
+        assert!(fetched.contains("Review prompt"));
+        assert!(fetched.contains("user text"));
+        assert!(fetched.contains("Review this change for security."));
+        assert!(fetched.contains("assistant resource file:///repo/README.md"));
+        assert!(!fetched.contains("resource body should-not-render"));
+    }
+
+    #[test]
+    fn mcp_list_cursor_args_accept_next_page_tokens() {
+        assert_eq!(parse_mcp_list_cursor_arg("resources", &[]).unwrap(), None);
+        assert_eq!(
+            parse_mcp_list_cursor_arg("resources", &["page-2"])
+                .unwrap()
+                .as_deref(),
+            Some("page-2")
+        );
+        assert_eq!(
+            parse_mcp_list_cursor_arg("templates", &["--cursor", "template-page-2"])
+                .unwrap()
+                .as_deref(),
+            Some("template-page-2")
+        );
+        assert_eq!(
+            parse_mcp_list_cursor_arg("prompts", &["cursor", "prompt-page-2"])
+                .unwrap()
+                .as_deref(),
+            Some("prompt-page-2")
+        );
+        assert!(
+            parse_mcp_list_cursor_arg("resources", &["--cursor"])
+                .unwrap_err()
+                .contains("usage: /mcp resources <id> [cursor]")
+        );
+        assert!(
+            parse_mcp_list_cursor_arg("prompts", &["page-2", "extra"])
+                .unwrap_err()
+                .contains("usage: /mcp prompts <id> [cursor]")
+        );
+    }
+
+    #[test]
+    fn mcp_list_request_params_include_cursor_only_when_present() {
+        let first_page = mcp_list_request_params_json("thread-1", "docs", None);
+        assert_eq!(first_page["threadId"], "thread-1");
+        assert_eq!(first_page["serverId"], "docs");
+        assert!(first_page.get("cursor").is_none());
+
+        let next_page = mcp_list_request_params_json("thread-1", "docs", Some("page-2"));
+        assert_eq!(next_page["threadId"], "thread-1");
+        assert_eq!(next_page["serverId"], "docs");
+        assert_eq!(next_page["cursor"], "page-2");
+    }
+
+    #[test]
+    fn mcp_help_includes_plugin_trust_commands() {
+        let usage = mcp_command_usage();
+        assert!(usage.contains("trust-plugin"));
+        assert!(usage.contains("disable-plugin"));
+        assert!(usage.contains("resources <id> [cursor]"));
+        assert!(usage.contains("templates <id> [cursor]"));
+        assert!(usage.contains("read <id> <uri>"));
+        assert!(usage.contains("prompts <id> [cursor]"));
+        assert!(usage.contains("prompt <id> <name>"));
+
+        let args = slash_palette_for_buffer("/mcp ", 0).expect("mcp args");
+        assert!(args.items.iter().any(|item| item.label == "trust-plugin"));
+        assert!(args.items.iter().any(|item| item.label == "disable-plugin"));
+        assert!(args.items.iter().any(|item| item.label == "resources"));
+        assert!(args.items.iter().any(|item| item.label == "templates"));
+        assert!(args.items.iter().any(|item| item.label == "read"));
+        assert!(args.items.iter().any(|item| item.label == "prompts"));
+        assert!(args.items.iter().any(|item| item.label == "prompt"));
     }
 
     #[test]
@@ -11144,6 +28410,3928 @@ mod tests {
     }
 
     #[test]
+    fn permission_sandbox_protected_patterns_flow_into_turn_policy() {
+        let policy = sandbox_policy_json_with_protected_patterns(
+            PermissionMode::AutoReview,
+            "/repo",
+            &["secrets/*.json".to_string(), ".env.local".to_string()],
+        );
+
+        assert_eq!(
+            policy["permissionProfile"]["protectedPatterns"],
+            json!([
+                ".env*",
+                ".ssh/",
+                "*.pem",
+                "*.key",
+                ".git/config",
+                ".git/hooks/",
+                ".npmrc",
+                ".pypirc",
+                ".mcp.json",
+                ".claude.json",
+                "secrets/*.json",
+                ".env.local"
+            ])
+        );
+    }
+
+    #[test]
+    fn permission_sandbox_network_flags_flow_into_turn_policy() {
+        let default_settings = PermissionSandboxSettings::default();
+        let default_policy = sandbox_policy_json_with_settings(
+            PermissionMode::AutoReview,
+            "/repo",
+            &default_settings,
+        );
+        assert_eq!(default_policy["network"], json!("disabled"));
+
+        let internet_policy = sandbox_policy_json_with_settings(
+            PermissionMode::AutoReview,
+            "/repo",
+            &PermissionSandboxSettings {
+                allow_internet: true,
+                ..PermissionSandboxSettings::default()
+            },
+        );
+        assert_eq!(internet_policy["network"], json!("enabled"));
+
+        let ssh_policy = sandbox_policy_json_with_settings(
+            PermissionMode::ReadOnly,
+            "/repo",
+            &PermissionSandboxSettings {
+                allow_ssh: true,
+                ..PermissionSandboxSettings::default()
+            },
+        );
+        assert_eq!(ssh_policy["filesystem"], json!("readOnly"));
+        assert_eq!(ssh_policy["network"], json!("enabled"));
+    }
+
+    #[test]
+    fn permission_sandbox_root_lists_flow_into_turn_policy() {
+        let default_policy = sandbox_policy_json_with_settings(
+            PermissionMode::AutoReview,
+            "/repo",
+            &PermissionSandboxSettings::default(),
+        );
+        assert_eq!(
+            default_policy["permissionProfile"]["readableRoots"],
+            json!(["/repo"])
+        );
+        assert_eq!(
+            default_policy["permissionProfile"]["writableRoots"],
+            json!(["/repo"])
+        );
+
+        let project_policy = sandbox_policy_json_with_settings(
+            PermissionMode::Default,
+            "/repo",
+            &PermissionSandboxSettings {
+                project_roots: vec!["/workspace".to_string()],
+                ..PermissionSandboxSettings::default()
+            },
+        );
+        assert_eq!(
+            project_policy["permissionProfile"]["readableRoots"],
+            json!(["/workspace"])
+        );
+        assert_eq!(
+            project_policy["permissionProfile"]["writableRoots"],
+            json!(["/workspace"])
+        );
+
+        let explicit_policy = sandbox_policy_json_with_settings(
+            PermissionMode::AutoReview,
+            "/repo",
+            &PermissionSandboxSettings {
+                project_roots: vec!["/workspace".to_string()],
+                readable_roots: vec!["/workspace".to_string(), "/shared-read".to_string()],
+                writable_roots: vec!["/workspace/out".to_string()],
+                ..PermissionSandboxSettings::default()
+            },
+        );
+        assert_eq!(
+            explicit_policy["permissionProfile"]["readableRoots"],
+            json!(["/workspace", "/shared-read"])
+        );
+        assert_eq!(
+            explicit_policy["permissionProfile"]["writableRoots"],
+            json!(["/workspace/out"])
+        );
+
+        let read_only_policy = sandbox_policy_json_with_settings(
+            PermissionMode::ReadOnly,
+            "/repo",
+            &PermissionSandboxSettings {
+                writable_roots: vec!["/workspace/out".to_string()],
+                ..PermissionSandboxSettings::default()
+            },
+        );
+        assert_eq!(
+            read_only_policy["permissionProfile"]["writableRoots"],
+            json!([])
+        );
+    }
+
+    #[test]
+    fn permissions_command_parses_history_timeout_reviewer_and_clear_session() {
+        assert_eq!(
+            permissions_command_route("").unwrap(),
+            PermissionCommandRoute::Status
+        );
+        assert_eq!(
+            permissions_command_route("status").unwrap(),
+            PermissionCommandRoute::Status
+        );
+        assert_eq!(
+            permissions_command_route("history").unwrap(),
+            PermissionCommandRoute::History
+        );
+        assert_eq!(
+            permissions_command_route("context").unwrap(),
+            PermissionCommandRoute::ReviewContext
+        );
+        assert_eq!(
+            permissions_command_route("review-context").unwrap(),
+            PermissionCommandRoute::ReviewContext
+        );
+        assert_eq!(
+            permissions_command_route("timeout 30").unwrap(),
+            PermissionCommandRoute::SetReviewTimeoutMs(30_000)
+        );
+        assert_eq!(
+            permissions_command_route("reviewer-model openai-codex/gpt-5.5").unwrap(),
+            PermissionCommandRoute::SetReviewerModel(Some("openai-codex/gpt-5.5".to_string()))
+        );
+        assert_eq!(
+            permissions_command_route("reviewer-model auto").unwrap(),
+            PermissionCommandRoute::SetReviewerModel(None)
+        );
+        assert_eq!(
+            permissions_command_route("clear-session").unwrap(),
+            PermissionCommandRoute::ClearSession
+        );
+        assert_eq!(
+            permissions_command_route("auto-review").unwrap(),
+            PermissionCommandRoute::SetMode(PermissionMode::AutoReview)
+        );
+        assert_eq!(
+            permissions_command_route("sandbox protected secrets/*.json, .env.local").unwrap(),
+            PermissionCommandRoute::SetProtectedPatterns(vec![
+                "secrets/*.json".to_string(),
+                ".env.local".to_string()
+            ])
+        );
+        assert_eq!(
+            permissions_command_route("sandbox protected default").unwrap(),
+            PermissionCommandRoute::SetProtectedPatterns(Vec::new())
+        );
+        assert_eq!(
+            permissions_command_route("sandbox internet on").unwrap(),
+            PermissionCommandRoute::SetSandboxInternet(true)
+        );
+        assert_eq!(
+            permissions_command_route("sandbox internet blocked").unwrap(),
+            PermissionCommandRoute::SetSandboxInternet(false)
+        );
+        assert_eq!(
+            permissions_command_route("sandbox ssh allow").unwrap(),
+            PermissionCommandRoute::SetSandboxSsh(true)
+        );
+        assert_eq!(
+            permissions_command_route("sandbox ssh off").unwrap(),
+            PermissionCommandRoute::SetSandboxSsh(false)
+        );
+        assert_eq!(
+            permissions_command_route("sandbox project E:/repo, E:/shared").unwrap(),
+            PermissionCommandRoute::SetSandboxProjectRoots(vec![
+                "E:/repo".to_string(),
+                "E:/shared".to_string()
+            ])
+        );
+        assert_eq!(
+            permissions_command_route("sandbox read E:/repo, E:/readonly").unwrap(),
+            PermissionCommandRoute::SetSandboxReadableRoots(vec![
+                "E:/repo".to_string(),
+                "E:/readonly".to_string()
+            ])
+        );
+        assert_eq!(
+            permissions_command_route("sandbox read add E:/shared E:/repo").unwrap(),
+            PermissionCommandRoute::EditSandboxRoots {
+                kind: PermissionSandboxRootListKind::Readable,
+                edit: PermissionSandboxRootListEdit::Add,
+                roots: vec!["E:/shared".to_string(), "E:/repo".to_string()]
+            }
+        );
+        assert_eq!(
+            permissions_command_route("sandbox write remove E:/repo/out").unwrap(),
+            PermissionCommandRoute::EditSandboxRoots {
+                kind: PermissionSandboxRootListKind::Writable,
+                edit: PermissionSandboxRootListEdit::Remove,
+                roots: vec!["E:/repo/out".to_string()]
+            }
+        );
+        assert_eq!(
+            permissions_command_route("sandbox write default").unwrap(),
+            PermissionCommandRoute::SetSandboxWritableRoots(Vec::new())
+        );
+        assert_eq!(
+            format!(
+                "{:?}",
+                permissions_command_route("sandbox validate").unwrap()
+            ),
+            "ValidateSandbox"
+        );
+        assert!(
+            permissions_command_route("wat")
+                .unwrap_err()
+                .contains("/permissions")
+        );
+    }
+
+    #[test]
+    fn permission_sandbox_root_presets_apply_workspace_or_default_roots() {
+        let mut settings = PermissionSandboxSettings {
+            project_roots: vec!["E:/old-project".to_string()],
+            readable_roots: vec!["E:/old-read".to_string()],
+            writable_roots: vec!["E:/old-write".to_string()],
+            ..PermissionSandboxSettings::default()
+        };
+
+        apply_permission_sandbox_root_preset(
+            &mut settings,
+            PermissionSandboxRootPreset::Here,
+            "E:/repo/oppi",
+        );
+        assert_eq!(settings.project_roots, vec!["E:/repo/oppi"]);
+        assert_eq!(settings.readable_roots, vec!["E:/repo/oppi"]);
+        assert_eq!(settings.writable_roots, vec!["E:/repo/oppi"]);
+
+        apply_permission_sandbox_root_preset(
+            &mut settings,
+            PermissionSandboxRootPreset::Default,
+            "E:/repo/oppi",
+        );
+        assert!(settings.project_roots.is_empty());
+        assert!(settings.readable_roots.is_empty());
+        assert!(settings.writable_roots.is_empty());
+    }
+
+    #[test]
+    fn permission_sandbox_root_list_edits_append_dedupe_and_remove_paths() {
+        let mut roots = vec![
+            "E:/repo".to_string(),
+            "E:/repo".to_string(),
+            " ".to_string(),
+        ];
+
+        let changed = apply_permission_sandbox_root_list_edit(
+            &mut roots,
+            PermissionSandboxRootListEdit::Add,
+            &["E:/repo".to_string(), "E:/shared".to_string()],
+        );
+        assert!(changed);
+        assert_eq!(roots, vec!["E:/repo".to_string(), "E:/shared".to_string()]);
+
+        let changed = apply_permission_sandbox_root_list_edit(
+            &mut roots,
+            PermissionSandboxRootListEdit::Remove,
+            &["E:/missing".to_string()],
+        );
+        assert!(!changed);
+        assert_eq!(roots, vec!["E:/repo".to_string(), "E:/shared".to_string()]);
+
+        let changed = apply_permission_sandbox_root_list_edit(
+            &mut roots,
+            PermissionSandboxRootListEdit::Remove,
+            &["E:/repo".to_string()],
+        );
+        assert!(changed);
+        assert_eq!(roots, vec!["E:/shared".to_string()]);
+    }
+
+    #[test]
+    fn permission_sandbox_validation_reports_effective_roots_and_path_issues() {
+        let root = env::temp_dir().join(format!(
+            "oppi-permission-sandbox-validation-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        let project = root.join("project");
+        let missing_read = root.join("missing-read");
+        let file_write = root.join("file-write.txt");
+        fs::create_dir_all(&project).unwrap();
+        fs::write(&file_write, "not a directory").unwrap();
+
+        let project = project.to_string_lossy().to_string();
+        let missing_read = missing_read.to_string_lossy().to_string();
+        let file_write = file_write.to_string_lossy().to_string();
+        let validation = permission_sandbox_validation_value(
+            PermissionMode::AutoReview,
+            &project,
+            &PermissionSandboxSettings {
+                readable_roots: vec![project.clone(), missing_read.clone()],
+                writable_roots: vec![file_write.clone()],
+                protected_patterns: vec!["secrets/*.json".to_string()],
+                ..PermissionSandboxSettings::default()
+            },
+        );
+
+        assert_eq!(validation["ok"], json!(false));
+        assert_eq!(validation["issueCount"], json!(2));
+        assert_eq!(
+            validation["roots"]["project"][0],
+            json!({
+                "path": project,
+                "status": "ok",
+                "source": "default"
+            })
+        );
+        assert_eq!(
+            validation["roots"]["readable"][1],
+            json!({
+                "path": missing_read,
+                "status": "missing",
+                "source": "configured"
+            })
+        );
+        assert_eq!(
+            validation["roots"]["writable"][0],
+            json!({
+                "path": file_write,
+                "status": "not-directory",
+                "source": "configured"
+            })
+        );
+        assert_eq!(
+            validation["protectedPatterns"],
+            json!([
+                ".env*",
+                ".ssh/",
+                "*.pem",
+                "*.key",
+                ".git/config",
+                ".git/hooks/",
+                ".npmrc",
+                ".pypirc",
+                ".mcp.json",
+                ".claude.json",
+                "secrets/*.json"
+            ])
+        );
+
+        let rendered = format_permission_sandbox_validation(&validation);
+        assert!(rendered.contains("sandbox validation: 2 issues"));
+        assert!(rendered.contains("effective policy: filesystem=workspaceWrite, network=disabled"));
+        assert!(rendered.contains("project roots:"));
+        assert!(rendered.contains("readable roots:"));
+        assert!(rendered.contains("writable roots:"));
+        assert!(rendered.contains("missing"));
+        assert!(rendered.contains("not-directory"));
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn permissions_settings_persist_reviewer_timeout_without_losing_permission_mode() {
+        let root = env::temp_dir().join(format!(
+            "oppi-permission-review-settings-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("settings.json");
+        fs::write(
+            &path,
+            r#"{"oppi":{"permissionMode":"auto-review"},"kept":true}"#,
+        )
+        .unwrap();
+
+        let mut settings = load_permission_review_settings(&path);
+        settings.timeout_ms = 30_000;
+        settings.reviewer_model = Some("openai-codex/gpt-5.5".to_string());
+        save_permission_review_settings(&path, &settings).unwrap();
+
+        let raw: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(raw["oppi"]["permissionMode"], json!("auto-review"));
+        assert_eq!(raw["oppi"]["permissions"]["reviewTimeoutMs"], json!(30_000));
+        assert_eq!(
+            raw["oppi"]["permissions"]["reviewerModel"],
+            json!("openai-codex/gpt-5.5")
+        );
+        assert_eq!(raw["kept"], json!(true));
+
+        let loaded = load_permission_review_settings(&path);
+        assert_eq!(loaded.timeout_ms, 30_000);
+        assert_eq!(
+            loaded.reviewer_model.as_deref(),
+            Some("openai-codex/gpt-5.5")
+        );
+
+        save_permission_review_settings(
+            &path,
+            &oppi_protocol::GuardianReviewSettings {
+                timeout_ms: 45_000,
+                reviewer_model: None,
+            },
+        )
+        .unwrap();
+        let raw: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(raw["oppi"]["permissions"]["reviewerModel"], json!("auto"));
+        assert_eq!(raw["oppi"]["permissionMode"], json!("auto-review"));
+        assert_eq!(raw["kept"], json!(true));
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn footer_command_parses_visibility_and_usage_settings() {
+        assert_eq!(
+            footer_command_route("").unwrap(),
+            FooterCommandRoute::Status
+        );
+        assert_eq!(
+            footer_command_route("help off").unwrap(),
+            FooterCommandRoute::SetBool(FooterSettingBool::ShowHelpBar, false)
+        );
+        assert_eq!(
+            footer_command_route("path on").unwrap(),
+            FooterCommandRoute::SetBool(FooterSettingBool::ShowPath, true)
+        );
+        assert_eq!(
+            footer_command_route("model false").unwrap(),
+            FooterCommandRoute::SetBool(FooterSettingBool::ShowModel, false)
+        );
+        assert_eq!(
+            footer_command_route("permission enabled").unwrap(),
+            FooterCommandRoute::SetBool(FooterSettingBool::ShowPermission, true)
+        );
+        assert_eq!(
+            footer_command_route("memory blocked").unwrap(),
+            FooterCommandRoute::SetBool(FooterSettingBool::ShowMemory, false)
+        );
+        assert_eq!(
+            footer_command_route("context allow").unwrap(),
+            FooterCommandRoute::SetBool(FooterSettingBool::ShowContext, true)
+        );
+        assert_eq!(
+            footer_command_route("usage weekly").unwrap(),
+            FooterCommandRoute::SetUsageDisplay(FooterUsageDisplay::Weekly)
+        );
+        assert!(
+            footer_command_route("usage never")
+                .unwrap_err()
+                .contains("session-weekly")
+        );
+    }
+
+    #[test]
+    fn compaction_command_parses_pi_compatible_settings() {
+        assert_eq!(
+            compaction_command_route("").unwrap(),
+            CompactionCommandRoute::Status
+        );
+        assert_eq!(
+            compaction_command_route("status").unwrap(),
+            CompactionCommandRoute::Status
+        );
+        assert_eq!(
+            compaction_command_route("off").unwrap(),
+            CompactionCommandRoute::SetIdleEnabled(false)
+        );
+        assert_eq!(
+            compaction_command_route("on").unwrap(),
+            CompactionCommandRoute::SetIdleEnabled(true)
+        );
+        assert_eq!(
+            compaction_command_route("idle-time 10").unwrap(),
+            CompactionCommandRoute::SetIdleMinutes(10)
+        );
+        assert_eq!(
+            compaction_command_route("idle-threshold 80").unwrap(),
+            CompactionCommandRoute::SetIdleThresholdPercent(80)
+        );
+        assert_eq!(
+            compaction_command_route("smart-threshold 55").unwrap(),
+            CompactionCommandRoute::SetSmartThresholdPercent(55)
+        );
+        assert!(compaction_command_route("compact").is_ok());
+        assert!(compaction_command_route("compact-now").is_ok());
+        assert!(
+            compaction_command_route("idle-time 3")
+                .unwrap_err()
+                .contains("2|5|10")
+        );
+        assert!(
+            compaction_command_route("smart-threshold 80")
+                .unwrap_err()
+                .contains("50|55|60|65|70|75")
+        );
+    }
+
+    #[test]
+    fn memory_compact_summary_allows_empty_runtime_fallback() {
+        assert_eq!(memory_compact_summary_arg(&[]), "");
+        assert_eq!(
+            memory_compact_summary_arg(&["manual", "handoff"]),
+            "manual handoff"
+        );
+    }
+
+    #[test]
+    fn memory_settings_command_route_parses_pi_memory_controls() {
+        assert_eq!(
+            memory_settings_command_route("").unwrap(),
+            MemorySettingsCommandRoute::Status
+        );
+        assert_eq!(
+            memory_settings_command_route("status").unwrap(),
+            MemorySettingsCommandRoute::Status
+        );
+        assert_eq!(
+            memory_settings_command_route("on").unwrap(),
+            MemorySettingsCommandRoute::SetEnabled(true)
+        );
+        assert_eq!(
+            memory_settings_command_route("off").unwrap(),
+            MemorySettingsCommandRoute::SetEnabled(false)
+        );
+        assert_eq!(
+            memory_settings_command_route("startup-recall off").unwrap(),
+            MemorySettingsCommandRoute::SetStartupRecall(false)
+        );
+        assert_eq!(
+            memory_settings_command_route("task-start-recall on").unwrap(),
+            MemorySettingsCommandRoute::SetTaskStartRecall(true)
+        );
+        assert_eq!(
+            memory_settings_command_route("turn-summaries off").unwrap(),
+            MemorySettingsCommandRoute::SetTurnSummaries(false)
+        );
+        assert_eq!(
+            memory_settings_command_route("agent-model gpt").unwrap(),
+            MemorySettingsCommandRoute::SetAgentModel("gpt")
+        );
+        assert_eq!(
+            memory_settings_command_route("deep-model sonnet").unwrap(),
+            MemorySettingsCommandRoute::SetDeepModel("sonnet")
+        );
+        assert_eq!(
+            memory_settings_command_route("idle-dream off").unwrap(),
+            MemorySettingsCommandRoute::SetIdleConsolidation(false)
+        );
+        assert_eq!(
+            memory_settings_command_route("sync on").unwrap(),
+            MemorySettingsCommandRoute::SetSyncEnabled(true)
+        );
+        assert_eq!(
+            memory_settings_command_route("sync repo ~/hoppi-sync").unwrap(),
+            MemorySettingsCommandRoute::SetSyncRepoPath(Some("~/hoppi-sync".to_string()))
+        );
+        assert_eq!(
+            memory_settings_command_route("sync remote none").unwrap(),
+            MemorySettingsCommandRoute::SetSyncRepoUrl(None)
+        );
+        assert_eq!(
+            memory_settings_command_route("sync pull-startup off").unwrap(),
+            MemorySettingsCommandRoute::SetSyncPullOnStartup(false)
+        );
+        assert_eq!(
+            memory_settings_command_route("sync push-exit on").unwrap(),
+            MemorySettingsCommandRoute::SetSyncPushOnExit(true)
+        );
+        assert_eq!(
+            memory_settings_command_route("sync background 30m").unwrap(),
+            MemorySettingsCommandRoute::SetSyncBackground("30m")
+        );
+        assert_eq!(
+            memory_settings_command_route("sync encryption file").unwrap(),
+            MemorySettingsCommandRoute::SetSyncEncryption {
+                encryption: "passphrase",
+                passphrase_source: "file"
+            }
+        );
+        assert_eq!(
+            memory_settings_command_route("sync passphrase-env OPPI_SECRET").unwrap(),
+            MemorySettingsCommandRoute::SetSyncPassphraseEnv("OPPI_SECRET".to_string())
+        );
+        assert_eq!(
+            memory_settings_command_route("sync passphrase-file ~/hoppi/passphrase").unwrap(),
+            MemorySettingsCommandRoute::SetSyncPassphraseFile(Some(
+                "~/hoppi/passphrase".to_string()
+            ))
+        );
+        assert_eq!(
+            memory_settings_command_route("sync conflict keep-local").unwrap(),
+            MemorySettingsCommandRoute::SetSyncConflictMode("keep-local")
+        );
+        assert_eq!(
+            memory_settings_command_route("sync now").unwrap(),
+            MemorySettingsCommandRoute::RunSync(HoppiSyncDirection::Both)
+        );
+        assert_eq!(
+            memory_settings_command_route("sync pull").unwrap(),
+            MemorySettingsCommandRoute::RunSync(HoppiSyncDirection::Pull)
+        );
+        assert_eq!(
+            memory_settings_command_route("sync push").unwrap(),
+            MemorySettingsCommandRoute::RunSync(HoppiSyncDirection::Push)
+        );
+        assert_eq!(
+            memory_settings_command_route("install-offer dismissed").unwrap(),
+            MemorySettingsCommandRoute::SetHoppiInstallOffer("dismissed")
+        );
+        assert_eq!(
+            memory_settings_command_route("install-hoppi").unwrap(),
+            MemorySettingsCommandRoute::InstallHoppi(false)
+        );
+        assert_eq!(
+            memory_settings_command_route("install --yes").unwrap(),
+            MemorySettingsCommandRoute::InstallHoppi(true)
+        );
+        assert!(memory_settings_command_route("startup-recall maybe").is_err());
+        assert!(memory_settings_command_route("agent-model llama").is_err());
+        assert!(memory_settings_command_route("deep-model opus").is_err());
+        assert!(memory_settings_command_route("install-offer never").is_err());
+        assert!(memory_settings_command_route("sync background 5m").is_err());
+        assert!(memory_settings_command_route("sync conflict merge").is_err());
+    }
+
+    #[test]
+    fn memory_install_hoppi_approval_panel_is_explicit() {
+        let text = hoppi_install_approval_panel();
+        assert!(text.contains("Approval required"));
+        assert!(text.contains("@oppiai/hoppi-memory"));
+        assert!(text.contains("/memory install-hoppi --yes"));
+        assert!(text.contains("npm/network"));
+        assert!(text.contains("no hidden install"));
+    }
+
+    #[test]
+    fn memory_backend_native_shell_recall_builds_runtime_backend_request() {
+        let params = memory_backend_recall_params_from_settings(
+            &MemorySettings {
+                enabled: true,
+                startup_recall: true,
+                task_start_recall: true,
+                ..MemorySettings::default()
+            },
+            "thread-1",
+            "continue the plan",
+        )
+        .unwrap();
+
+        assert_eq!(params["threadId"], "thread-1");
+        assert_eq!(params["prompt"], "continue the plan");
+        assert_eq!(params["includeStartup"], true);
+        assert_eq!(params["includeTask"], true);
+    }
+
+    #[test]
+    fn memory_backend_native_shell_builds_route_catalog_requests() {
+        let settings = MemorySettings {
+            enabled: true,
+            sync_enabled: true,
+            turn_summaries: true,
+            idle_consolidation: true,
+            agent_model: "gpt".to_string(),
+            deep_model: "sonnet".to_string(),
+            ..MemorySettings::default()
+        };
+
+        let list =
+            memory_backend_list_params_from_settings(&settings, "thread-1", true, false, Some(25))
+                .unwrap();
+        assert_eq!(list["threadId"], "thread-1");
+        assert_eq!(list["includeSuperseded"], true);
+        assert_eq!(list["pinnedOnly"], false);
+        assert_eq!(list["limit"], 25);
+
+        let remember = memory_backend_turn_remember_params_from_settings(
+            &settings,
+            "Native shell saved a turn summary",
+            "thread-1",
+            "turn-1",
+        )
+        .unwrap();
+        assert_eq!(remember["threadId"], "thread-1");
+        assert_eq!(remember["content"], "Native shell saved a turn summary");
+        assert_eq!(remember["source"], "oppi:native-shell");
+        assert_eq!(remember["sourceSessionId"], "thread-1:turn-1");
+        assert_eq!(remember["layer"], "buffer");
+
+        let recap = memory_backend_session_recap_params_from_settings(
+            &settings,
+            "Session recap with useful handoff context",
+            "thread-1",
+            HoppiSessionRecapReason::Clear,
+        )
+        .unwrap();
+        assert_eq!(recap["source"], "oppi:clear");
+        assert_eq!(recap["sourceSessionId"], "thread-1");
+
+        let update = memory_backend_update_params_from_settings(
+            &settings,
+            "thread-1",
+            "mem-1",
+            json!({ "content": "edited", "tags": ["native"] }),
+        )
+        .unwrap();
+        assert_eq!(update["threadId"], "thread-1");
+        assert_eq!(update["id"], "mem-1");
+        assert_eq!(update["patch"]["content"], "edited");
+
+        let supersede = memory_backend_supersede_params_from_settings(
+            &settings, "thread-1", "mem-old", "mem-new",
+        )
+        .unwrap();
+        assert_eq!(supersede["id"], "mem-old");
+        assert_eq!(supersede["supersededBy"], "mem-new");
+
+        let consolidate =
+            memory_backend_consolidate_params_from_settings(&settings, "thread-1", false).unwrap();
+        assert_eq!(consolidate["stage"], "manual-maintenance");
+        assert_eq!(consolidate["dryRun"], false);
+        assert_eq!(consolidate["agentModel"], "gpt");
+        assert_eq!(consolidate["deepModel"], "sonnet");
+
+        let idle =
+            memory_backend_idle_consolidate_params_from_settings(&settings, "thread-1").unwrap();
+        assert_eq!(idle["stage"], "idle-dream");
+        assert_eq!(idle["budget"], HOPPI_IDLE_CONSOLIDATE_BUDGET);
+
+        let sync = memory_backend_sync_params_from_settings(
+            &settings,
+            "thread-1",
+            HoppiSyncDirection::Push,
+            "test",
+        )
+        .unwrap();
+        assert_eq!(sync["threadId"], "thread-1");
+        assert_eq!(sync["direction"], "push");
+    }
+
+    #[test]
+    fn hoppi_sync_invocation_uses_shared_settings_and_passphrase_file() {
+        let root = env::temp_dir().join(format!("oppi-hoppi-sync-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let passphrase_file = root.join("passphrase.txt");
+        fs::write(&passphrase_file, "secret-passphrase\n").unwrap();
+
+        let settings = MemorySettings {
+            enabled: true,
+            sync_enabled: true,
+            sync_repo_url: Some("git@github.com:user/hoppi-memories.git".to_string()),
+            sync_encryption: "passphrase".to_string(),
+            sync_passphrase_source: "file".to_string(),
+            sync_passphrase_file: Some(passphrase_file.display().to_string()),
+            sync_conflict_mode: "keep-local".to_string(),
+            ..MemorySettings::default()
+        };
+
+        let invocation = hoppi_sync_invocation_from_settings(
+            &settings,
+            HoppiSyncDirection::Pull,
+            "manual",
+            PathBuf::from("hoppi.js"),
+        )
+        .unwrap();
+
+        assert_eq!(invocation.module_path, PathBuf::from("hoppi.js"));
+        assert_eq!(invocation.repo_path, default_hoppi_sync_repo_path());
+        assert_eq!(invocation.direction, HoppiSyncDirection::Pull);
+        assert_eq!(
+            invocation.remote.as_deref(),
+            Some("git@github.com:user/hoppi-memories.git")
+        );
+        assert_eq!(invocation.conflict_mode, "keep-local");
+        assert_eq!(invocation.passphrase.as_deref(), Some("secret-passphrase"));
+        assert_eq!(invocation.message, "Hoppi memory sync (manual)");
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn hoppi_sync_invocation_refuses_disabled_memory_or_sync() {
+        let mut settings = MemorySettings {
+            enabled: false,
+            sync_enabled: true,
+            ..MemorySettings::default()
+        };
+        assert!(
+            hoppi_sync_invocation_from_settings(
+                &settings,
+                HoppiSyncDirection::Both,
+                "manual",
+                PathBuf::from("hoppi.js"),
+            )
+            .unwrap_err()
+            .contains("memory disabled")
+        );
+
+        settings.enabled = true;
+        settings.sync_enabled = false;
+        assert!(
+            hoppi_sync_invocation_from_settings(
+                &settings,
+                HoppiSyncDirection::Both,
+                "manual",
+                PathBuf::from("hoppi.js"),
+            )
+            .unwrap_err()
+            .contains("sync disabled")
+        );
+    }
+
+    #[test]
+    fn hoppi_sync_lifecycle_plans_startup_exit_and_background_from_settings() {
+        let settings = MemorySettings {
+            enabled: true,
+            sync_enabled: true,
+            sync_background: "30m".to_string(),
+            ..MemorySettings::default()
+        };
+
+        assert_eq!(
+            hoppi_sync_lifecycle_direction(&settings, HoppiSyncLifecycle::Startup),
+            Some(HoppiSyncDirection::Pull)
+        );
+        assert_eq!(
+            hoppi_sync_lifecycle_direction(&settings, HoppiSyncLifecycle::Exit),
+            Some(HoppiSyncDirection::Push)
+        );
+        assert_eq!(
+            hoppi_sync_lifecycle_direction(&settings, HoppiSyncLifecycle::Clear),
+            Some(HoppiSyncDirection::Push)
+        );
+        assert_eq!(
+            hoppi_background_sync_interval(&settings),
+            Some(Duration::from_secs(30 * 60))
+        );
+
+        let mut disabled = settings.clone();
+        disabled.enabled = false;
+        assert_eq!(
+            hoppi_sync_lifecycle_direction(&disabled, HoppiSyncLifecycle::Startup),
+            None
+        );
+        assert_eq!(
+            hoppi_sync_lifecycle_direction(&disabled, HoppiSyncLifecycle::Exit),
+            None
+        );
+        assert_eq!(
+            hoppi_sync_lifecycle_direction(&disabled, HoppiSyncLifecycle::Clear),
+            None
+        );
+        assert_eq!(hoppi_background_sync_interval(&disabled), None);
+
+        let mut sync_disabled = settings.clone();
+        sync_disabled.sync_enabled = false;
+        assert_eq!(
+            hoppi_sync_lifecycle_direction(&sync_disabled, HoppiSyncLifecycle::Startup),
+            None
+        );
+        assert_eq!(
+            hoppi_sync_lifecycle_direction(&sync_disabled, HoppiSyncLifecycle::Exit),
+            None
+        );
+        assert_eq!(
+            hoppi_sync_lifecycle_direction(&sync_disabled, HoppiSyncLifecycle::Clear),
+            None
+        );
+        assert_eq!(hoppi_background_sync_interval(&sync_disabled), None);
+
+        let mut lifecycle_disabled = settings.clone();
+        lifecycle_disabled.sync_pull_on_startup = false;
+        lifecycle_disabled.sync_push_on_exit = false;
+        lifecycle_disabled.sync_background = "off".to_string();
+        assert_eq!(
+            hoppi_sync_lifecycle_direction(&lifecycle_disabled, HoppiSyncLifecycle::Startup),
+            None
+        );
+        assert_eq!(
+            hoppi_sync_lifecycle_direction(&lifecycle_disabled, HoppiSyncLifecycle::Exit),
+            None
+        );
+        assert_eq!(
+            hoppi_sync_lifecycle_direction(&lifecycle_disabled, HoppiSyncLifecycle::Clear),
+            None
+        );
+        assert_eq!(hoppi_background_sync_interval(&lifecycle_disabled), None);
+    }
+
+    #[test]
+    fn hoppi_background_sync_scheduler_waits_for_interval_and_idle() {
+        let settings = MemorySettings {
+            enabled: true,
+            sync_enabled: true,
+            sync_background: "15m".to_string(),
+            ..MemorySettings::default()
+        };
+        let now = Instant::now();
+        let due_at = hoppi_next_background_sync_at(&settings, now).unwrap();
+
+        assert_eq!(due_at.duration_since(now), Duration::from_secs(15 * 60));
+        assert!(!hoppi_background_sync_due(
+            &settings,
+            Some(due_at),
+            true,
+            now + Duration::from_secs(14 * 60)
+        ));
+        assert!(!hoppi_background_sync_due(
+            &settings,
+            Some(due_at),
+            false,
+            due_at
+        ));
+        assert!(hoppi_background_sync_due(
+            &settings,
+            Some(due_at),
+            true,
+            due_at
+        ));
+
+        let disabled = MemorySettings {
+            sync_background: "off".to_string(),
+            ..settings
+        };
+        assert_eq!(hoppi_next_background_sync_at(&disabled, now), None);
+        assert!(!hoppi_background_sync_due(
+            &disabled,
+            Some(due_at),
+            true,
+            due_at
+        ));
+    }
+
+    #[test]
+    fn hoppi_sync_result_summary_matches_pi_manual_sync_surface() {
+        let result = hoppi_sync_result_from_value(&json!({
+            "imported": 2,
+            "exported": 3,
+            "committed": true,
+            "pushed": true,
+            "conflicts": ["a", "b"],
+            "embeddingsRebuildRecommended": true,
+            "rebuiltEmbeddings": true,
+        }));
+
+        assert_eq!(
+            format_hoppi_sync_report(HoppiSyncDirection::Both, &result),
+            "Hoppi sync both · pulled 2 · exported 3 · committed · pushed · 2 conflicts · embeddings rebuilt"
+        );
+    }
+
+    #[test]
+    fn hoppi_sync_job_update_params_track_running_and_terminal_states() {
+        let invocation = HoppiSyncInvocation {
+            module_path: PathBuf::from("hoppi.js"),
+            repo_path: PathBuf::from("E:\\RepositoryV2\\oppi\\hoppi-memories"),
+            direction: HoppiSyncDirection::Both,
+            remote: Some("git@example.com:private/hoppi-memories.git".to_string()),
+            conflict_mode: "keep-both".to_string(),
+            passphrase: Some("secret-passphrase".to_string()),
+            message: "Hoppi memory sync (manual)".to_string(),
+        };
+        let result = HoppiSyncCommandResult {
+            imported: 4,
+            exported: 5,
+            committed: true,
+            pushed: true,
+            conflicts: vec!["conflict-a".to_string()],
+            embeddings_rebuild_recommended: true,
+            rebuilt_embeddings: true,
+        };
+
+        let started =
+            hoppi_sync_job_started_params("thread-1", "native-sync-job-1", &invocation, "manual");
+        assert_eq!(started["threadId"], "thread-1");
+        assert_eq!(started["jobId"], "native-sync-job-1");
+        assert_eq!(started["kind"], "sync");
+        assert_eq!(started["stage"], "sync-both");
+        assert_eq!(started["status"], "running");
+        assert_eq!(started["source"], "hoppi-sync-manual");
+        assert_eq!(started["backendApplied"], false);
+        assert!(
+            started["message"]
+                .as_str()
+                .unwrap()
+                .contains("Hoppi memory sync (manual)")
+        );
+        assert!(
+            !started["message"]
+                .as_str()
+                .unwrap()
+                .contains("secret-passphrase")
+        );
+
+        let finished = hoppi_sync_job_finished_params(
+            "thread-1",
+            "native-sync-job-1",
+            &invocation,
+            &result,
+            "manual",
+        );
+        assert_eq!(finished["status"], "succeeded");
+        assert_eq!(finished["recordCount"], 9);
+        assert_eq!(finished["backendApplied"], true);
+        assert!(finished["message"].as_str().unwrap().contains("pulled 4"));
+        assert!(finished["message"].as_str().unwrap().contains("exported 5"));
+        assert!(
+            !finished["message"]
+                .as_str()
+                .unwrap()
+                .contains("git@example.com")
+        );
+
+        let failed = hoppi_sync_job_failed_params(
+            "thread-1",
+            "native-sync-job-1",
+            &invocation,
+            "sync bridge failed",
+            "manual",
+        );
+        assert_eq!(failed["status"], "failed");
+        assert_eq!(failed["backendApplied"], false);
+        assert!(
+            failed["message"]
+                .as_str()
+                .unwrap()
+                .contains("sync bridge failed")
+        );
+    }
+
+    #[test]
+    fn hoppi_sync_node_bridge_runs_installed_module_contract() {
+        let root = env::temp_dir().join(format!("oppi-hoppi-sync-node-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let module_path = root.join("hoppi-sync-fixture.mjs");
+        let repo_path = root.join("repo");
+        fs::write(
+            &module_path,
+            r#"
+export function getDefaultHoppiRoot() {
+  return "fixture-root";
+}
+
+export async function syncGitRepository(root, repoPath, options) {
+  if (root !== "fixture-root") throw new Error(`bad root ${root}`);
+  if (!repoPath.endsWith("repo")) throw new Error(`bad repo ${repoPath}`);
+  if (options.direction !== "both") throw new Error(`bad direction ${options.direction}`);
+  if (options.remote !== "git@example.com:memories.git") throw new Error("missing remote");
+  if (options.conflictMode !== "keep-both") throw new Error("bad conflict mode");
+  if (options.passphrase !== "secret") throw new Error("missing passphrase");
+  if (options.message !== "Hoppi memory sync (test)") throw new Error("bad message");
+  return {
+    imported: 4,
+    exported: 5,
+    committed: true,
+    pushed: true,
+    conflicts: [],
+    embeddingsRebuildRecommended: true
+  };
+}
+
+export async function rebuildEmbeddings(root) {
+  if (root !== "fixture-root") throw new Error(`bad rebuild root ${root}`);
+  return { rebuilt: 1 };
+}
+"#,
+        )
+        .unwrap();
+
+        let invocation = HoppiSyncInvocation {
+            module_path,
+            repo_path,
+            direction: HoppiSyncDirection::Both,
+            remote: Some("git@example.com:memories.git".to_string()),
+            conflict_mode: "keep-both".to_string(),
+            passphrase: Some("secret".to_string()),
+            message: "Hoppi memory sync (test)".to_string(),
+        };
+
+        let result = run_hoppi_sync_invocation(&invocation).unwrap();
+        assert_eq!(result.imported, 4);
+        assert_eq!(result.exported, 5);
+        assert!(result.committed);
+        assert!(result.pushed);
+        assert!(result.rebuilt_embeddings);
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn hoppi_consolidate_invocation_uses_explicit_maintenance_settings() {
+        let settings = MemorySettings {
+            enabled: true,
+            agent_model: "gpt".to_string(),
+            deep_model: "gpt-5.5".to_string(),
+            ..MemorySettings::default()
+        };
+
+        let invocation = hoppi_consolidate_invocation_from_settings(
+            &settings,
+            Path::new("E:\\RepositoryV2\\oppi"),
+            PathBuf::from("hoppi.js"),
+            true,
+        )
+        .unwrap();
+
+        assert_eq!(invocation.module_path, PathBuf::from("hoppi.js"));
+        assert_eq!(invocation.cwd, PathBuf::from("E:\\RepositoryV2\\oppi"));
+        assert!(invocation.dry_run);
+        assert_eq!(invocation.stage, "manual-maintenance");
+        assert_eq!(invocation.limit, Some(50));
+        assert_eq!(invocation.budget, None);
+        assert_eq!(invocation.agent_model, "gpt");
+        assert_eq!(invocation.deep_model, "gpt-5.5");
+
+        let disabled = MemorySettings {
+            enabled: false,
+            ..settings
+        };
+        assert!(
+            hoppi_consolidate_invocation_from_settings(
+                &disabled,
+                Path::new("E:\\RepositoryV2\\oppi"),
+                PathBuf::from("hoppi.js"),
+                false,
+            )
+            .unwrap_err()
+            .contains("memory disabled")
+        );
+    }
+
+    #[test]
+    fn hoppi_idle_consolidation_scheduler_waits_for_dirty_idle_memory() {
+        let settings = MemorySettings {
+            enabled: true,
+            idle_consolidation: true,
+            ..MemorySettings::default()
+        };
+        let now = Instant::now();
+        let dirty_at = now - HOPPI_IDLE_CONSOLIDATE_AFTER;
+
+        assert!(hoppi_idle_consolidation_due(
+            &settings,
+            2,
+            1,
+            Some(dirty_at),
+            true,
+            now
+        ));
+        assert!(!hoppi_idle_consolidation_due(
+            &settings,
+            2,
+            2,
+            Some(dirty_at),
+            true,
+            now
+        ));
+        assert!(!hoppi_idle_consolidation_due(
+            &settings,
+            2,
+            1,
+            Some(now - Duration::from_secs(30)),
+            true,
+            now
+        ));
+        assert!(!hoppi_idle_consolidation_due(
+            &settings,
+            2,
+            1,
+            Some(dirty_at),
+            false,
+            now
+        ));
+
+        let disabled = MemorySettings {
+            idle_consolidation: false,
+            ..settings
+        };
+        assert!(!hoppi_idle_consolidation_due(
+            &disabled,
+            2,
+            1,
+            Some(dirty_at),
+            true,
+            now
+        ));
+    }
+
+    #[test]
+    fn hoppi_idle_consolidate_invocation_uses_idle_stage_and_budget() {
+        let settings = MemorySettings {
+            enabled: true,
+            idle_consolidation: true,
+            agent_model: "claude".to_string(),
+            deep_model: "sonnet".to_string(),
+            ..MemorySettings::default()
+        };
+
+        let invocation = hoppi_idle_consolidate_invocation_from_settings(
+            &settings,
+            Path::new("E:\\RepositoryV2\\oppi"),
+            PathBuf::from("hoppi.js"),
+        )
+        .unwrap();
+
+        assert_eq!(invocation.module_path, PathBuf::from("hoppi.js"));
+        assert_eq!(invocation.cwd, PathBuf::from("E:\\RepositoryV2\\oppi"));
+        assert!(!invocation.dry_run);
+        assert_eq!(invocation.stage, "idle-dream");
+        assert_eq!(invocation.limit, None);
+        assert_eq!(invocation.budget, Some(1_500));
+        assert_eq!(invocation.agent_model, "claude");
+        assert_eq!(invocation.deep_model, "sonnet");
+
+        let disabled = MemorySettings {
+            idle_consolidation: false,
+            ..settings
+        };
+        assert!(
+            hoppi_idle_consolidate_invocation_from_settings(
+                &disabled,
+                Path::new("E:\\RepositoryV2\\oppi"),
+                PathBuf::from("hoppi.js"),
+            )
+            .unwrap_err()
+            .contains("idle consolidation disabled")
+        );
+    }
+
+    #[test]
+    fn hoppi_consolidate_node_bridge_runs_installed_backend_contract() {
+        let root = env::temp_dir().join(format!(
+            "oppi-hoppi-consolidate-node-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let module_path = root.join("hoppi-consolidate-fixture.mjs");
+        let workspace = root.join("workspace");
+        fs::create_dir_all(&workspace).unwrap();
+        fs::write(
+            &module_path,
+            r#"
+export function getDefaultHoppiRoot() {
+  return "fixture-root";
+}
+
+export function createHoppiBackend(options) {
+  if (options.root !== "fixture-root") throw new Error(`bad root ${options.root}`);
+  return {
+    async init() {},
+    async status(project) {
+      if (!project.cwd.endsWith("workspace")) throw new Error(`bad cwd ${project.cwd}`);
+      return {
+        memoryCount: 4,
+        pinnedCount: 1,
+        storePath: "fixture-store",
+        lastConsolidatedAt: "2026-05-31T10:00:00Z",
+        queueDepth: 0
+      };
+    },
+    async consolidate(input) {
+      if (!input.project.cwd.endsWith("workspace")) throw new Error(`bad consolidate cwd ${input.project.cwd}`);
+      if (input.dryRun !== false) throw new Error(`bad dryRun ${input.dryRun}`);
+      if (input.stage !== "manual-maintenance") throw new Error(`bad stage ${input.stage}`);
+      if (input.limit !== 50) throw new Error(`bad limit ${input.limit}`);
+      if (!input.modelPreference) throw new Error("missing modelPreference");
+      if (input.modelPreference.agentModel !== "gpt") throw new Error(`bad agent model ${input.modelPreference.agentModel}`);
+      if (input.modelPreference.deepModel !== "gpt-5.5") throw new Error(`bad deep model ${input.modelPreference.deepModel}`);
+      return {
+        modelUsed: "gpt-5.4-mini",
+        summary: "Merged duplicate implementation memories.",
+        records: [
+          {
+            id: "mem-consolidated",
+            content: "Consolidated native maintenance memory",
+            tags: ["consolidated", "verified"],
+            confidence: "verified",
+            source: "hoppi:maintenance",
+            parents: ["mem-noise"]
+          }
+        ],
+        deletedIds: ["mem-noise"],
+        memoryCount: 4,
+        pinnedCount: 1,
+        storePath: "fixture-store",
+        lastConsolidatedAt: "2026-05-31T10:00:00Z",
+        queueDepth: 0
+      };
+    }
+  };
+}
+"#,
+        )
+        .unwrap();
+
+        let result = run_hoppi_consolidate_invocation(&HoppiConsolidateInvocation {
+            module_path,
+            cwd: workspace,
+            dry_run: false,
+            stage: "manual-maintenance".to_string(),
+            limit: Some(50),
+            budget: None,
+            agent_model: "gpt".to_string(),
+            deep_model: "gpt-5.5".to_string(),
+        })
+        .unwrap();
+
+        assert!(!result.dry_run);
+        assert_eq!(
+            result.summary.as_deref(),
+            Some("Merged duplicate implementation memories.")
+        );
+        assert_eq!(result.memory_count, 4);
+        assert_eq!(result.pinned_count, Some(1));
+        assert_eq!(result.model_used.as_deref(), Some("gpt-5.4-mini"));
+        assert_eq!(result.store_path.as_deref(), Some("fixture-store"));
+        assert_eq!(
+            result.last_consolidated_at.as_deref(),
+            Some("2026-05-31T10:00:00Z")
+        );
+        assert_eq!(result.queue_depth, Some(0));
+        assert_eq!(result.deleted_ids, vec!["mem-noise"]);
+        assert_eq!(result.records[0].id, "mem-consolidated");
+        assert_eq!(result.records[0].parents, vec!["mem-noise".to_string()]);
+
+        let rendered = format_memory_consolidate(&json!({
+            "available": true,
+            "stage": "manual-maintenance",
+            "modelUsed": result.model_used,
+            "summary": result.summary,
+            "dryRun": false,
+            "backendApplied": true,
+            "cacheUpdated": true,
+            "createdCount": result.records.len(),
+            "deletedCount": result.deleted_ids.len(),
+            "totalCount": 4,
+            "deletedIds": result.deleted_ids,
+            "status": { "memoryCount": 4, "pinnedCount": 1, "queueDepth": 0 },
+            "message": "Applied Hoppi consolidation and updated Rust cache."
+        }));
+        assert!(rendered.contains("Hoppi maintenance: applied"));
+        assert!(rendered.contains("stage=manual-maintenance"));
+        assert!(rendered.contains("model=gpt-5.4-mini"));
+        assert!(rendered.contains("created=1 deleted=1"));
+        assert!(rendered.contains("queue=0"));
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn hoppi_consolidate_job_update_params_track_running_and_terminal_states() {
+        let invocation = HoppiConsolidateInvocation {
+            module_path: PathBuf::from("hoppi.js"),
+            cwd: PathBuf::from("E:\\RepositoryV2\\oppi"),
+            dry_run: false,
+            stage: "idle-dream".to_string(),
+            limit: None,
+            budget: Some(1_500),
+            agent_model: "claude".to_string(),
+            deep_model: "sonnet".to_string(),
+        };
+        let result = HoppiConsolidateCommandResult {
+            dry_run: false,
+            model_used: Some("claude/haiku".to_string()),
+            summary: Some("Idle Hoppi consolidation finished.".to_string()),
+            records: vec![
+                MemoryRecord {
+                    id: "mem-a".to_string(),
+                    content: "first".to_string(),
+                    ..MemoryRecord::default()
+                },
+                MemoryRecord {
+                    id: "mem-b".to_string(),
+                    content: "second".to_string(),
+                    ..MemoryRecord::default()
+                },
+            ],
+            deleted_ids: vec!["mem-old".to_string()],
+            memory_count: 7,
+            pinned_count: Some(1),
+            store_path: Some("fixture-store".to_string()),
+            last_consolidated_at: Some("2026-05-31T12:00:00Z".to_string()),
+            queue_depth: Some(0),
+        };
+
+        let started = hoppi_consolidate_job_started_params(
+            "thread-1",
+            "native-memory-job-1",
+            &invocation,
+            "hoppi-idle-consolidate",
+        );
+        assert_eq!(started["threadId"], "thread-1");
+        assert_eq!(started["jobId"], "native-memory-job-1");
+        assert_eq!(started["kind"], "consolidate");
+        assert_eq!(started["stage"], "idle-dream");
+        assert_eq!(started["status"], "running");
+        assert_eq!(started["source"], "hoppi-idle-consolidate");
+        assert_eq!(started["dryRun"], false);
+        assert_eq!(started["backendApplied"], false);
+
+        let finished = hoppi_consolidate_job_finished_params(
+            "thread-1",
+            "native-memory-job-1",
+            &invocation,
+            &result,
+            "hoppi-idle-consolidate",
+        );
+        assert_eq!(finished["status"], "succeeded");
+        assert_eq!(finished["recordCount"], 2);
+        assert_eq!(finished["deletedCount"], 1);
+        assert_eq!(finished["backendApplied"], true);
+        assert!(
+            finished["message"]
+                .as_str()
+                .unwrap()
+                .contains("Idle Hoppi consolidation finished.")
+        );
+
+        let failed = hoppi_consolidate_job_failed_params(
+            "thread-1",
+            "native-memory-job-1",
+            &invocation,
+            "bridge crashed",
+            "hoppi-idle-consolidate",
+        );
+        assert_eq!(failed["status"], "failed");
+        assert_eq!(failed["backendApplied"], false);
+        assert!(
+            failed["message"]
+                .as_str()
+                .unwrap()
+                .contains("bridge crashed")
+        );
+    }
+
+    #[test]
+    fn memory_jobs_formatter_reports_active_and_recent_jobs() {
+        let rendered = format_memory_jobs(&json!({
+            "queueDepth": 1,
+            "totalCount": 2,
+            "items": [
+                {
+                    "id": "mem-job-running",
+                    "kind": "consolidate",
+                    "stage": "idle-dream",
+                    "status": "running",
+                    "source": "native-shell",
+                    "message": "Running idle Hoppi consolidation."
+                },
+                {
+                    "id": "mem-job-done",
+                    "kind": "remember",
+                    "status": "succeeded",
+                    "recordCount": 1,
+                    "finishedAt": "2026-05-31T12:00:10Z"
+                }
+            ],
+            "message": "Runtime memory worker has 1 active job."
+        }));
+
+        assert!(rendered.contains("memory jobs: active=1 total=2"));
+        assert!(rendered.contains("mem-job-running"));
+        assert!(rendered.contains("consolidate"));
+        assert!(rendered.contains("idle-dream"));
+        assert!(rendered.contains("running"));
+        assert!(rendered.contains("mem-job-done"));
+        assert!(rendered.contains("records=1"));
+    }
+
+    #[test]
+    fn hoppi_idle_consolidate_node_bridge_passes_budget_contract() {
+        let root = env::temp_dir().join(format!(
+            "oppi-hoppi-idle-consolidate-node-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let module_path = root.join("hoppi-idle-consolidate-fixture.mjs");
+        let workspace = root.join("workspace");
+        fs::create_dir_all(&workspace).unwrap();
+        fs::write(
+            &module_path,
+            r#"
+export function createHoppiBackend() {
+  return {
+    async init() {},
+    async consolidate(input) {
+      if (!input.project.cwd.endsWith("workspace")) throw new Error(`bad cwd ${input.project.cwd}`);
+      if (input.dryRun !== false) throw new Error(`bad dryRun ${input.dryRun}`);
+      if (input.stage !== "idle-dream") throw new Error(`bad stage ${input.stage}`);
+      if ("limit" in input) throw new Error(`unexpected limit ${input.limit}`);
+      if (input.budget !== 1500) throw new Error(`bad budget ${input.budget}`);
+      if (!input.modelPreference) throw new Error("missing modelPreference");
+      return {
+        dryRun: false,
+        modelUsed: "gpt-5.4-mini",
+        summary: "Idle Hoppi consolidation finished.",
+        semanticCreated: 1,
+        removed: 0,
+        memoryCount: 7,
+        queueDepth: 0
+      };
+    }
+  };
+}
+"#,
+        )
+        .unwrap();
+
+        let result = run_hoppi_consolidate_invocation(&HoppiConsolidateInvocation {
+            module_path,
+            cwd: workspace,
+            dry_run: false,
+            stage: "idle-dream".to_string(),
+            limit: None,
+            budget: Some(1_500),
+            agent_model: "auto".to_string(),
+            deep_model: "auto".to_string(),
+        })
+        .unwrap();
+
+        assert!(!result.dry_run);
+        assert_eq!(
+            result.summary.as_deref(),
+            Some("Idle Hoppi consolidation finished.")
+        );
+        assert_eq!(result.memory_count, 7);
+        assert_eq!(result.queue_depth, Some(0));
+        assert_eq!(result.model_used.as_deref(), Some("gpt-5.4-mini"));
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn hoppi_dashboard_invocation_uses_memory_settings_and_port() {
+        let settings = MemorySettings {
+            enabled: true,
+            dashboard_port: Some(49152),
+            ..MemorySettings::default()
+        };
+
+        let invocation = hoppi_dashboard_invocation_from_settings(
+            &settings,
+            Path::new("E:\\RepositoryV2\\oppi"),
+            PathBuf::from("hoppi.js"),
+        )
+        .unwrap();
+
+        assert_eq!(invocation.module_path, PathBuf::from("hoppi.js"));
+        assert_eq!(invocation.cwd, PathBuf::from("E:\\RepositoryV2\\oppi"));
+        assert_eq!(invocation.port, Some(49152));
+
+        let disabled = MemorySettings {
+            enabled: false,
+            ..settings
+        };
+        assert!(
+            hoppi_dashboard_invocation_from_settings(
+                &disabled,
+                Path::new("E:\\RepositoryV2\\oppi"),
+                PathBuf::from("hoppi.js"),
+            )
+            .unwrap_err()
+            .contains("memory disabled")
+        );
+    }
+
+    #[test]
+    fn hoppi_dashboard_node_bridge_starts_installed_backend_contract() {
+        let root =
+            env::temp_dir().join(format!("oppi-hoppi-dashboard-node-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let module_path = root.join("hoppi-dashboard-fixture.mjs");
+        let workspace = root.join("workspace");
+        fs::create_dir_all(&workspace).unwrap();
+        fs::write(
+            &module_path,
+            r#"
+let stopCalled = false;
+
+export function getDefaultHoppiRoot() {
+  return "fixture-root";
+}
+
+export function createHoppiBackend(options) {
+  if (options.root !== "fixture-root") throw new Error(`bad root ${options.root}`);
+  return {
+    async init() {},
+    async status(project) {
+      if (!project.cwd.endsWith("workspace")) throw new Error(`bad cwd ${project.cwd}`);
+      return { memoryCount: 7, pinnedCount: 2, storePath: "fixture-store" };
+    },
+    async startDashboard(input) {
+      if (!input.project.cwd.endsWith("workspace")) throw new Error(`bad dashboard cwd ${input.project.cwd}`);
+      if (input.port !== 49152) throw new Error(`bad port ${input.port}`);
+      return {
+        url: "http://hoppi.localhost:49152",
+        async stop() { stopCalled = true; }
+      };
+    }
+  };
+}
+"#,
+        )
+        .unwrap();
+
+        let invocation = HoppiDashboardInvocation {
+            module_path,
+            cwd: workspace,
+            port: Some(49152),
+        };
+
+        let mut process = run_hoppi_dashboard_invocation(&invocation).unwrap();
+        assert_eq!(process.result.url, "http://hoppi.localhost:49152");
+        assert_eq!(
+            process.result.fallback_url.as_deref(),
+            Some("http://localhost:49152")
+        );
+        assert_eq!(process.result.memory_count, 7);
+        assert_eq!(process.result.pinned_count, 2);
+        assert_eq!(process.result.store_path.as_deref(), Some("fixture-store"));
+        let _ = process.child.kill();
+        let _ = process.child.wait();
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn hoppi_list_node_bridge_returns_normalized_records() {
+        let root = env::temp_dir().join(format!("oppi-hoppi-list-node-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let module_path = root.join("hoppi-list-fixture.mjs");
+        let workspace = root.join("workspace");
+        fs::create_dir_all(&workspace).unwrap();
+        fs::write(
+            &module_path,
+            r#"
+export function getDefaultHoppiRoot() {
+  return "fixture-root";
+}
+
+export function createHoppiBackend(options) {
+  if (options.root !== "fixture-root") throw new Error(`bad root ${options.root}`);
+  return {
+    async init() {},
+    async status(project) {
+      if (!project.cwd.endsWith("workspace")) throw new Error(`bad cwd ${project.cwd}`);
+      return { memoryCount: 2, pinnedCount: 2, storePath: "fixture-store" };
+    },
+    async list(input) {
+      if (!input.project.cwd.endsWith("workspace")) throw new Error(`bad list cwd ${input.project.cwd}`);
+      if (input.includeSuperseded !== false) throw new Error("includeSuperseded should be false");
+      if (input.pinnedOnly !== true) throw new Error("pinnedOnly should be true");
+      if (input.limit !== 5) throw new Error(`bad limit ${input.limit}`);
+      return [
+        {
+          id: "mem-1",
+          content: "Pinned native list memory",
+          tags: ["oppi-native-shell", "verified"],
+          pinned: true,
+          layer: "semantic",
+          confidence: "verified",
+          source: "oppi:native-shell",
+          created_at: "2026-05-29T12:00:00Z",
+          retrievalStrength: 0.8,
+          retrievalCount: 3,
+          parents: ["mem-parent"]
+        },
+        { id: "mem-2", content: "Second memory", starred: true }
+      ];
+    }
+  };
+}
+"#,
+        )
+        .unwrap();
+
+        let result = run_hoppi_list_invocation(&HoppiListInvocation {
+            module_path,
+            cwd: workspace,
+            include_superseded: false,
+            pinned_only: true,
+            limit: Some(5),
+        })
+        .unwrap();
+
+        assert_eq!(result.memory_count, 2);
+        assert_eq!(result.pinned_count, 2);
+        assert_eq!(result.store_path.as_deref(), Some("fixture-store"));
+        assert_eq!(result.records[0].id, "mem-1");
+        assert!(result.records[0].pinned);
+        assert_eq!(result.records[0].retrieval_strength, Some(0.8));
+        assert_eq!(result.records[0].parents, vec!["mem-parent".to_string()]);
+
+        let rendered = format_memory_list(&json!({
+            "available": true,
+            "totalCount": 2,
+            "items": result.records,
+            "message": "Runtime memory list contains 2 cached records."
+        }));
+        assert!(rendered.contains("Hoppi memories: 2"));
+        assert!(rendered.contains("[pinned] mem-1"));
+        assert!(rendered.contains("Pinned native list memory"));
+        assert!(rendered.contains("tags=oppi-native-shell, verified"));
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn hoppi_list_node_bridge_times_out_hung_backend_calls() {
+        let root = env::temp_dir().join(format!("oppi-hoppi-list-timeout-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let module_path = root.join("hoppi-list-timeout-fixture.mjs");
+        let workspace = root.join("workspace");
+        fs::create_dir_all(&workspace).unwrap();
+        fs::write(
+            &module_path,
+            r#"
+export function createHoppiBackend() {
+  return {
+    async init() {},
+    async list() {
+      setInterval(() => {}, 1000);
+      await new Promise(() => {});
+    }
+  };
+}
+"#,
+        )
+        .unwrap();
+
+        let started = Instant::now();
+        let error = run_hoppi_list_invocation_with_timeout(
+            &HoppiListInvocation {
+                module_path,
+                cwd: workspace,
+                include_superseded: false,
+                pinned_only: false,
+                limit: Some(50),
+            },
+            Duration::from_millis(150),
+        )
+        .unwrap_err();
+
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "hung Hoppi bridge should be killed instead of blocking indefinitely"
+        );
+        assert!(error.contains("Hoppi list timed out after 150ms"));
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn hoppi_forget_node_bridge_runs_installed_backend_contract() {
+        let root = env::temp_dir().join(format!("oppi-hoppi-forget-node-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let module_path = root.join("hoppi-forget-fixture.mjs");
+        let workspace = root.join("workspace");
+        fs::create_dir_all(&workspace).unwrap();
+        fs::write(
+            &module_path,
+            r#"
+export function getDefaultHoppiRoot() {
+  return "fixture-root";
+}
+
+export function createHoppiBackend(options) {
+  if (options.root !== "fixture-root") throw new Error(`bad root ${options.root}`);
+  return {
+    async init() {},
+    async status(project) {
+      if (!project.cwd.endsWith("workspace")) throw new Error(`bad cwd ${project.cwd}`);
+      return { memoryCount: 1, pinnedCount: 0, storePath: "fixture-store" };
+    },
+    async forget(id) {
+      if (id !== "mem-1") throw new Error(`bad id ${id}`);
+    }
+  };
+}
+"#,
+        )
+        .unwrap();
+
+        let result = run_hoppi_forget_invocation(&HoppiForgetInvocation {
+            module_path,
+            cwd: workspace,
+            id: "mem-1".to_string(),
+        })
+        .unwrap();
+
+        assert_eq!(result.id, "mem-1");
+        assert_eq!(result.memory_count, Some(1));
+        assert_eq!(result.pinned_count, Some(0));
+        assert_eq!(result.store_path.as_deref(), Some("fixture-store"));
+
+        let rendered = format_memory_forget(&json!({
+            "action": "forget",
+            "id": "mem-1",
+            "backendApplied": true,
+            "cacheUpdated": true,
+            "message": "Forgot memory record mem-1 and removed it from Rust cache.",
+            "status": { "memoryCount": 1, "pinnedCount": 0 }
+        }));
+        assert!(rendered.contains("Forgot memory: mem-1"));
+        assert!(rendered.contains("cache updated"));
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn hoppi_pin_node_bridge_runs_installed_backend_contract() {
+        let root = env::temp_dir().join(format!("oppi-hoppi-pin-node-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let module_path = root.join("hoppi-pin-fixture.mjs");
+        let workspace = root.join("workspace");
+        fs::create_dir_all(&workspace).unwrap();
+        fs::write(
+            &module_path,
+            r#"
+export function getDefaultHoppiRoot() {
+  return "fixture-root";
+}
+
+export function createHoppiBackend(options) {
+  if (options.root !== "fixture-root") throw new Error(`bad root ${options.root}`);
+  return {
+    async init() {},
+    async status(project) {
+      if (!project.cwd.endsWith("workspace")) throw new Error(`bad cwd ${project.cwd}`);
+      return { memoryCount: 1, pinnedCount: 1, storePath: "fixture-store" };
+    },
+    async pin(id, pinned) {
+      if (id !== "mem-1") throw new Error(`bad id ${id}`);
+      if (pinned !== true) throw new Error(`bad pinned ${pinned}`);
+      return { id, content: "Pinned through native shell", pinned, tags: ["verified"] };
+    }
+  };
+}
+"#,
+        )
+        .unwrap();
+
+        let result = run_hoppi_pin_invocation(&HoppiPinInvocation {
+            module_path,
+            cwd: workspace,
+            id: "mem-1".to_string(),
+            pinned: true,
+        })
+        .unwrap();
+
+        assert_eq!(result.id, "mem-1");
+        assert_eq!(result.memory_count, Some(1));
+        assert_eq!(result.pinned_count, Some(1));
+        assert_eq!(result.store_path.as_deref(), Some("fixture-store"));
+        assert_eq!(
+            result.record.as_ref().map(|record| record.pinned),
+            Some(true)
+        );
+
+        let rendered = format_memory_pin(&json!({
+            "action": "pin",
+            "id": "mem-1",
+            "backendApplied": true,
+            "cacheUpdated": true,
+            "message": "Pinned memory record mem-1 and updated Rust cache.",
+            "status": { "memoryCount": 1, "pinnedCount": 1 }
+        }));
+        assert!(rendered.contains("Pinned memory: mem-1"));
+        assert!(rendered.contains("cache updated"));
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn hoppi_update_node_bridge_runs_installed_backend_contract() {
+        let root = env::temp_dir().join(format!("oppi-hoppi-update-node-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let module_path = root.join("hoppi-update-fixture.mjs");
+        let workspace = root.join("workspace");
+        fs::create_dir_all(&workspace).unwrap();
+        fs::write(
+            &module_path,
+            r#"
+export function getDefaultHoppiRoot() {
+  return "fixture-root";
+}
+
+export function createHoppiBackend(options) {
+  if (options.root !== "fixture-root") throw new Error(`bad root ${options.root}`);
+  return {
+    async init() {},
+    async status(project) {
+      if (!project.cwd.endsWith("workspace")) throw new Error(`bad cwd ${project.cwd}`);
+      return { memoryCount: 1, pinnedCount: 0, storePath: "fixture-store" };
+    },
+    async update(id, patch) {
+      if (id !== "mem-1") throw new Error(`bad id ${id}`);
+      if (patch.content !== "Edited through native shell") throw new Error(`bad content ${patch.content}`);
+      if (!Array.isArray(patch.tags) || patch.tags.join(",") !== "verified,native") throw new Error(`bad tags ${patch.tags}`);
+      return { id, content: patch.content, tags: patch.tags, confidence: patch.confidence, source: "fixture" };
+    }
+  };
+}
+"#,
+        )
+        .unwrap();
+
+        let result = run_hoppi_update_invocation(&HoppiUpdateInvocation {
+            module_path,
+            cwd: workspace,
+            id: "mem-1".to_string(),
+            patch: json!({
+                "content": "Edited through native shell",
+                "tags": ["verified", "native"],
+                "confidence": "verified"
+            }),
+        })
+        .unwrap();
+
+        assert_eq!(result.id, "mem-1");
+        assert_eq!(result.memory_count, Some(1));
+        assert_eq!(result.pinned_count, Some(0));
+        assert_eq!(result.store_path.as_deref(), Some("fixture-store"));
+        let record = result.record.as_ref().unwrap();
+        assert_eq!(record.content, "Edited through native shell");
+        assert_eq!(record.tags, vec!["verified", "native"]);
+        assert_eq!(record.confidence.as_deref(), Some("verified"));
+
+        let rendered = format_memory_update(&json!({
+            "action": "update",
+            "id": "mem-1",
+            "backendApplied": true,
+            "cacheUpdated": true,
+            "message": "Updated memory record mem-1 and updated Rust cache.",
+            "status": { "memoryCount": 1, "pinnedCount": 0 }
+        }));
+        assert!(rendered.contains("Updated memory: mem-1"));
+        assert!(rendered.contains("cache updated"));
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn hoppi_update_bridge_and_formatter_cover_memory_supersede() {
+        let patch = parse_memory_update_patch_args(&["supersededBy=mem-new"]).unwrap();
+        assert_eq!(patch["supersededBy"], json!("mem-new"));
+
+        let rendered = format_memory_supersede(&json!({
+            "action": "supersede",
+            "id": "mem-old",
+            "backendApplied": true,
+            "cacheUpdated": true,
+            "record": {
+                "id": "mem-old",
+                "content": "Older memory.",
+                "supersededBy": "mem-new"
+            },
+            "status": { "memoryCount": 2, "pinnedCount": 0 },
+            "message": "Marked memory record mem-old as superseded by mem-new and updated Rust cache."
+        }));
+        assert!(rendered.contains("Superseded memory: mem-old -> mem-new"));
+        assert!(rendered.contains("backend=applied cache updated"));
+    }
+
+    #[test]
+    fn hoppi_recall_invocation_plans_startup_and_task_recall_from_settings() {
+        let settings = MemorySettings {
+            enabled: true,
+            startup_recall: true,
+            task_start_recall: true,
+            ..MemorySettings::default()
+        };
+
+        let invocation = hoppi_recall_invocation_from_settings(
+            &settings,
+            Path::new("E:\\RepositoryV2\\oppi"),
+            "review native memory recall",
+            PathBuf::from("hoppi.js"),
+        )
+        .unwrap();
+
+        assert_eq!(invocation.module_path, PathBuf::from("hoppi.js"));
+        assert_eq!(invocation.cwd, PathBuf::from("E:\\RepositoryV2\\oppi"));
+        assert_eq!(invocation.prompt, "review native memory recall");
+        assert!(invocation.include_startup);
+        assert!(invocation.include_task);
+
+        let mut disabled = settings.clone();
+        disabled.enabled = false;
+        assert!(
+            hoppi_recall_invocation_from_settings(
+                &disabled,
+                Path::new("E:\\RepositoryV2\\oppi"),
+                "review native memory recall",
+                PathBuf::from("hoppi.js"),
+            )
+            .unwrap_err()
+            .contains("memory disabled")
+        );
+
+        let recall_disabled = MemorySettings {
+            startup_recall: false,
+            task_start_recall: false,
+            ..settings
+        };
+        assert!(
+            hoppi_recall_invocation_from_settings(
+                &recall_disabled,
+                Path::new("E:\\RepositoryV2\\oppi"),
+                "review native memory recall",
+                PathBuf::from("hoppi.js"),
+            )
+            .unwrap_err()
+            .contains("recall disabled")
+        );
+    }
+
+    #[test]
+    fn hoppi_recall_node_bridge_runs_installed_backend_contract() {
+        let root = env::temp_dir().join(format!("oppi-hoppi-recall-node-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let module_path = root.join("hoppi-recall-fixture.mjs");
+        let workspace = root.join("workspace");
+        fs::create_dir_all(&workspace).unwrap();
+        fs::write(
+            &module_path,
+            r#"
+export function getDefaultHoppiRoot() {
+  return "fixture-root";
+}
+
+export function createHoppiBackend(options) {
+  if (options.root !== "fixture-root") throw new Error(`bad root ${options.root}`);
+  return {
+    async init() {},
+    async status(project) {
+      if (!project.cwd.endsWith("workspace")) throw new Error(`bad cwd ${project.cwd}`);
+      return { memoryCount: 3 };
+    },
+    async buildStartupContext(request) {
+      if (request.maxMemories !== 8) throw new Error("bad startup max");
+      if (request.includePinned !== true) throw new Error("pinned startup memories required");
+      return {
+        contextMarkdown: "Startup memory\n- prefer native shell ownership",
+        memoryCount: 2
+      };
+    },
+    async recall(request) {
+      if (request.query !== "ship task recall") throw new Error(`bad query ${request.query}`);
+      if (request.budget !== 900) throw new Error(`bad budget ${request.budget}`);
+      if (request.limit !== 5) throw new Error(`bad limit ${request.limit}`);
+      return {
+        contextMarkdown: "Task memory\n- inject recalled context into provider prompt",
+        memories: [
+          {
+            id: "a",
+            content: "Recall records should flow through the Rust runtime boundary.",
+            tags: ["oppi-native-shell", "recall"],
+            pinned: true,
+            retrievalStrength: 0.84,
+            retrievalCount: 2
+          },
+          { id: "b", content: "Keep direct-provider prompts grounded in recalled memory." },
+          { id: "c", content: "Use current files when they conflict with memory." },
+          { id: "d", content: "Expose recall records to non-shell clients." }
+        ]
+      };
+    }
+  };
+}
+"#,
+        )
+        .unwrap();
+
+        let invocation = HoppiRecallInvocation {
+            module_path,
+            cwd: workspace,
+            prompt: "ship task recall".to_string(),
+            include_startup: true,
+            include_task: true,
+        };
+
+        let result = run_hoppi_recall_invocation(&invocation).unwrap();
+        let context = result.context_markdown.unwrap();
+        assert!(context.contains("Startup memory"));
+        assert!(context.contains("Task memory"));
+        assert!(context.contains("Memory is advisory"));
+        assert!(result.context_bytes > 0);
+        assert_eq!(result.memory_count, 4);
+        assert_eq!(result.records.len(), 4);
+        assert_eq!(result.records[0].id, "a");
+        assert_eq!(
+            result.records[0].content,
+            "Recall records should flow through the Rust runtime boundary."
+        );
+        assert!(result.records[0].pinned);
+        assert_eq!(result.records[0].retrieval_strength, Some(0.84));
+        assert!(!result.truncated);
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn hoppi_recall_node_bridge_continues_when_status_or_startup_fails() {
+        let root = env::temp_dir().join(format!(
+            "oppi-hoppi-recall-soft-fail-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let module_path = root.join("hoppi-recall-soft-fail-fixture.mjs");
+        let workspace = root.join("workspace");
+        fs::create_dir_all(&workspace).unwrap();
+        fs::write(
+            &module_path,
+            r#"
+export function createHoppiBackend() {
+  return {
+    async init() {},
+    async status() {
+      throw new Error("status offline");
+    },
+    async buildStartupContext() {
+      throw new Error("startup offline");
+    },
+    async recall() {
+      return {
+        contextMarkdown: "Task memory survived soft failures",
+        memories: [{ id: "task" }]
+      };
+    }
+  };
+}
+"#,
+        )
+        .unwrap();
+
+        let invocation = HoppiRecallInvocation {
+            module_path,
+            cwd: workspace,
+            prompt: "ship task recall".to_string(),
+            include_startup: true,
+            include_task: true,
+        };
+
+        let result = run_hoppi_recall_invocation(&invocation).unwrap();
+        assert!(
+            result
+                .context_markdown
+                .unwrap()
+                .contains("Task memory survived soft failures")
+        );
+        assert_eq!(result.memory_count, 1);
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn hoppi_recall_job_update_params_track_running_and_terminal_states() {
+        let invocation = HoppiRecallInvocation {
+            module_path: PathBuf::from("hoppi.js"),
+            cwd: PathBuf::from("E:\\RepositoryV2\\oppi"),
+            prompt: "sensitive current user prompt".to_string(),
+            include_startup: true,
+            include_task: true,
+        };
+        let result = HoppiRecallCommandResult {
+            context_markdown: Some("Recalled context".to_string()),
+            context_bytes: 128,
+            memory_count: 3,
+            pinned_count: Some(1),
+            store_path: Some("fixture-store".to_string()),
+            records: vec![
+                MemoryRecord {
+                    id: "mem-a".to_string(),
+                    content: "first".to_string(),
+                    ..MemoryRecord::default()
+                },
+                MemoryRecord {
+                    id: "mem-b".to_string(),
+                    content: "second".to_string(),
+                    ..MemoryRecord::default()
+                },
+            ],
+            omitted_reason: None,
+            truncated: false,
+        };
+
+        let started =
+            hoppi_recall_job_started_params("thread-1", "native-recall-job-1", &invocation);
+        assert_eq!(started["threadId"], "thread-1");
+        assert_eq!(started["jobId"], "native-recall-job-1");
+        assert_eq!(started["kind"], "recall");
+        assert_eq!(started["stage"], "recall-startup-task");
+        assert_eq!(started["status"], "running");
+        assert_eq!(started["source"], "hoppi-recall");
+        assert_eq!(started["backendApplied"], false);
+        assert!(
+            !started["message"]
+                .as_str()
+                .unwrap()
+                .contains("sensitive current user prompt")
+        );
+
+        let finished = hoppi_recall_job_finished_params(
+            "thread-1",
+            "native-recall-job-1",
+            &invocation,
+            &result,
+        );
+        assert_eq!(finished["status"], "succeeded");
+        assert_eq!(finished["recordCount"], 2);
+        assert_eq!(finished["backendApplied"], true);
+        assert!(finished["message"].as_str().unwrap().contains("2 recalled"));
+
+        let failed = hoppi_recall_job_failed_params(
+            "thread-1",
+            "native-recall-job-1",
+            &invocation,
+            "recall bridge failed",
+        );
+        assert_eq!(failed["status"], "failed");
+        assert_eq!(failed["backendApplied"], false);
+        assert!(
+            failed["message"]
+                .as_str()
+                .unwrap()
+                .contains("recall bridge failed")
+        );
+    }
+
+    #[test]
+    fn hoppi_memory_context_appends_to_provider_system_prompt_once() {
+        let config = OpenAiCompatibleConfig {
+            flavor: DirectProviderFlavor::OpenAiCompatible,
+            provider_id: None,
+            model: "mock".to_string(),
+            base_url: None,
+            api_key_env: None,
+            system_prompt: Some("Base system".to_string()),
+            temperature: None,
+            reasoning_effort: None,
+            max_output_tokens: None,
+            stream: true,
+        };
+        let mut provider = openai_provider_json(&config);
+
+        append_hoppi_memory_context_to_provider(
+            &mut provider,
+            "Remember the native shell owns Hoppi recall.",
+        );
+        append_hoppi_memory_context_to_provider(
+            &mut provider,
+            "Remember the native shell owns Hoppi recall.",
+        );
+
+        let system = provider["systemPrompt"].as_str().unwrap();
+        assert!(system.contains("Base system"));
+        assert!(system.contains("OPPi Hoppi memory"));
+        assert!(system.contains("native shell owns Hoppi recall"));
+        assert_eq!(system.matches("OPPi Hoppi memory:").count(), 1);
+    }
+
+    #[test]
+    fn hoppi_turn_summary_from_events_builds_bounded_agent_end_memory() {
+        let turn_id = "turn-native-memory";
+        let events = vec![
+            Event {
+                id: 1,
+                thread_id: "thread-1".to_string(),
+                turn_id: Some(turn_id.to_string()),
+                created_at_ms: 1,
+                kind: EventKind::ItemCompleted {
+                    item: oppi_protocol::Item {
+                        id: "user-1".to_string(),
+                        thread_id: "thread-1".to_string(),
+                        turn_id: turn_id.to_string(),
+                        kind: ItemKind::UserMessage {
+                            text: "Please wire native Hoppi turn summary writes with tests first."
+                                .to_string(),
+                        },
+                    },
+                },
+            },
+            Event {
+                id: 2,
+                thread_id: "thread-1".to_string(),
+                turn_id: Some(turn_id.to_string()),
+                created_at_ms: 2,
+                kind: EventKind::ToolCallCompleted {
+                    result: oppi_protocol::ToolResult {
+                        call_id: "tool-1".to_string(),
+                        status: ToolResultStatus::Ok,
+                        output: Some("patched".to_string()),
+                        error: None,
+                    },
+                },
+            },
+            Event {
+                id: 3,
+                thread_id: "thread-1".to_string(),
+                turn_id: Some(turn_id.to_string()),
+                created_at_ms: 3,
+                kind: EventKind::ItemCompleted {
+                    item: oppi_protocol::Item {
+                        id: "assistant-1".to_string(),
+                        thread_id: "thread-1".to_string(),
+                        turn_id: turn_id.to_string(),
+                        kind: ItemKind::AssistantMessage {
+                            text: "Implemented the native Hoppi remember bridge and kept the turn non-blocking.".to_string(),
+                        },
+                    },
+                },
+            },
+        ];
+
+        let summary = build_hoppi_turn_summary_from_events(
+            &events,
+            "thread-1",
+            turn_id,
+            Some("fallback prompt"),
+            "2026-05-27T12:00:00Z",
+        )
+        .unwrap();
+
+        assert!(summary.contains("Native shell turn summary (2026-05-27T12:00:00Z)"));
+        assert!(summary.contains("User asked: Please wire native Hoppi turn summary writes"));
+        assert!(
+            summary.contains("Assistant outcome: Implemented the native Hoppi remember bridge")
+        );
+        assert!(summary.contains("Tool results: ok"));
+        assert!(summary.contains("Runtime turn: thread-1/turn-native-memory"));
+    }
+
+    #[test]
+    fn hoppi_session_recap_from_events_builds_recent_exit_memory() {
+        let events = vec![
+            Event {
+                id: 1,
+                thread_id: "thread-1".to_string(),
+                turn_id: Some("turn-1".to_string()),
+                created_at_ms: 1,
+                kind: EventKind::ItemCompleted {
+                    item: oppi_protocol::Item {
+                        id: "user-1".to_string(),
+                        thread_id: "thread-1".to_string(),
+                        turn_id: "turn-1".to_string(),
+                        kind: ItemKind::UserMessage {
+                            text: "Please compare Rust native OPPi against the memory plan and keep the audit actionable.".to_string(),
+                        },
+                    },
+                },
+            },
+            Event {
+                id: 2,
+                thread_id: "thread-1".to_string(),
+                turn_id: Some("turn-1".to_string()),
+                created_at_ms: 2,
+                kind: EventKind::ItemCompleted {
+                    item: oppi_protocol::Item {
+                        id: "assistant-1".to_string(),
+                        thread_id: "thread-1".to_string(),
+                        turn_id: "turn-1".to_string(),
+                        kind: ItemKind::AssistantMessage {
+                            text: "Identified that /exit recap writes were still missing after normal turn summaries landed.".to_string(),
+                        },
+                    },
+                },
+            },
+            Event {
+                id: 3,
+                thread_id: "thread-1".to_string(),
+                turn_id: Some("turn-2".to_string()),
+                created_at_ms: 3,
+                kind: EventKind::ItemCompleted {
+                    item: oppi_protocol::Item {
+                        id: "assistant-2".to_string(),
+                        thread_id: "other-thread".to_string(),
+                        turn_id: "turn-2".to_string(),
+                        kind: ItemKind::AssistantMessage {
+                            text: "This other thread must not leak into the recap.".to_string(),
+                        },
+                    },
+                },
+            },
+            Event {
+                id: 4,
+                thread_id: "thread-1".to_string(),
+                turn_id: Some("turn-3".to_string()),
+                created_at_ms: 4,
+                kind: EventKind::ItemCompleted {
+                    item: oppi_protocol::Item {
+                        id: "user-2".to_string(),
+                        thread_id: "thread-1".to_string(),
+                        turn_id: "turn-3".to_string(),
+                        kind: ItemKind::UserMessage {
+                            text: "Now implement the native /exit recap write before sync shutdown.".to_string(),
+                        },
+                    },
+                },
+            },
+            Event {
+                id: 5,
+                thread_id: "thread-1".to_string(),
+                turn_id: Some("turn-3".to_string()),
+                created_at_ms: 5,
+                kind: EventKind::ItemCompleted {
+                    item: oppi_protocol::Item {
+                        id: "assistant-3".to_string(),
+                        thread_id: "thread-1".to_string(),
+                        turn_id: "turn-3".to_string(),
+                        kind: ItemKind::AssistantMessage {
+                            text: "Added a bounded session recap builder and an exit-specific Hoppi remember invocation.".to_string(),
+                        },
+                    },
+                },
+            },
+        ];
+
+        let recap =
+            build_hoppi_session_recap_from_events(&events, "thread-1", "2026-05-27T13:00:00Z")
+                .unwrap();
+
+        assert!(recap.contains("Session recap (2026-05-27T13:00:00Z)"));
+        assert!(recap.contains("Recent user goals:"));
+        assert!(
+            recap.contains("- Now implement the native /exit recap write before sync shutdown.")
+        );
+        assert!(recap.contains("Recent assistant outcomes:"));
+        assert!(recap.contains("- Added a bounded session recap builder"));
+        assert!(!recap.contains("other thread"));
+    }
+
+    #[test]
+    fn hoppi_remember_invocation_refuses_disabled_memory_or_turn_summaries() {
+        let mut settings = MemorySettings {
+            enabled: false,
+            turn_summaries: true,
+            ..MemorySettings::default()
+        };
+        assert!(
+            hoppi_remember_invocation_from_settings(
+                &settings,
+                Path::new("E:\\RepositoryV2\\oppi"),
+                "summary",
+                "thread-1",
+                "turn-1",
+                PathBuf::from("hoppi.js"),
+            )
+            .unwrap_err()
+            .contains("memory disabled")
+        );
+
+        settings.enabled = true;
+        settings.turn_summaries = false;
+        assert!(
+            hoppi_remember_invocation_from_settings(
+                &settings,
+                Path::new("E:\\RepositoryV2\\oppi"),
+                "summary",
+                "thread-1",
+                "turn-1",
+                PathBuf::from("hoppi.js"),
+            )
+            .unwrap_err()
+            .contains("turn summaries disabled")
+        );
+    }
+
+    #[test]
+    fn hoppi_remember_node_bridge_runs_installed_backend_contract() {
+        let root = env::temp_dir().join(format!("oppi-hoppi-remember-node-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let module_path = root.join("hoppi-remember-fixture.mjs");
+        let workspace = root.join("workspace");
+        fs::create_dir_all(&workspace).unwrap();
+        fs::write(
+            &module_path,
+            r#"
+export function getDefaultHoppiRoot() {
+  return "fixture-root";
+}
+
+export function createHoppiBackend(options) {
+  if (options.root !== "fixture-root") throw new Error(`bad root ${options.root}`);
+  return {
+    async init() {},
+    async remember(input) {
+      if (!input.project.cwd.endsWith("workspace")) throw new Error(`bad cwd ${input.project.cwd}`);
+      if (input.content !== "Native shell turn summary body") throw new Error(`bad content ${input.content}`);
+      if (!input.tags.includes("oppi-native-shell")) throw new Error("missing native tag");
+      if (!input.tags.includes("oppi-turn-summary")) throw new Error("missing summary tag");
+      if (input.layer !== "buffer") throw new Error(`bad layer ${input.layer}`);
+      if (input.confidence !== "observed") throw new Error(`bad confidence ${input.confidence}`);
+      if (input.source !== "oppi:native-shell") throw new Error(`bad source ${input.source}`);
+      if (input.sourceSessionId !== "thread-1:turn-1") throw new Error(`bad session ${input.sourceSessionId}`);
+      return {
+        id: "memory-1",
+        content: input.content,
+        tags: input.tags,
+        layer: input.layer,
+        confidence: input.confidence,
+        source: input.source
+      };
+    },
+    async status() {
+      return { memoryCount: 9 };
+    }
+  };
+}
+"#,
+        )
+        .unwrap();
+
+        let invocation = HoppiRememberInvocation {
+            module_path,
+            cwd: workspace,
+            summary: "Native shell turn summary body".to_string(),
+            tags: vec![
+                "oppi-native-shell".to_string(),
+                "oppi-turn-summary".to_string(),
+                "agent_end".to_string(),
+            ],
+            source: "oppi:native-shell".to_string(),
+            source_session_id: "thread-1:turn-1".to_string(),
+            layer: Some("buffer".to_string()),
+        };
+
+        let result = run_hoppi_remember_invocation(&invocation).unwrap();
+        assert!(result.saved);
+        assert_eq!(result.memory_count, 9);
+        let record = result.record.as_ref().unwrap();
+        assert_eq!(record.id, "memory-1");
+        assert_eq!(record.content, "Native shell turn summary body");
+        assert_eq!(
+            record.tags,
+            vec!["oppi-native-shell", "oppi-turn-summary", "agent_end"]
+        );
+        assert_eq!(record.layer.as_deref(), Some("buffer"));
+        assert_eq!(record.confidence.as_deref(), Some("observed"));
+        assert_eq!(record.source.as_deref(), Some("oppi:native-shell"));
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn hoppi_remember_node_bridge_runs_exit_recap_contract() {
+        let root =
+            env::temp_dir().join(format!("oppi-hoppi-exit-recap-node-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let module_path = root.join("hoppi-exit-recap-fixture.mjs");
+        let workspace = root.join("workspace");
+        fs::create_dir_all(&workspace).unwrap();
+        fs::write(
+            &module_path,
+            r#"
+export function createHoppiBackend() {
+  return {
+    async init() {},
+    async remember(input) {
+      if (!input.project.cwd.endsWith("workspace")) throw new Error(`bad cwd ${input.project.cwd}`);
+      if (input.content !== "Native shell exit recap body") throw new Error(`bad content ${input.content}`);
+      if (!input.tags.includes("oppi-exit-recap")) throw new Error("missing exit tag");
+      if (!input.tags.includes("session-recap")) throw new Error("missing session tag");
+      if ("layer" in input) throw new Error(`unexpected layer ${input.layer}`);
+      if (input.confidence !== "observed") throw new Error(`bad confidence ${input.confidence}`);
+      if (input.source !== "oppi:exit") throw new Error(`bad source ${input.source}`);
+      if (input.sourceSessionId !== "thread-1") throw new Error(`bad session ${input.sourceSessionId}`);
+      return {
+        id: "memory-exit",
+        content: input.content,
+        tags: input.tags,
+        confidence: input.confidence,
+        source: input.source
+      };
+    },
+    async status() {
+      return { memoryCount: 12 };
+    }
+  };
+}
+"#,
+        )
+        .unwrap();
+
+        let invocation = HoppiRememberInvocation {
+            module_path,
+            cwd: workspace,
+            summary: "Native shell exit recap body".to_string(),
+            tags: vec![
+                "oppi-native-shell".to_string(),
+                "oppi-exit-recap".to_string(),
+                "session-recap".to_string(),
+            ],
+            source: "oppi:exit".to_string(),
+            source_session_id: "thread-1".to_string(),
+            layer: None,
+        };
+
+        let result = run_hoppi_remember_invocation(&invocation).unwrap();
+        assert!(result.saved);
+        assert_eq!(result.memory_count, 12);
+        let record = result.record.as_ref().unwrap();
+        assert_eq!(record.id, "memory-exit");
+        assert_eq!(record.content, "Native shell exit recap body");
+        assert_eq!(
+            record.tags,
+            vec!["oppi-native-shell", "oppi-exit-recap", "session-recap"]
+        );
+        assert_eq!(record.layer, None);
+        assert_eq!(record.confidence.as_deref(), Some("observed"));
+        assert_eq!(record.source.as_deref(), Some("oppi:exit"));
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn hoppi_first_start_offer_only_prompts_when_memory_enabled_ask_and_missing() {
+        let mut settings = MemorySettings::default();
+
+        assert!(should_offer_hoppi_first_start_install(&settings, false));
+        assert!(!should_offer_hoppi_first_start_install(&settings, true));
+
+        settings.enabled = false;
+        assert!(!should_offer_hoppi_first_start_install(&settings, false));
+
+        settings.enabled = true;
+        settings.hoppi_install_offer = "dismissed".to_string();
+        assert!(!should_offer_hoppi_first_start_install(&settings, false));
+    }
+
+    #[test]
+    fn hoppi_first_start_install_prompt_is_explicit_and_dismissible() {
+        let text = hoppi_first_start_install_prompt();
+
+        assert!(text.contains("Install Hoppi memory?"));
+        assert!(text.contains("@oppiai/hoppi-memory"));
+        assert!(text.contains("npm"));
+        assert!(text.contains("/memory install-hoppi --yes"));
+        assert!(text.contains("/memory install-offer dismissed"));
+        assert!(text.contains("no hidden install"));
+    }
+
+    #[test]
+    fn memory_settings_persist_pi_memory_config_without_losing_other_settings() {
+        let root = env::temp_dir().join(format!("oppi-memory-settings-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("settings.json");
+        fs::write(
+            &path,
+            r#"{"oppi":{"permissionMode":"auto-review","memory":{"enabled":false,"agentModel":"claude","deepModel":"sonnet","startupRecall":false,"taskStartRecall":true,"turnSummaries":false,"idleConsolidation":false,"dashboardPort":41234,"hoppiInstallOffer":"dismissed","sync":{"enabled":true,"provider":"github","repoPath":"~/hoppi-sync","repoUrl":"git@github.com:user/hoppi-memories.git","pullOnStartup":false,"pushOnExit":true,"backgroundSync":"30m","encryption":"passphrase","passphraseSource":"file","passphraseEnv":"OPPI_OLD","passphraseFile":"~/hoppi-passphrase","conflictMode":"keep-local"}}},"kept":true}"#,
+        )
+        .unwrap();
+
+        let mut settings = load_memory_settings(&path);
+        assert!(!settings.enabled);
+        assert_eq!(settings.agent_model, "claude");
+        assert_eq!(settings.deep_model, "sonnet");
+        assert!(!settings.startup_recall);
+        assert!(settings.task_start_recall);
+        assert!(!settings.turn_summaries);
+        assert!(!settings.idle_consolidation);
+        assert_eq!(settings.dashboard_port, Some(41234));
+        assert_eq!(settings.hoppi_install_offer, "dismissed");
+        assert!(settings.sync_enabled);
+        assert_eq!(settings.sync_repo_path.as_deref(), Some("~/hoppi-sync"));
+        assert_eq!(
+            settings.sync_repo_url.as_deref(),
+            Some("git@github.com:user/hoppi-memories.git")
+        );
+        assert!(!settings.sync_pull_on_startup);
+        assert!(settings.sync_push_on_exit);
+        assert_eq!(settings.sync_background, "30m");
+        assert_eq!(settings.sync_encryption, "passphrase");
+        assert_eq!(settings.sync_passphrase_source, "file");
+        assert_eq!(settings.sync_passphrase_env, "OPPI_OLD");
+        assert_eq!(
+            settings.sync_passphrase_file.as_deref(),
+            Some("~/hoppi-passphrase")
+        );
+        assert_eq!(settings.sync_conflict_mode, "keep-local");
+
+        settings.enabled = true;
+        settings.agent_model = "gpt".to_string();
+        settings.deep_model = "gpt-5.5".to_string();
+        settings.startup_recall = true;
+        settings.task_start_recall = false;
+        settings.turn_summaries = true;
+        settings.idle_consolidation = true;
+        settings.dashboard_port = None;
+        settings.hoppi_install_offer = "ask".to_string();
+        settings.sync_enabled = false;
+        settings.sync_repo_path = Some("~/new-hoppi-sync".to_string());
+        settings.sync_repo_url = None;
+        settings.sync_pull_on_startup = true;
+        settings.sync_push_on_exit = false;
+        settings.sync_background = "60m".to_string();
+        settings.sync_encryption = "passphrase".to_string();
+        settings.sync_passphrase_source = "env".to_string();
+        settings.sync_passphrase_env = "OPPI_HOPPI_SYNC_PASSPHRASE".to_string();
+        settings.sync_passphrase_file = None;
+        settings.sync_conflict_mode = "overwrite-local".to_string();
+        save_memory_settings(&path, &settings).unwrap();
+
+        let raw: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(raw["oppi"]["permissionMode"], json!("auto-review"));
+        assert_eq!(raw["oppi"]["memory"]["enabled"], json!(true));
+        assert_eq!(raw["oppi"]["memory"]["agentModel"], json!("gpt"));
+        assert_eq!(raw["oppi"]["memory"]["deepModel"], json!("gpt-5.5"));
+        assert_eq!(raw["oppi"]["memory"]["startupRecall"], json!(true));
+        assert_eq!(raw["oppi"]["memory"]["taskStartRecall"], json!(false));
+        assert_eq!(raw["oppi"]["memory"]["turnSummaries"], json!(true));
+        assert_eq!(raw["oppi"]["memory"]["idleConsolidation"], json!(true));
+        assert_eq!(raw["oppi"]["memory"]["dashboardPort"], json!("auto"));
+        assert_eq!(raw["oppi"]["memory"]["hoppiInstallOffer"], json!("ask"));
+        assert_eq!(raw["oppi"]["memory"]["sync"]["enabled"], json!(false));
+        assert_eq!(raw["oppi"]["memory"]["sync"]["provider"], json!("github"));
+        assert_eq!(
+            raw["oppi"]["memory"]["sync"]["repoPath"],
+            json!("~/new-hoppi-sync")
+        );
+        assert_eq!(raw["kept"], json!(true));
+
+        let loaded = load_memory_settings(&path);
+        assert!(loaded.enabled);
+        assert_eq!(loaded.agent_model, "gpt");
+        assert_eq!(loaded.deep_model, "gpt-5.5");
+        assert!(loaded.startup_recall);
+        assert!(!loaded.task_start_recall);
+        assert!(loaded.turn_summaries);
+        assert!(loaded.idle_consolidation);
+        assert_eq!(loaded.dashboard_port, None);
+        assert_eq!(loaded.hoppi_install_offer, "ask");
+        assert!(!loaded.sync_enabled);
+        assert_eq!(loaded.sync_repo_path.as_deref(), Some("~/new-hoppi-sync"));
+        assert_eq!(loaded.sync_repo_url, None);
+        assert!(loaded.sync_pull_on_startup);
+        assert!(!loaded.sync_push_on_exit);
+        assert_eq!(loaded.sync_background, "60m");
+        assert_eq!(loaded.sync_encryption, "passphrase");
+        assert_eq!(loaded.sync_passphrase_source, "env");
+        assert_eq!(loaded.sync_passphrase_env, "OPPI_HOPPI_SYNC_PASSPHRASE");
+        assert_eq!(loaded.sync_passphrase_file, None);
+        assert_eq!(loaded.sync_conflict_mode, "overwrite-local");
+        let status = format_memory_settings_status(&loaded);
+        assert!(status.contains("sync disabled"));
+        assert!(status.contains("repo ~/new-hoppi-sync"));
+        assert!(status.contains("background 60m"));
+        assert!(status.contains("encryption passphrase/env"));
+        assert!(status.contains("conflict overwrite-local"));
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn compaction_settings_persist_pi_idle_and_smart_config_without_losing_other_settings() {
+        let root = env::temp_dir().join(format!("oppi-compact-settings-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("settings.json");
+        fs::write(
+            &path,
+            r#"{"oppi":{"permissionMode":"auto-review","idleCompact":{"idleMinutes":99},"smartCompact":{"thresholdPercent":999}},"kept":true}"#,
+        )
+        .unwrap();
+
+        let mut settings = load_oppi_compact_settings(&path);
+        assert!(settings.idle_enabled);
+        assert_eq!(settings.idle_minutes, 5);
+        assert_eq!(settings.idle_threshold_percent, 70);
+        assert_eq!(settings.smart_threshold_percent, 65);
+
+        settings.idle_enabled = false;
+        settings.idle_minutes = 10;
+        settings.idle_threshold_percent = 80;
+        settings.smart_threshold_percent = 55;
+        save_oppi_compact_settings(&path, &settings).unwrap();
+
+        let raw: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(raw["oppi"]["permissionMode"], json!("auto-review"));
+        assert_eq!(raw["oppi"]["idleCompact"]["enabled"], json!(false));
+        assert_eq!(raw["oppi"]["idleCompact"]["idleMinutes"], json!(10));
+        assert_eq!(raw["oppi"]["idleCompact"]["thresholdPercent"], json!(80));
+        assert_eq!(raw["oppi"]["smartCompact"]["thresholdPercent"], json!(55));
+        assert_eq!(raw["kept"], json!(true));
+
+        let loaded = load_oppi_compact_settings(&path);
+        assert!(!loaded.idle_enabled);
+        assert_eq!(loaded.idle_minutes, 10);
+        assert_eq!(loaded.idle_threshold_percent, 80);
+        assert_eq!(loaded.smart_threshold_percent, 55);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn compaction_trigger_telemetry_reports_ready_when_context_thresholds_are_met() {
+        let settings = OppiCompactSettings {
+            idle_enabled: true,
+            idle_minutes: 5,
+            idle_threshold_percent: 70,
+            smart_threshold_percent: 65,
+        };
+
+        let telemetry = compaction_trigger_telemetry(&settings, Some(140_000), Some(200_000), 3);
+        let rendered = format_compaction_trigger_telemetry(&telemetry);
+
+        assert!(rendered.contains("context 140k/200k (70%)"));
+        assert!(rendered.contains("idle ready"));
+        assert!(rendered.contains("smart ready"));
+        assert!(rendered.contains("3 active todos"));
+        assert!(
+            format_oppi_compact_settings_status(&settings, Some(&telemetry))
+                .contains("trigger: context 140k/200k (70%)")
+        );
+        assert_eq!(
+            compaction_trigger_telemetry_json(&telemetry)["contextPercent"],
+            json!(70)
+        );
+    }
+
+    #[test]
+    fn compaction_offer_planner_prefers_smart_offer_when_todos_are_ready() {
+        let settings = OppiCompactSettings {
+            idle_enabled: true,
+            idle_minutes: 5,
+            idle_threshold_percent: 70,
+            smart_threshold_percent: 65,
+        };
+        let telemetry = compaction_trigger_telemetry(&settings, Some(140_000), Some(200_000), 3);
+
+        let offer = compaction_offer_plan(&settings, &telemetry, Some(Duration::from_secs(5 * 60)))
+            .expect("smart offer");
+
+        assert_eq!(offer.kind, CompactionOfferKind::Smart);
+        assert!(offer.key.contains("smart"));
+        assert!(offer.message.contains("smart compact ready"));
+        assert!(offer.message.contains("3 active todos"));
+        assert!(offer.message.contains("/idle-compact compact"));
+    }
+
+    #[test]
+    fn compaction_offer_planner_waits_for_idle_minutes_before_idle_offer() {
+        let settings = OppiCompactSettings {
+            idle_enabled: true,
+            idle_minutes: 5,
+            idle_threshold_percent: 70,
+            smart_threshold_percent: 65,
+        };
+        let telemetry = compaction_trigger_telemetry(&settings, Some(140_000), Some(200_000), 0);
+
+        assert_eq!(
+            compaction_offer_plan(&settings, &telemetry, Some(Duration::from_secs(4 * 60)),),
+            None
+        );
+        let offer = compaction_offer_plan(&settings, &telemetry, Some(Duration::from_secs(5 * 60)))
+            .expect("idle offer");
+
+        assert_eq!(offer.kind, CompactionOfferKind::Idle);
+        assert!(offer.key.contains("idle"));
+        assert!(offer.message.contains("idle compact ready"));
+        assert!(offer.message.contains("5m idle"));
+        assert!(offer.message.contains("/idle-compact compact"));
+    }
+
+    #[test]
+    fn footer_settings_persist_pi_footer_config_without_losing_other_settings() {
+        let root = env::temp_dir().join(format!("oppi-footer-settings-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("settings.json");
+        fs::write(
+            &path,
+            r#"{"oppi":{"permissionMode":"auto-review","footer":{"showModel":true}},"kept":true}"#,
+        )
+        .unwrap();
+
+        let mut settings = load_footer_settings(&path);
+        assert!(settings.show_model);
+        settings.show_path = false;
+        settings.show_help_bar = false;
+        settings.usage_display = FooterUsageDisplay::Weekly;
+        settings.show_model = false;
+        settings.show_permission = false;
+        settings.show_memory = false;
+        settings.show_context = false;
+        save_footer_settings(&path, &settings).unwrap();
+
+        let raw: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(raw["oppi"]["permissionMode"], json!("auto-review"));
+        assert_eq!(raw["oppi"]["footer"]["showPath"], json!(false));
+        assert_eq!(raw["oppi"]["footer"]["showHelpBar"], json!(false));
+        assert_eq!(raw["oppi"]["footer"]["usageDisplay"], json!("weekly"));
+        assert_eq!(raw["oppi"]["footer"]["showModel"], json!(false));
+        assert_eq!(raw["oppi"]["footer"]["showPermission"], json!(false));
+        assert_eq!(raw["oppi"]["footer"]["showMemory"], json!(false));
+        assert_eq!(raw["oppi"]["footer"]["showContext"], json!(false));
+        assert_eq!(raw["kept"], json!(true));
+
+        let loaded = load_footer_settings(&path);
+        assert!(!loaded.show_path);
+        assert!(!loaded.show_help_bar);
+        assert_eq!(loaded.usage_display, FooterUsageDisplay::Weekly);
+        assert!(!loaded.show_model);
+        assert!(!loaded.show_permission);
+        assert!(!loaded.show_memory);
+        assert!(!loaded.show_context);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn image_settings_persist_pi_image_config_without_losing_other_settings() {
+        let root = env::temp_dir().join(format!("oppi-image-settings-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("settings.json");
+        fs::write(
+            &path,
+            r#"{"oppi":{"permissionMode":"auto-review","images":{"showImages":false,"imageWidthCells":999,"autoResizeImages":false,"blockImages":true}},"kept":true}"#,
+        )
+        .unwrap();
+
+        let mut settings = load_image_settings(&path);
+        assert!(!settings.show_images);
+        assert_eq!(settings.image_width_cells, 80);
+        assert!(!settings.auto_resize_images);
+        assert!(settings.block_images);
+
+        settings.show_images = true;
+        settings.image_width_cells = 120;
+        settings.auto_resize_images = true;
+        settings.block_images = false;
+        save_image_settings(&path, &settings).unwrap();
+
+        let raw: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(raw["oppi"]["permissionMode"], json!("auto-review"));
+        assert_eq!(raw["oppi"]["images"]["showImages"], json!(true));
+        assert_eq!(raw["oppi"]["images"]["imageWidthCells"], json!(120));
+        assert_eq!(raw["oppi"]["images"]["autoResizeImages"], json!(true));
+        assert_eq!(raw["oppi"]["images"]["blockImages"], json!(false));
+        assert_eq!(raw["kept"], json!(true));
+
+        let loaded = load_image_settings(&path);
+        assert!(loaded.show_images);
+        assert_eq!(loaded.image_width_cells, 120);
+        assert!(loaded.auto_resize_images);
+        assert!(!loaded.block_images);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn image_settings_preview_protocol_override_drives_capabilities() {
+        let root = env::temp_dir().join(format!(
+            "oppi-image-settings-protocol-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("settings.json");
+        fs::write(
+            &path,
+            r#"{"oppi":{"images":{"previewProtocol":"sixel","showImages":true,"imageWidthCells":80,"autoResizeImages":true,"blockImages":false}}}"#,
+        )
+        .unwrap();
+
+        let settings = load_image_settings(&path);
+        let capabilities = image_preview_capabilities_from_env_values(
+            &settings,
+            Some("dumb"),
+            Some("Apple_Terminal"),
+            None,
+            None,
+        );
+
+        assert_eq!(capabilities["protocol"], json!("sixel"));
+        assert_eq!(
+            capabilities["source"],
+            json!("oppi.images.previewProtocol=sixel")
+        );
+        assert_eq!(capabilities["protocolAvailable"], json!(true));
+        assert_eq!(capabilities["inlinePreviews"], json!(true));
+        assert_eq!(capabilities["sixelSupported"], json!(true));
+        assert!(format_image_settings_status(&settings).contains("preview protocol sixel"));
+        assert!(
+            format_image_preview_capabilities(&capabilities)
+                .contains("inline previews enabled via sixel")
+        );
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn image_settings_command_route_parses_pi_image_controls() {
+        assert_eq!(
+            image_settings_command_route("").unwrap(),
+            ImageSettingsCommandRoute::Status
+        );
+        assert_eq!(
+            image_settings_command_route("show off").unwrap(),
+            ImageSettingsCommandRoute::SetShowImages(false)
+        );
+        assert_eq!(
+            image_settings_command_route("width 120").unwrap(),
+            ImageSettingsCommandRoute::SetImageWidthCells(120)
+        );
+        assert_eq!(
+            image_settings_command_route("auto-resize on").unwrap(),
+            ImageSettingsCommandRoute::SetAutoResizeImages(true)
+        );
+        assert_eq!(
+            image_settings_command_route("block on").unwrap(),
+            ImageSettingsCommandRoute::SetBlockImages(true)
+        );
+        assert_eq!(
+            format!(
+                "{:?}",
+                image_settings_command_route("capabilities").unwrap()
+            ),
+            "Capabilities"
+        );
+        assert_eq!(
+            format!(
+                "{:?}",
+                image_settings_command_route("protocol sixel").unwrap()
+            ),
+            "SetPreviewProtocol(Sixel)"
+        );
+        assert_eq!(
+            format!(
+                "{:?}",
+                image_settings_command_route("preview-protocol auto").unwrap()
+            ),
+            "SetPreviewProtocol(Auto)"
+        );
+        assert!(
+            image_settings_command_route("protocol nope")
+                .unwrap_err()
+                .contains("auto|kitty|wezterm|iterm2|sixel|off")
+        );
+        assert!(
+            image_settings_command_route("width 90")
+                .unwrap_err()
+                .contains("60|80|120")
+        );
+    }
+
+    #[test]
+    fn follow_up_mode_persists_pi_root_setting_without_losing_other_settings() {
+        let root = env::temp_dir().join(format!("oppi-follow-up-mode-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("settings.json");
+        fs::write(
+            &path,
+            r#"{"followUpMode":"one-at-a-time","oppi":{"permissionMode":"auto-review"},"kept":true}"#,
+        )
+        .unwrap();
+
+        assert_eq!(load_follow_up_mode_setting(&path), FollowUpMode::OneAtATime);
+        save_follow_up_mode_setting(&path, FollowUpMode::All).unwrap();
+
+        let raw: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(raw["followUpMode"], json!("all"));
+        assert_eq!(raw["oppi"]["permissionMode"], json!("auto-review"));
+        assert_eq!(raw["kept"], json!(true));
+        assert_eq!(load_follow_up_mode_setting(&path), FollowUpMode::All);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn steering_mode_persists_pi_root_setting_without_losing_other_settings() {
+        let root = env::temp_dir().join(format!("oppi-steering-mode-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("settings.json");
+        fs::write(
+            &path,
+            r#"{"steeringMode":"one-at-a-time","oppi":{"permissionMode":"auto-review"},"kept":true}"#,
+        )
+        .unwrap();
+
+        assert_eq!(load_steering_mode_setting(&path), SteeringMode::OneAtATime);
+        save_steering_mode_setting(&path, SteeringMode::All).unwrap();
+
+        let raw: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(raw["steeringMode"], json!("all"));
+        assert_eq!(raw["oppi"]["permissionMode"], json!("auto-review"));
+        assert_eq!(raw["kept"], json!(true));
+        assert_eq!(load_steering_mode_setting(&path), SteeringMode::All);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn steering_mode_defaults_to_oppi_all_and_reads_legacy_queue_mode() {
+        let root =
+            env::temp_dir().join(format!("oppi-steering-mode-default-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("settings.json");
+
+        fs::write(&path, r#"{"queueMode":"one-at-a-time"}"#).unwrap();
+        assert_eq!(load_steering_mode_setting(&path), SteeringMode::OneAtATime);
+
+        fs::write(&path, r#"{}"#).unwrap();
+        assert_eq!(load_steering_mode_setting(&path), SteeringMode::All);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn reasoning_effort_persists_pi_default_thinking_without_losing_legacy_settings() {
+        let root = env::temp_dir().join(format!("oppi-default-thinking-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("settings.json");
+        fs::write(
+            &path,
+            r#"{"defaultThinkingLevel":"medium","oppi":{"reasoningEffort":"low","permissionMode":"auto-review"},"kept":true}"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            load_reasoning_effort_setting(&path),
+            Some(ThinkingLevel::Medium)
+        );
+        save_reasoning_effort_setting(&path, ThinkingLevel::High).unwrap();
+
+        let raw: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(raw["defaultThinkingLevel"], json!("high"));
+        assert_eq!(raw["oppi"]["reasoningEffort"], json!("high"));
+        assert_eq!(raw["oppi"]["permissionMode"], json!("auto-review"));
+        assert_eq!(raw["kept"], json!(true));
+        assert_eq!(
+            load_reasoning_effort_setting(&path),
+            Some(ThinkingLevel::High)
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn tree_filter_mode_persists_pi_root_setting_without_losing_other_settings() {
+        let root = env::temp_dir().join(format!("oppi-tree-filter-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("settings.json");
+        fs::write(
+            &path,
+            r#"{"treeFilterMode":"labeled-only","doubleEscapeAction":"fork","oppi":{"permissionMode":"auto-review"},"kept":true}"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            load_tree_filter_mode_setting(&path),
+            TreeFilterMode::LabeledOnly
+        );
+        save_tree_filter_mode_setting(&path, TreeFilterMode::All).unwrap();
+
+        let raw: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(raw["treeFilterMode"], json!("all"));
+        assert_eq!(raw["doubleEscapeAction"], json!("fork"));
+        assert_eq!(raw["oppi"]["permissionMode"], json!("auto-review"));
+        assert_eq!(raw["kept"], json!(true));
+        assert_eq!(load_tree_filter_mode_setting(&path), TreeFilterMode::All);
+
+        fs::write(&path, r#"{"treeFilterMode":"banana"}"#).unwrap();
+        assert_eq!(
+            load_tree_filter_mode_setting(&path),
+            TreeFilterMode::Default
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn saved_default_thinking_overrides_model_default_but_not_explicit_cli_effort() {
+        let root = env::temp_dir().join(format!(
+            "oppi-default-thinking-apply-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("settings.json");
+        fs::write(&path, r#"{"defaultThinkingLevel":"medium"}"#).unwrap();
+
+        let mut provider = ProviderConfig::OpenAiCompatible(with_default_reasoning_effort(
+            OpenAiCompatibleConfig {
+                flavor: DirectProviderFlavor::OpenAiCodex,
+                provider_id: None,
+                model: GPT_MAIN_DEFAULT_MODEL.to_string(),
+                base_url: None,
+                api_key_env: None,
+                system_prompt: None,
+                temperature: None,
+                reasoning_effort: None,
+                max_output_tokens: None,
+                stream: true,
+            },
+        ));
+        assert_eq!(
+            current_effort_level_for_provider(&provider),
+            ThinkingLevel::XHigh
+        );
+
+        apply_saved_reasoning_effort(&mut provider, &path, false);
+        assert_eq!(
+            current_effort_level_for_provider(&provider),
+            ThinkingLevel::Medium
+        );
+
+        set_provider_effort_level(&mut provider, ThinkingLevel::High);
+        apply_saved_reasoning_effort(&mut provider, &path, true);
+        assert_eq!(
+            current_effort_level_for_provider(&provider),
+            ThinkingLevel::High
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn quiet_startup_persists_pi_root_setting_without_losing_other_settings() {
+        let root = env::temp_dir().join(format!("oppi-quiet-startup-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("settings.json");
+        fs::write(
+            &path,
+            r#"{"quietStartup":true,"oppi":{"permissionMode":"auto-review"},"kept":true}"#,
+        )
+        .unwrap();
+
+        assert!(load_quiet_startup_setting(&path));
+        save_quiet_startup_setting(&path, false).unwrap();
+
+        let raw: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(raw["quietStartup"], json!(false));
+        assert_eq!(raw["oppi"]["permissionMode"], json!("auto-review"));
+        assert_eq!(raw["kept"], json!(true));
+        assert!(!load_quiet_startup_setting(&path));
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn startup_command_route_parses_quiet_startup_controls() {
+        assert_eq!(
+            startup_command_route("").unwrap(),
+            StartupCommandRoute::Status
+        );
+        assert_eq!(
+            startup_command_route("status").unwrap(),
+            StartupCommandRoute::Status
+        );
+        assert_eq!(
+            startup_command_route("quiet on").unwrap(),
+            StartupCommandRoute::SetQuietStartup(true)
+        );
+        assert_eq!(
+            startup_command_route("quiet off").unwrap(),
+            StartupCommandRoute::SetQuietStartup(false)
+        );
+        assert!(
+            startup_command_route("quiet maybe")
+                .unwrap_err()
+                .contains("usage: /startup")
+        );
+    }
+
+    #[test]
+    fn cursor_command_route_parses_hardware_cursor_controls() {
+        assert_eq!(
+            cursor_command_route("").unwrap(),
+            CursorCommandRoute::Status
+        );
+        assert_eq!(
+            cursor_command_route("status").unwrap(),
+            CursorCommandRoute::Status
+        );
+        assert_eq!(
+            cursor_command_route("hardware on").unwrap(),
+            CursorCommandRoute::SetHardwareCursor(true)
+        );
+        assert_eq!(
+            cursor_command_route("hardware-cursor off").unwrap(),
+            CursorCommandRoute::SetHardwareCursor(false)
+        );
+        assert!(
+            cursor_command_route("hardware maybe")
+                .unwrap_err()
+                .contains("usage: /cursor")
+        );
+    }
+
+    #[test]
+    fn terminal_cursor_setup_sequence_respects_hardware_cursor_setting() {
+        assert_eq!(terminal_cursor_setup_sequence(false), "\x1b[?25l");
+        assert_eq!(terminal_cursor_setup_sequence(true), "");
+    }
+
+    #[test]
+    fn editor_command_route_parses_pi_padding_and_double_escape_controls() {
+        assert_eq!(
+            editor_command_route("").unwrap(),
+            EditorCommandRoute::Status
+        );
+        assert_eq!(
+            editor_command_route("status").unwrap(),
+            EditorCommandRoute::Status
+        );
+        assert_eq!(
+            editor_command_route("padding 2").unwrap(),
+            EditorCommandRoute::SetPaddingX(2)
+        );
+        assert_eq!(
+            editor_command_route("padding-x 3").unwrap(),
+            EditorCommandRoute::SetPaddingX(3)
+        );
+        assert_eq!(
+            editor_command_route("double-escape fork").unwrap(),
+            EditorCommandRoute::SetDoubleEscapeAction(DoubleEscapeAction::Fork)
+        );
+        assert_eq!(
+            editor_command_route("escape none").unwrap(),
+            EditorCommandRoute::SetDoubleEscapeAction(DoubleEscapeAction::None)
+        );
+        assert!(
+            editor_command_route("padding 4")
+                .unwrap_err()
+                .contains("usage: /editor")
+        );
+        assert!(
+            editor_command_route("double-escape banana")
+                .unwrap_err()
+                .contains("usage: /editor")
+        );
+    }
+
+    #[test]
+    fn tree_command_route_parses_pi_filter_controls() {
+        assert_eq!(tree_command_route(&[]).unwrap(), TreeCommandRoute::Show);
+        assert_eq!(
+            tree_command_route(&["status"]).unwrap(),
+            TreeCommandRoute::Status
+        );
+        assert_eq!(
+            tree_command_route(&["entries"]).unwrap(),
+            TreeCommandRoute::Entries {
+                after: 0,
+                limit: None
+            }
+        );
+        assert_eq!(
+            tree_command_route(&["messages"]).unwrap(),
+            TreeCommandRoute::Entries {
+                after: 0,
+                limit: None
+            }
+        );
+        assert_eq!(
+            tree_command_route(&["entries", "after", "42"]).unwrap(),
+            TreeCommandRoute::Entries {
+                after: 42,
+                limit: None
+            }
+        );
+        assert_eq!(
+            tree_command_route(&["messages", "--after", "99"]).unwrap(),
+            TreeCommandRoute::Entries {
+                after: 99,
+                limit: None
+            }
+        );
+        assert_eq!(
+            tree_command_route(&["entries", "limit", "25"]).unwrap(),
+            TreeCommandRoute::Entries {
+                after: 0,
+                limit: Some(25)
+            }
+        );
+        assert_eq!(
+            tree_command_route(&["messages", "--after", "42", "--limit", "10"]).unwrap(),
+            TreeCommandRoute::Entries {
+                after: 42,
+                limit: Some(10)
+            }
+        );
+        assert_eq!(
+            tree_command_route(&["items", "--limit", "10", "--after", "42"]).unwrap(),
+            TreeCommandRoute::Entries {
+                after: 42,
+                limit: Some(10)
+            }
+        );
+        assert_eq!(
+            tree_command_route(&["fork", "42"]).unwrap(),
+            TreeCommandRoute::Fork {
+                event_id: 42,
+                title: None
+            }
+        );
+        assert_eq!(
+            tree_command_route(&["branch", "42", "rewrite", "from", "here"]).unwrap(),
+            TreeCommandRoute::Fork {
+                event_id: 42,
+                title: Some("rewrite from here".to_string())
+            }
+        );
+        assert_eq!(
+            tree_command_route(&["edit", "42", "edited", "request"]).unwrap(),
+            TreeCommandRoute::Edit {
+                event_id: 42,
+                input: "edited request".to_string()
+            }
+        );
+        assert_eq!(
+            tree_command_route(&["resubmit", "42", "edited", "request"]).unwrap(),
+            TreeCommandRoute::Edit {
+                event_id: 42,
+                input: "edited request".to_string()
+            }
+        );
+        assert!(
+            tree_command_route(&["items", "--limit", "0"])
+                .unwrap_err()
+                .contains("usage: /tree")
+        );
+        assert_eq!(
+            tree_command_route(&["filter", "labeled-only"]).unwrap(),
+            TreeCommandRoute::SetFilter(TreeFilterMode::LabeledOnly)
+        );
+        assert_eq!(
+            tree_command_route(&["tree-filter", "no-tools"]).unwrap(),
+            TreeCommandRoute::SetFilter(TreeFilterMode::NoTools)
+        );
+        assert_eq!(
+            tree_command_route(&["label", "42", "checkpoint"]).unwrap(),
+            TreeCommandRoute::Label {
+                event_id: 42,
+                labels: vec!["checkpoint".to_string()]
+            }
+        );
+        assert_eq!(
+            tree_command_route(&["unlabel", "42"]).unwrap(),
+            TreeCommandRoute::Label {
+                event_id: 42,
+                labels: Vec::new()
+            }
+        );
+        assert!(
+            tree_command_route(&["filter", "banana"])
+                .unwrap_err()
+                .contains("usage: /tree")
+        );
+        assert!(
+            tree_command_route(&["entries", "after", "banana"])
+                .unwrap_err()
+                .contains("usage: /tree")
+        );
+    }
+
+    #[test]
+    fn terminal_command_route_parses_pi_progress_and_clear_on_shrink_controls() {
+        assert_eq!(
+            terminal_command_route("").unwrap(),
+            TerminalCommandRoute::Status
+        );
+        assert_eq!(
+            terminal_command_route("status").unwrap(),
+            TerminalCommandRoute::Status
+        );
+        assert_eq!(
+            terminal_command_route("progress on").unwrap(),
+            TerminalCommandRoute::SetProgress(true)
+        );
+        assert_eq!(
+            terminal_command_route("terminal-progress off").unwrap(),
+            TerminalCommandRoute::SetProgress(false)
+        );
+        assert_eq!(
+            terminal_command_route("clear-on-shrink on").unwrap(),
+            TerminalCommandRoute::SetClearOnShrink(true)
+        );
+        assert_eq!(
+            terminal_command_route("shrink off").unwrap(),
+            TerminalCommandRoute::SetClearOnShrink(false)
+        );
+        assert!(
+            terminal_command_route("progress maybe")
+                .unwrap_err()
+                .contains("usage: /terminal")
+        );
+        assert!(
+            terminal_command_route("clear-on-shrink maybe")
+                .unwrap_err()
+                .contains("usage: /terminal")
+        );
+    }
+
+    #[test]
+    fn terminal_progress_sequences_match_pi_osc94_contract() {
+        assert_eq!(terminal_progress_sequence(true), "\x1b]9;4;3\x07");
+        assert_eq!(terminal_progress_sequence(false), "\x1b]9;4;0;\x07");
+        assert_eq!(
+            terminal_progress_output(true, true, false),
+            Some("\x1b]9;4;3\x07")
+        );
+        assert_eq!(
+            terminal_progress_output(true, false, false),
+            Some("\x1b]9;4;0;\x07")
+        );
+        assert_eq!(terminal_progress_output(false, true, false), None);
+        assert_eq!(terminal_progress_output(true, true, true), None);
+    }
+
+    #[test]
+    fn autocomplete_command_route_parses_pi_visible_item_controls() {
+        assert_eq!(
+            autocomplete_command_route("").unwrap(),
+            AutocompleteCommandRoute::Status
+        );
+        assert_eq!(
+            autocomplete_command_route("status").unwrap(),
+            AutocompleteCommandRoute::Status
+        );
+        assert_eq!(
+            autocomplete_command_route("items 10").unwrap(),
+            AutocompleteCommandRoute::SetMaxVisible(10)
+        );
+        assert_eq!(
+            autocomplete_command_route("max-visible 15").unwrap(),
+            AutocompleteCommandRoute::SetMaxVisible(15)
+        );
+        assert_eq!(
+            autocomplete_command_route("visible 3").unwrap(),
+            AutocompleteCommandRoute::SetMaxVisible(3)
+        );
+        assert!(
+            autocomplete_command_route("items 21")
+                .unwrap_err()
+                .contains("usage: /autocomplete")
+        );
+    }
+
+    #[test]
+    fn skills_command_route_parses_command_toggle_controls() {
+        assert_eq!(skills_command_route("").unwrap(), SkillsCommandRoute::List);
+        assert_eq!(
+            skills_command_route("status").unwrap(),
+            SkillsCommandRoute::Status
+        );
+        assert_eq!(
+            skills_command_route("commands").unwrap(),
+            SkillsCommandRoute::Status
+        );
+        assert_eq!(
+            skills_command_route("commands on").unwrap(),
+            SkillsCommandRoute::SetCommands(true)
+        );
+        assert_eq!(
+            skills_command_route("commands off").unwrap(),
+            SkillsCommandRoute::SetCommands(false)
+        );
+        assert!(
+            skills_command_route("commands maybe")
+                .unwrap_err()
+                .contains("usage: /skills")
+        );
+    }
+
+    #[test]
+    fn startup_banner_respects_json_and_quiet_startup() {
+        assert!(should_print_startup_banner(false, false));
+        assert!(!should_print_startup_banner(true, false));
+        assert!(!should_print_startup_banner(false, true));
+    }
+
+    #[test]
+    fn follow_up_command_route_parses_pi_delivery_mode() {
+        assert_eq!(
+            follow_up_command_route("").unwrap(),
+            FollowUpCommandRoute::Status
+        );
+        assert_eq!(
+            follow_up_command_route("status").unwrap(),
+            FollowUpCommandRoute::Status
+        );
+        assert_eq!(
+            follow_up_command_route("mode all").unwrap(),
+            FollowUpCommandRoute::SetMode(FollowUpMode::All)
+        );
+        assert_eq!(
+            follow_up_command_route("mode one").unwrap(),
+            FollowUpCommandRoute::SetMode(FollowUpMode::OneAtATime)
+        );
+        assert!(
+            follow_up_command_route("mode later")
+                .unwrap_err()
+                .contains("usage: /follow-up")
+        );
+    }
+
+    #[test]
+    fn follow_up_batches_match_pi_all_vs_one_at_a_time_modes() {
+        let mut queue = VecDeque::from([
+            "first follow-up".to_string(),
+            "second follow-up".to_string(),
+        ]);
+        let all_batch = take_follow_up_batch(&mut queue, FollowUpMode::All);
+        assert_eq!(
+            all_batch,
+            vec![
+                "first follow-up".to_string(),
+                "second follow-up".to_string()
+            ]
+        );
+        assert!(queue.is_empty());
+        let all_prompt = format_follow_up_batch_prompt(&all_batch);
+        assert!(all_prompt.contains("Queued follow-ups"));
+        assert!(all_prompt.contains("1. first follow-up"));
+        assert!(all_prompt.contains("2. second follow-up"));
+
+        let mut queue = VecDeque::from([
+            "first follow-up".to_string(),
+            "second follow-up".to_string(),
+        ]);
+        let one_batch = take_follow_up_batch(&mut queue, FollowUpMode::OneAtATime);
+        assert_eq!(one_batch, vec!["first follow-up".to_string()]);
+        assert_eq!(queue, VecDeque::from(["second follow-up".to_string()]));
+        assert_eq!(format_follow_up_batch_prompt(&one_batch), "first follow-up");
+    }
+
+    #[test]
+    fn footer_visibility_settings_shape_status_line_and_usage_summary() {
+        let settings = FooterSettings {
+            show_path: false,
+            show_help_bar: false,
+            usage_display: FooterUsageDisplay::Off,
+            show_model: false,
+            show_permission: false,
+            show_memory: false,
+            show_context: false,
+        };
+        let rendered = format_footer_status_line(FooterStatusParts {
+            settings: &settings,
+            cwd: "E:/repo/oppi",
+            model: "gpt-5.5",
+            permission: "auto-review",
+            usage: "usage session 12k",
+            weekly: Some("week 80% left"),
+            context: "ctx 8k",
+            memory: "hoppi:4",
+            todos: 2,
+            queued: 1,
+            goal: "goal active",
+            variant: "off",
+            theme: "oppi",
+            thread: "thread-1",
+        });
+
+        assert!(rendered.starts_with("status: role=executor"));
+        assert!(!rendered.contains("model="));
+        assert!(!rendered.contains("permissions="));
+        assert!(!rendered.contains("usage "));
+        assert!(!rendered.contains("week "));
+        assert!(!rendered.contains("ctx "));
+        assert!(!rendered.contains("memory="));
+        assert!(!rendered.contains("workspace="));
+        assert!(rendered.contains("todos=2"));
+        assert!(rendered.contains("queued=1"));
+        assert!(rendered.contains("thread=thread-1"));
+
+        let usage_footer = format_usage_footer_line(
+            &settings,
+            "usage session 12k",
+            Some("week 80% left"),
+            "ctx 8k",
+        );
+        assert_eq!(usage_footer, "off");
+    }
+
+    #[test]
+    fn permissions_sandbox_settings_persist_flags_and_patterns_without_losing_review_settings() {
+        let root = env::temp_dir().join(format!(
+            "oppi-permission-sandbox-settings-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("settings.json");
+        fs::write(
+            &path,
+            r#"{"oppi":{"permissionMode":"auto-review","permissions":{"reviewTimeoutMs":30000,"reviewerModel":"openai-codex/gpt-5.5"}},"kept":true}"#,
+        )
+        .unwrap();
+
+        let mut sandbox = load_permission_sandbox_settings(&path);
+        sandbox.allow_internet = true;
+        sandbox.allow_ssh = true;
+        sandbox.project_roots = vec!["E:/repo".to_string()];
+        sandbox.readable_roots = vec!["E:/repo".to_string(), "E:/readonly".to_string()];
+        sandbox.writable_roots = vec!["E:/repo/out".to_string()];
+        sandbox.protected_patterns = vec!["secrets/*.json".to_string(), ".env.local".to_string()];
+        save_permission_sandbox_settings(&path, &sandbox).unwrap();
+
+        let raw: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(raw["oppi"]["permissionMode"], json!("auto-review"));
+        assert_eq!(raw["oppi"]["permissions"]["reviewTimeoutMs"], json!(30_000));
+        assert_eq!(
+            raw["oppi"]["permissions"]["reviewerModel"],
+            json!("openai-codex/gpt-5.5")
+        );
+        assert_eq!(
+            raw["oppi"]["permissions"]["sandbox"]["protectedPatterns"],
+            json!(["secrets/*.json", ".env.local"])
+        );
+        assert_eq!(
+            raw["oppi"]["permissions"]["sandbox"]["allowInternet"],
+            json!(true)
+        );
+        assert_eq!(
+            raw["oppi"]["permissions"]["sandbox"]["allowSsh"],
+            json!(true)
+        );
+        assert_eq!(
+            raw["oppi"]["permissions"]["sandbox"]["projectRoots"],
+            json!(["E:/repo"])
+        );
+        assert_eq!(
+            raw["oppi"]["permissions"]["sandbox"]["readableRoots"],
+            json!(["E:/repo", "E:/readonly"])
+        );
+        assert_eq!(
+            raw["oppi"]["permissions"]["sandbox"]["writableRoots"],
+            json!(["E:/repo/out"])
+        );
+        assert_eq!(raw["kept"], json!(true));
+
+        let loaded = load_permission_sandbox_settings(&path);
+        assert!(loaded.allow_internet);
+        assert!(loaded.allow_ssh);
+        assert_eq!(loaded.project_roots, vec!["E:/repo".to_string()]);
+        assert_eq!(
+            loaded.readable_roots,
+            vec!["E:/repo".to_string(), "E:/readonly".to_string()]
+        );
+        assert_eq!(loaded.writable_roots, vec!["E:/repo/out".to_string()]);
+        assert_eq!(
+            loaded.protected_patterns,
+            vec!["secrets/*.json".to_string(), ".env.local".to_string()]
+        );
+
+        let mut cleared = loaded;
+        cleared.allow_internet = false;
+        cleared.allow_ssh = false;
+        cleared.project_roots.clear();
+        cleared.readable_roots.clear();
+        cleared.writable_roots.clear();
+        cleared.protected_patterns.clear();
+        save_permission_sandbox_settings(&path, &cleared).unwrap();
+        let raw: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(
+            raw["oppi"]["permissions"]["sandbox"]["protectedPatterns"],
+            json!([])
+        );
+        assert_eq!(
+            raw["oppi"]["permissions"]["sandbox"]["allowInternet"],
+            json!(false)
+        );
+        assert_eq!(
+            raw["oppi"]["permissions"]["sandbox"]["allowSsh"],
+            json!(false)
+        );
+        assert_eq!(
+            raw["oppi"]["permissions"]["sandbox"]["projectRoots"],
+            json!([])
+        );
+        assert_eq!(
+            raw["oppi"]["permissions"]["sandbox"]["readableRoots"],
+            json!([])
+        );
+        assert_eq!(
+            raw["oppi"]["permissions"]["sandbox"]["writableRoots"],
+            json!([])
+        );
+        assert_eq!(raw["oppi"]["permissionMode"], json!("auto-review"));
+        assert_eq!(raw["kept"], json!(true));
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn ask_user_command_parses_timeout_choices() {
+        assert_eq!(
+            ask_user_command_route("").unwrap(),
+            AskUserCommandRoute::Status
+        );
+        assert_eq!(
+            ask_user_command_route("status").unwrap(),
+            AskUserCommandRoute::Status
+        );
+        assert_eq!(
+            ask_user_command_route("timeout off").unwrap(),
+            AskUserCommandRoute::SetTimeoutMs(0)
+        );
+        assert_eq!(
+            ask_user_command_route("timeout 2").unwrap(),
+            AskUserCommandRoute::SetTimeoutMs(120_000)
+        );
+        assert!(
+            ask_user_command_route("timeout 3")
+                .unwrap_err()
+                .contains("off|1|2|5|10")
+        );
+    }
+
+    #[test]
+    fn ask_user_settings_persist_pi_timeout_minutes_without_losing_other_settings() {
+        let root = env::temp_dir().join(format!("oppi-ask-user-settings-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("settings.json");
+        fs::write(
+            &path,
+            r#"{"oppi":{"permissionMode":"auto-review"},"kept":true}"#,
+        )
+        .unwrap();
+
+        save_ask_user_settings(
+            &path,
+            &oppi_protocol::AskUserSettings {
+                timeout_ms: 120_000,
+            },
+        )
+        .unwrap();
+
+        let raw: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(raw["oppi"]["permissionMode"], json!("auto-review"));
+        assert_eq!(raw["oppi"]["askUser"]["timeoutMinutes"], json!(2));
+        assert_eq!(raw["kept"], json!(true));
+
+        let loaded = load_ask_user_settings(&path);
+        assert_eq!(loaded.timeout_ms, 120_000);
+
+        save_ask_user_settings(&path, &oppi_protocol::AskUserSettings { timeout_ms: 0 }).unwrap();
+        let raw: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(raw["oppi"]["askUser"]["timeoutMinutes"], json!(0));
+        assert_eq!(raw["oppi"]["permissionMode"], json!("auto-review"));
+        assert_eq!(raw["kept"], json!(true));
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn ask_user_timeout_answers_use_recommended_defaults() {
+        let request = serde_json::from_value::<AskUserRequest>(json!({
+            "id": "question-1",
+            "questions": [
+                {
+                    "id": "scope",
+                    "question": "Which scope?",
+                    "options": [
+                        { "id": "all", "label": "Whole repo" },
+                        { "id": "changed", "label": "Changed package" }
+                    ],
+                    "defaultOptionId": "changed"
+                },
+                {
+                    "id": "notes",
+                    "question": "Any notes?",
+                    "allowCustom": true
+                },
+                {
+                    "id": "optional",
+                    "question": "Optional detail?",
+                    "required": false
+                }
+            ],
+            "timeoutMs": 120000
+        }))
+        .unwrap();
+
+        let answers = ask_user_timeout_answers(&request);
+        assert_eq!(answers[0].question_id, "scope");
+        assert_eq!(answers[0].option_id.as_deref(), Some("changed"));
+        assert_eq!(answers[0].label.as_deref(), Some("Changed package"));
+        assert_eq!(answers[1].question_id, "notes");
+        assert_eq!(
+            answers[1].text.as_deref(),
+            Some("No recommended answer was available before timeout.")
+        );
+        assert!(answers[2].skipped);
+    }
+
+    #[test]
     fn todo_dock_renders_only_active_todos() {
         let state = serde_json::from_value::<TodoState>(json!({
             "summary": "working",
@@ -11199,11 +32387,17 @@ mod tests {
 name: repo-helper
 description: "Helps with repo maintenance"
 tools: read_file, write_file
+disallowedTools: shell_exec
 model: gpt-5.3-codex
 effort: high
 permissionMode: auto-review
+memory: client-hosted
 background: true
 worktreeRoot: .worktrees/repo-helper
+isolation: worktree
+color: cyan
+skills: graphify, mermaid-diagrams
+maxTurns: 6
 ---
 
 You are a careful repo helper.
@@ -11212,22 +32406,34 @@ You are a careful repo helper.
         assert_eq!(agent.name, "repo-helper");
         assert_eq!(agent.description, "Helps with repo maintenance");
         assert_eq!(agent.tools, vec!["read_file", "write_file"]);
+        assert_eq!(agent.tool_denylist, vec!["shell_exec"]);
         assert_eq!(agent.model.as_deref(), Some("gpt-5.3-codex"));
         assert_eq!(agent.effort.as_deref(), Some("high"));
         assert_eq!(agent.permission_mode, Some(PermissionMode::AutoReview));
+        assert_eq!(agent.memory_mode.as_deref(), Some("client-hosted"));
         assert!(agent.background);
         assert_eq!(
             agent.worktree_root.as_deref(),
             Some(".worktrees/repo-helper")
         );
+        assert_eq!(agent.isolation.as_deref(), Some("worktree"));
+        assert_eq!(agent.color.as_deref(), Some("cyan"));
+        assert_eq!(agent.skills, vec!["graphify", "mermaid-diagrams"]);
+        assert_eq!(agent.max_turns, Some(6));
         assert_eq!(agent.instructions, "You are a careful repo helper.");
 
         let exported = format_agent_markdown(&agent);
         assert!(exported.contains("name: repo-helper"));
         assert!(exported.contains("description: \"Helps with repo maintenance\""));
         assert!(exported.contains("tools: read_file, write_file"));
+        assert!(exported.contains("disallowedTools: shell_exec"));
         assert!(exported.contains("permissionMode: auto-review"));
+        assert!(exported.contains("memory: client-hosted"));
         assert!(exported.contains("worktreeRoot: .worktrees/repo-helper"));
+        assert!(exported.contains("isolation: worktree"));
+        assert!(exported.contains("color: cyan"));
+        assert!(exported.contains("skills: graphify, mermaid-diagrams"));
+        assert!(exported.contains("maxTurns: 6"));
         assert!(exported.contains("You are a careful repo helper."));
     }
 
@@ -11281,6 +32487,64 @@ You are a careful repo helper.
     }
 
     #[test]
+    fn parses_agents_create_show_edit_delete_routes() {
+        assert_eq!(
+            parse_agents_route("show reviewer").unwrap(),
+            AgentsRoute::Show {
+                name: "reviewer".to_string()
+            }
+        );
+        assert_eq!(
+            parse_agents_route("create reviewer Reviews code").unwrap(),
+            AgentsRoute::Create {
+                source: AgentSource::Project,
+                name: "reviewer".to_string(),
+                description: "Reviews code".to_string()
+            }
+        );
+        assert_eq!(
+            parse_agents_route("create user reviewer Reviews code").unwrap(),
+            AgentsRoute::Create {
+                source: AgentSource::User,
+                name: "reviewer".to_string(),
+                description: "Reviews code".to_string()
+            }
+        );
+        assert_eq!(
+            parse_agents_route("edit reviewer").unwrap(),
+            AgentsRoute::Edit {
+                name: "reviewer".to_string()
+            }
+        );
+        assert_eq!(
+            parse_agents_route("delete reviewer --yes").unwrap(),
+            AgentsRoute::Delete {
+                name: "reviewer".to_string(),
+                confirmed: true
+            }
+        );
+        assert_eq!(
+            parse_agents_route("delete reviewer").unwrap(),
+            AgentsRoute::Delete {
+                name: "reviewer".to_string(),
+                confirmed: false
+            }
+        );
+        assert_eq!(
+            parse_agents_route("poll agent-run-1").unwrap(),
+            AgentsRoute::Poll {
+                run_id: "agent-run-1".to_string()
+            }
+        );
+        assert_eq!(
+            parse_agents_route("status agent-run-1").unwrap(),
+            AgentsRoute::Poll {
+                run_id: "agent-run-1".to_string()
+            }
+        );
+    }
+
+    #[test]
     fn finds_active_agent_from_list_for_markdown_export() {
         let value = json!({
             "items": [
@@ -11301,6 +32565,92 @@ You are a careful repo helper.
 
         let missing = active_agent_from_list(json!({ "items": [] }), "missing").unwrap_err();
         assert!(missing.contains("unknown agent missing"));
+    }
+
+    #[test]
+    fn formats_agent_list_with_shadowed_read_only_and_failed_files() {
+        let rendered = format_agents_list(&json!({
+            "items": [
+                {
+                    "active": {
+                        "name": "reviewer",
+                        "description": "Project reviewer",
+                        "source": "project",
+                        "instructions": "Review carefully."
+                    },
+                    "shadowed": [
+                        {
+                            "name": "reviewer",
+                            "description": "Claude reviewer",
+                            "source": "claudeProject",
+                            "readOnly": true,
+                            "instructions": "Read only."
+                        }
+                    ]
+                },
+                {
+                    "active": {
+                        "name": "verification",
+                        "description": "Verify work",
+                        "source": "builtIn",
+                        "readOnly": true,
+                        "instructions": "Verify."
+                    },
+                    "shadowed": []
+                }
+            ],
+            "failed": [
+                {
+                    "path": "C:/repo/.oppi/agents/bad.md",
+                    "source": "project",
+                    "message": "agent markdown requires description"
+                }
+            ]
+        }))
+        .unwrap();
+
+        assert!(rendered.contains("- reviewer [project]: Project reviewer"));
+        assert!(rendered.contains("shadows 1 lower-priority definition(s)"));
+        assert!(rendered.contains("- verification [built-in] read-only: Verify work"));
+        assert!(
+            rendered
+                .contains("failed agent files:\n- project C:/repo/.oppi/agents/bad.md: agent markdown requires description")
+        );
+    }
+
+    #[test]
+    fn formats_agent_show_with_metadata_shadowed_and_instructions() {
+        let resolved: ResolvedAgent = serde_json::from_value(json!({
+            "active": {
+                "name": "reviewer",
+                "description": "Project reviewer",
+                "source": "project",
+                "tools": ["read_file", "shell_exec"],
+                "toolDenylist": ["shell_exec"],
+                "path": "C:/repo/.oppi/agents/reviewer.md",
+                "instructions": "Inspect the diff."
+            },
+            "shadowed": [
+                {
+                    "name": "reviewer",
+                    "description": "Claude reviewer",
+                    "source": "claudeProject",
+                    "readOnly": true,
+                    "path": "C:/repo/.claude/agents/reviewer.md",
+                    "instructions": "Read only."
+                }
+            ]
+        }))
+        .unwrap();
+        let rendered = format_agent_show(&resolved);
+
+        assert!(rendered.contains("reviewer [project]"));
+        assert!(rendered.contains("Description: Project reviewer"));
+        assert!(rendered.contains("Tools: read_file, shell_exec"));
+        assert!(rendered.contains("Disallowed tools: shell_exec"));
+        assert!(rendered.contains("Path: C:/repo/.oppi/agents/reviewer.md"));
+        assert!(rendered.contains("Inspect the diff."));
+        assert!(rendered.contains("Shadowed:\n- reviewer [claude-project] read-only"));
     }
 
     #[test]
@@ -11371,6 +32721,176 @@ You are a careful repo helper.
     }
 
     #[test]
+    fn renderer_hides_internal_phase_and_diagnostics() {
+        let phase_event = Event {
+            id: 1,
+            thread_id: "thread-1".to_string(),
+            turn_id: Some("turn-1".to_string()),
+            created_at_ms: 1,
+            kind: EventKind::TurnPhaseChanged {
+                phase: oppi_protocol::TurnPhase::Tools,
+            },
+        };
+        assert_eq!(render_event_line(&phase_event), None);
+
+        let diagnostic_event = Event {
+            id: 2,
+            thread_id: "thread-1".to_string(),
+            turn_id: Some("turn-1".to_string()),
+            created_at_ms: 2,
+            kind: EventKind::Diagnostic {
+                diagnostic: Diagnostic {
+                    level: oppi_protocol::DiagnosticLevel::Info,
+                    message: "agentic turn reached final response".to_string(),
+                    metadata: BTreeMap::new(),
+                },
+            },
+        };
+        assert_eq!(render_event_line(&diagnostic_event), None);
+
+        for message in [
+            "sandbox policy attached to turn",
+            "direct provider request completed",
+        ] {
+            let internal_diagnostic_event = Event {
+                id: 6,
+                thread_id: "thread-1".to_string(),
+                turn_id: Some("turn-1".to_string()),
+                created_at_ms: 6,
+                kind: EventKind::Diagnostic {
+                    diagnostic: Diagnostic {
+                        level: oppi_protocol::DiagnosticLevel::Info,
+                        message: message.to_string(),
+                        metadata: BTreeMap::new(),
+                    },
+                },
+            };
+            assert_eq!(render_event_line(&internal_diagnostic_event), None);
+        }
+
+        let delta_event = Event {
+            id: 3,
+            thread_id: "thread-1".to_string(),
+            turn_id: Some("turn-1".to_string()),
+            created_at_ms: 3,
+            kind: EventKind::ItemDelta {
+                item_id: "item-1".to_string(),
+                delta: "partial token".to_string(),
+            },
+        };
+        assert_eq!(render_event_line(&delta_event), None);
+
+        let completion_event = Event {
+            id: 4,
+            thread_id: "thread-1".to_string(),
+            turn_id: Some("turn-1".to_string()),
+            created_at_ms: 4,
+            kind: EventKind::TurnCompleted {
+                turn_id: "turn-1".to_string(),
+            },
+        };
+        assert_eq!(render_event_line(&completion_event), None);
+
+        let final_output_event = Event {
+            id: 5,
+            thread_id: "thread-1".to_string(),
+            turn_id: Some("turn-1".to_string()),
+            created_at_ms: 5,
+            kind: EventKind::ItemCompleted {
+                item: oppi_protocol::Item {
+                    id: "item-2".to_string(),
+                    thread_id: "thread-1".to_string(),
+                    turn_id: "turn-1".to_string(),
+                    kind: ItemKind::AssistantMessage {
+                        text: "Final answer.".to_string(),
+                    },
+                },
+            },
+        };
+        assert!(
+            render_event_line(&final_output_event)
+                .unwrap()
+                .contains("Final answer.")
+        );
+    }
+
+    fn test_guardian_review_record(
+        status: oppi_protocol::GuardianReviewStatus,
+    ) -> oppi_protocol::GuardianReviewRecord {
+        oppi_protocol::GuardianReviewRecord {
+            id: "review-1".to_string(),
+            timestamp: "2026-05-26T12:00:00Z".to_string(),
+            status,
+            mode: PermissionMode::AutoReview,
+            tool_name: "write_file".to_string(),
+            tool_call_id: "write-env".to_string(),
+            signature: "oppi::write_file\n{}".to_string(),
+            circuit_key: "oppi::write_file:workspace-write:.env".to_string(),
+            summary: "blocked protected path C:\\repo\\.env".to_string(),
+            risk: oppi_protocol::GuardianRiskSummary {
+                category: "workspace-write".to_string(),
+                reason: "blocked protected path C:\\repo\\.env".to_string(),
+                protected_hits: vec!["C:\\repo\\.env".to_string()],
+                paths: vec!["C:\\repo\\.env".to_string()],
+                hints: Vec::new(),
+            },
+            decision: Some(oppi_protocol::GuardianReviewDecision {
+                outcome: oppi_protocol::GuardianReviewOutcome::Deny,
+                risk_level: oppi_protocol::RiskLevel::High,
+                user_authorization: oppi_protocol::GuardianAuthorizationLevel::Unknown,
+                rationale: "blocked protected path C:\\repo\\.env".to_string(),
+                cache_scope: Some(oppi_protocol::GuardianCacheScope::None),
+            }),
+            reviewer_model: Some("mock-reviewer".to_string()),
+            cached_from: None,
+            strict_json: None,
+        }
+    }
+
+    #[test]
+    fn permission_review_events_render_visible_transcript_without_path_leak() {
+        let started = Event {
+            id: 10,
+            thread_id: "thread-1".to_string(),
+            turn_id: Some("turn-1".to_string()),
+            created_at_ms: 10,
+            kind: EventKind::PermissionReviewStarted {
+                record: test_guardian_review_record(oppi_protocol::GuardianReviewStatus::Reviewing),
+            },
+        };
+        let started_line = render_event_line(&started).expect("started review line");
+        assert!(started_line.contains("guardian review reviewing"));
+        assert!(started_line.contains("write_file"));
+        assert!(!started_line.contains(".env"));
+        assert!(!started_line.contains("C:\\repo"));
+
+        let completed = Event {
+            id: 11,
+            thread_id: "thread-1".to_string(),
+            turn_id: Some("turn-1".to_string()),
+            created_at_ms: 11,
+            kind: EventKind::PermissionReviewCompleted {
+                record: test_guardian_review_record(oppi_protocol::GuardianReviewStatus::Denied),
+            },
+        };
+        let completed_line = render_event_line(&completed).expect("completed review line");
+        assert!(completed_line.contains("guardian review denied"));
+        assert!(completed_line.contains("risk=high"));
+        assert!(completed_line.contains("auth=unknown"));
+        assert!(!completed_line.contains(".env"));
+        assert!(!completed_line.contains("C:\\repo"));
+
+        let entry = transcript_entry_from_event(
+            &completed,
+            completed_line,
+            &BTreeMap::<String, ToolCall>::new(),
+        );
+        assert_eq!(entry.kind, TranscriptEntryKind::Denied);
+        assert_eq!(entry.label, "review");
+        assert_eq!(entry.tool_call_id.as_deref(), Some("write-env"));
+    }
+
+    #[test]
     fn retained_tui_keeps_scrollback_docks_and_dirty_components() {
         let mut ui = RetainedTui::new(3);
         ui.push_transcript("one");
@@ -11437,6 +32957,7 @@ You are a careful repo helper.
             id: 41,
             thread_id: "thread-1".to_string(),
             turn_id: Some("turn-1".to_string()),
+            created_at_ms: 41,
             kind: EventKind::ToolCallStarted { call },
         };
         ui.push_event_transcript(&tool_event, "tool started".to_string(), &calls);
@@ -11444,6 +32965,7 @@ You are a careful repo helper.
             id: 42,
             thread_id: "thread-1".to_string(),
             turn_id: Some("turn-1".to_string()),
+            created_at_ms: 42,
             kind: EventKind::ArtifactCreated {
                 artifact: ArtifactMetadata {
                     id: "artifact-1".to_string(),
@@ -11484,6 +33006,381 @@ You are a careful repo helper.
         assert!(ui.typed_scrollback[1].body.contains("2.0KiB"));
     }
 
+    #[test]
+    fn image_artifact_rendering_emits_terminal_preview_when_enabled() {
+        let artifact = ArtifactMetadata {
+            id: "artifact-image-1".to_string(),
+            tool_call_id: "image-1".to_string(),
+            output_path: "output/image.png".to_string(),
+            mime_type: Some("image/png".to_string()),
+            width: Some(1024),
+            height: Some(768),
+            source_images: Vec::new(),
+            mask: None,
+            backend: Some("openai-images".to_string()),
+            model: Some("gpt-image-2".to_string()),
+            bytes: Some(4096),
+            diagnostics: Vec::new(),
+        };
+        let settings = ImageSettings {
+            show_images: true,
+            image_width_cells: 120,
+            auto_resize_images: true,
+            block_images: false,
+            preview_protocol: ImagePreviewProtocolOverride::Auto,
+        };
+
+        let rendered = format_artifact_created_with_image_settings(
+            &artifact,
+            theme_tokens("plain"),
+            &settings,
+        );
+
+        assert!(rendered.contains("artifact artifact-image-1 created"));
+        assert!(rendered.contains("output/image.png"));
+        assert!(rendered.contains("\x1b_G"));
+        assert!(rendered.contains("a=T"));
+        assert!(rendered.contains("t=f"));
+        assert!(rendered.contains("c=120"));
+        assert!(rendered.contains("b3V0cHV0L2ltYWdlLnBuZw=="));
+        assert!(rendered.contains("\x1b\\"));
+    }
+
+    #[test]
+    fn image_artifact_rendering_supports_common_non_png_image_previews() {
+        let settings = ImageSettings {
+            show_images: true,
+            image_width_cells: 80,
+            auto_resize_images: true,
+            block_images: false,
+            preview_protocol: ImagePreviewProtocolOverride::Auto,
+        };
+        for (path, mime, encoded_path) in [
+            ("output/photo.jpg", "image/jpeg", "b3V0cHV0L3Bob3RvLmpwZw=="),
+            (
+                "output/render.webp",
+                "image/webp",
+                "b3V0cHV0L3JlbmRlci53ZWJw",
+            ),
+        ] {
+            let artifact = ArtifactMetadata {
+                id: format!("artifact-{path}"),
+                tool_call_id: "image-1".to_string(),
+                output_path: path.to_string(),
+                mime_type: Some(mime.to_string()),
+                width: None,
+                height: None,
+                source_images: Vec::new(),
+                mask: None,
+                backend: None,
+                model: None,
+                bytes: None,
+                diagnostics: Vec::new(),
+            };
+
+            let rendered = format_artifact_created_with_image_settings(
+                &artifact,
+                theme_tokens("plain"),
+                &settings,
+            );
+
+            assert!(
+                rendered.contains("\x1b_G"),
+                "{path} should render an inline preview"
+            );
+            assert!(rendered.contains("t=f"));
+            assert!(rendered.contains("c=80"));
+            assert!(rendered.contains(encoded_path));
+        }
+    }
+
+    #[test]
+    fn image_artifact_rendering_skips_escape_sequence_without_supported_terminal() {
+        let artifact = ArtifactMetadata {
+            id: "artifact-image-1".to_string(),
+            tool_call_id: "image-1".to_string(),
+            output_path: "output/image.png".to_string(),
+            mime_type: Some("image/png".to_string()),
+            width: None,
+            height: None,
+            source_images: Vec::new(),
+            mask: None,
+            backend: None,
+            model: None,
+            bytes: None,
+            diagnostics: Vec::new(),
+        };
+        let settings = ImageSettings {
+            show_images: true,
+            image_width_cells: 80,
+            auto_resize_images: true,
+            block_images: false,
+            preview_protocol: ImagePreviewProtocolOverride::Auto,
+        };
+
+        let rendered = format_artifact_created_with_image_settings_and_protocol(
+            &artifact,
+            theme_tokens("plain"),
+            &settings,
+            None,
+        );
+
+        assert!(!rendered.contains("\x1b_G"));
+        assert!(
+            rendered.contains("terminal does not advertise native inline image support"),
+            "{rendered}"
+        );
+    }
+
+    #[test]
+    fn terminal_image_protocol_detection_recognizes_kitty_and_wezterm() {
+        assert_eq!(
+            terminal_image_protocol_from_env_values(Some("xterm-kitty"), None, None, None),
+            Some(TerminalImageProtocol::KittyLocalFile)
+        );
+        assert_eq!(
+            terminal_image_protocol_from_env_values(
+                Some("xterm-256color"),
+                Some("WezTerm"),
+                None,
+                None
+            ),
+            Some(TerminalImageProtocol::KittyLocalFile)
+        );
+        assert_eq!(
+            terminal_image_protocol_from_env_values(Some("dumb"), None, Some("12"), None),
+            Some(TerminalImageProtocol::KittyLocalFile)
+        );
+        assert_eq!(
+            terminal_image_protocol_from_env_values(
+                Some("xterm-256color"),
+                None,
+                None,
+                Some("wezterm.exe")
+            ),
+            Some(TerminalImageProtocol::KittyLocalFile)
+        );
+        assert_eq!(
+            terminal_image_protocol_from_env_values(
+                Some("dumb"),
+                Some("Apple_Terminal"),
+                None,
+                None
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn terminal_image_protocol_detection_recognizes_iterm2() {
+        assert_eq!(
+            terminal_image_protocol_from_env_values(
+                Some("xterm-256color"),
+                Some("iTerm.app"),
+                None,
+                None
+            ),
+            Some(TerminalImageProtocol::Iterm2InlineFile)
+        );
+        assert_eq!(
+            terminal_image_protocol_from_env_values(
+                Some("xterm-256color"),
+                Some("iTerm2"),
+                None,
+                None
+            ),
+            Some(TerminalImageProtocol::Iterm2InlineFile)
+        );
+    }
+
+    #[test]
+    fn terminal_image_protocol_override_beats_incomplete_terminal_env() {
+        assert_eq!(
+            terminal_image_protocol_from_env_values_with_override(
+                Some("sixel"),
+                Some("dumb"),
+                Some("Apple_Terminal"),
+                None,
+                None
+            ),
+            Some(TerminalImageProtocol::Sixel)
+        );
+        assert_eq!(
+            terminal_image_protocol_detection_from_env_values_with_override(
+                Some("iterm2"),
+                Some("xterm-kitty"),
+                None,
+                Some("12"),
+                Some("wezterm.exe")
+            ),
+            TerminalImageProtocolDetection {
+                protocol: Some(TerminalImageProtocol::Iterm2InlineFile),
+                source: "OPPI_IMAGE_PREVIEW_PROTOCOL=iterm2",
+            }
+        );
+        assert_eq!(
+            terminal_image_protocol_detection_from_env_values_with_override(
+                Some("off"),
+                Some("xterm-kitty"),
+                None,
+                Some("12"),
+                None
+            ),
+            TerminalImageProtocolDetection {
+                protocol: None,
+                source: "OPPI_IMAGE_PREVIEW_PROTOCOL=off",
+            }
+        );
+    }
+
+    #[test]
+    fn image_preview_capabilities_report_protocol_source_and_fallbacks() {
+        let settings = ImageSettings {
+            show_images: true,
+            image_width_cells: 120,
+            auto_resize_images: true,
+            block_images: false,
+            preview_protocol: ImagePreviewProtocolOverride::Auto,
+        };
+        let kitty = image_preview_capabilities_from_env_values(
+            &settings,
+            Some("xterm-kitty"),
+            None,
+            None,
+            None,
+        );
+
+        assert_eq!(kitty["showImages"], json!(true));
+        assert_eq!(kitty["imageWidthCells"], json!(120));
+        assert_eq!(kitty["autoResizeImages"], json!(true));
+        assert_eq!(kitty["blockImages"], json!(false));
+        assert_eq!(kitty["protocol"], json!("kitty-local-file"));
+        assert_eq!(kitty["source"], json!("TERM=xterm-kitty"));
+        assert_eq!(kitty["inlinePreviews"], json!(true));
+        assert_eq!(kitty["activeProbePerformed"], json!(false));
+        assert_eq!(kitty["activeProbeStatus"], json!("not-attempted"));
+        assert_eq!(
+            kitty["activeProbeReason"],
+            json!("transcript-safe-env-and-settings-only")
+        );
+        assert_eq!(kitty["sixelSupported"], json!(false));
+        assert_eq!(
+            kitty["supportedFormats"],
+            json!(["png", "jpeg", "jpg", "webp", "gif"])
+        );
+        assert_eq!(kitty["maxInlineBytes"], Value::Null);
+
+        let kitty_text = format_image_preview_capabilities(&kitty);
+        assert!(kitty_text.contains("kitty-local-file"));
+        assert!(kitty_text.contains("TERM=xterm-kitty"));
+        assert!(kitty_text.contains("active probe not attempted"));
+        assert!(kitty_text.contains("sixel unsupported"));
+
+        let disabled = ImageSettings {
+            show_images: false,
+            image_width_cells: 80,
+            auto_resize_images: true,
+            block_images: false,
+            preview_protocol: ImagePreviewProtocolOverride::Auto,
+        };
+        let unsupported = image_preview_capabilities_from_env_values(
+            &disabled,
+            Some("dumb"),
+            Some("Apple_Terminal"),
+            None,
+            None,
+        );
+
+        assert_eq!(unsupported["protocol"], Value::Null);
+        assert_eq!(unsupported["source"], json!("none"));
+        assert_eq!(unsupported["inlinePreviews"], json!(false));
+        let unsupported_text = format_image_preview_capabilities(&unsupported);
+        assert!(unsupported_text.contains("previews disabled in settings"));
+        assert!(
+            unsupported_text.contains("terminal does not advertise native inline image support")
+        );
+    }
+
+    #[test]
+    fn image_artifact_rendering_skips_unbounded_iterm2_payloads() {
+        let root = env::temp_dir().join(format!("oppi-iterm-large-image-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let image_path = root.join("large.png");
+        fs::write(
+            &image_path,
+            vec![b'x'; ITERM2_INLINE_IMAGE_MAX_BYTES as usize + 1],
+        )
+        .unwrap();
+        let artifact = ArtifactMetadata {
+            id: "artifact-image-1".to_string(),
+            tool_call_id: "image-1".to_string(),
+            output_path: image_path.display().to_string(),
+            mime_type: Some("image/png".to_string()),
+            width: None,
+            height: None,
+            source_images: Vec::new(),
+            mask: None,
+            backend: None,
+            model: None,
+            bytes: Some(ITERM2_INLINE_IMAGE_MAX_BYTES + 1),
+            diagnostics: Vec::new(),
+        };
+        let settings = ImageSettings {
+            show_images: true,
+            image_width_cells: 80,
+            auto_resize_images: true,
+            block_images: false,
+            preview_protocol: ImagePreviewProtocolOverride::Auto,
+        };
+
+        let rendered = format_artifact_created_with_image_settings_and_protocol(
+            &artifact,
+            theme_tokens("plain"),
+            &settings,
+            Some(TerminalImageProtocol::Iterm2InlineFile),
+        );
+
+        assert!(!rendered.contains("\x1b]1337;File="));
+        assert!(rendered.contains("unsupported image format for native inline preview"));
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn image_artifact_rendering_prompts_when_preview_disabled() {
+        let artifact = ArtifactMetadata {
+            id: "artifact-image-1".to_string(),
+            tool_call_id: "image-1".to_string(),
+            output_path: "output/image.png".to_string(),
+            mime_type: Some("image/png".to_string()),
+            width: None,
+            height: None,
+            source_images: Vec::new(),
+            mask: None,
+            backend: None,
+            model: None,
+            bytes: None,
+            diagnostics: Vec::new(),
+        };
+        let settings = ImageSettings {
+            show_images: false,
+            image_width_cells: 80,
+            auto_resize_images: true,
+            block_images: false,
+            preview_protocol: ImagePreviewProtocolOverride::Auto,
+        };
+
+        let rendered = format_artifact_created_with_image_settings(
+            &artifact,
+            theme_tokens("plain"),
+            &settings,
+        );
+
+        assert!(!rendered.contains("\x1b_G"));
+        assert!(rendered.contains("Enable terminal images to preview inline."));
+    }
+
     fn sample_retained_ui_snapshot() -> RetainedTui {
         let mut ui = RetainedTui::new(20);
         ui.push_transcript("assistant:\n# Plan\n  • one\n```diff\n+ add\n- del\n```");
@@ -11514,7 +33411,7 @@ You are a careful repo helper.
             question: Some("Choose path — /answer <text-or-option-id>".to_string()),
             background: Some("1 running, 1 completed; latest=task-2".to_string()),
             suggestion: Some("Run snapshots".to_string()),
-            footer: "status: role=executor model=mock-scripted permissions=auto-review memory=client-hosted todos=2 queued=1 diagnostics=line-mode/raw-deferred variant=off theme=plain thread=thread-1".to_string(),
+            footer: format!("status: role=executor model={MOCK_MODEL_DISPLAY_LABEL} permissions=auto-review memory=client-hosted todos=2 queued=1 diagnostics=line-mode/raw-deferred variant=off theme=plain thread=thread-1"),
         });
         ui
     }
@@ -11664,6 +33561,71 @@ You are a careful repo helper.
     }
 
     #[test]
+    fn thread_tree_filter_modes_cover_native_session_tree_visibility() {
+        let project = oppi_protocol::ProjectRef {
+            id: "project".to_string(),
+            cwd: "/repo".to_string(),
+            display_name: None,
+            workspace_roots: Vec::new(),
+        };
+        let threads = vec![
+            Thread {
+                id: "thread-1".to_string(),
+                project: project.clone(),
+                status: oppi_protocol::ThreadStatus::Active,
+                title: Some("Root".to_string()),
+                forked_from: None,
+            },
+            Thread {
+                id: "thread-2".to_string(),
+                project: project.clone(),
+                status: oppi_protocol::ThreadStatus::Archived,
+                title: Some("Archived branch".to_string()),
+                forked_from: Some("thread-1".to_string()),
+            },
+            Thread {
+                id: "thread-3".to_string(),
+                project,
+                status: oppi_protocol::ThreadStatus::Active,
+                title: None,
+                forked_from: Some("thread-1".to_string()),
+            },
+        ];
+
+        let default = format_thread_tree_with_filter(
+            &threads,
+            "thread-1",
+            &BTreeSet::new(),
+            TreeFilterMode::Default,
+        );
+        assert!(default.contains("thread-1"));
+        assert!(default.contains("thread-3"));
+        assert!(!default.contains("thread-2"));
+        assert!(default.contains("filter: default"));
+
+        let all = format_thread_tree_with_filter(
+            &threads,
+            "thread-1",
+            &BTreeSet::new(),
+            TreeFilterMode::All,
+        );
+        assert!(all.contains("thread-2"));
+        assert!(all.contains("[archived]"));
+        assert!(all.contains("filter: all"));
+
+        let labeled = format_thread_tree_with_filter(
+            &threads,
+            "thread-1",
+            &BTreeSet::new(),
+            TreeFilterMode::LabeledOnly,
+        );
+        assert!(labeled.contains("thread-1"));
+        assert!(labeled.contains("thread-2"));
+        assert!(!labeled.contains("thread-3"));
+        assert!(labeled.contains("filter: labeled-only"));
+    }
+
+    #[test]
     fn exit_resume_command_is_the_last_exit_instruction() {
         let output = format!(
             "{EXIT_REQUESTED_TEXT}\n{}",
@@ -11770,6 +33732,7 @@ You are a careful repo helper.
         role_models.insert("reviewer".to_string(), "gpt-review".to_string());
         let provider = ProviderConfig::OpenAiCompatible(OpenAiCompatibleConfig {
             flavor: DirectProviderFlavor::OpenAiCompatible,
+            provider_id: None,
             model: "gpt-exec".to_string(),
             base_url: None,
             api_key_env: Some("OPPI_OPENAI_API_KEY".to_string()),
@@ -11796,6 +33759,7 @@ You are a careful repo helper.
         let role_models = BTreeMap::new();
         let provider = ProviderConfig::OpenAiCompatible(OpenAiCompatibleConfig {
             flavor: DirectProviderFlavor::OpenAiCodex,
+            provider_id: None,
             model: OPENAI_CODEX_DEFAULT_MODEL.to_string(),
             base_url: None,
             api_key_env: None,
@@ -11999,6 +33963,7 @@ You are a careful repo helper.
     fn effort_levels_are_model_dependent_like_pi_oppi() {
         let gpt54 = ProviderConfig::OpenAiCompatible(OpenAiCompatibleConfig {
             flavor: DirectProviderFlavor::OpenAiCodex,
+            provider_id: None,
             model: "gpt-5.4".to_string(),
             base_url: None,
             api_key_env: None,
@@ -12019,6 +33984,7 @@ You are a careful repo helper.
 
         let gpt41 = ProviderConfig::OpenAiCompatible(OpenAiCompatibleConfig {
             flavor: DirectProviderFlavor::OpenAiCompatible,
+            provider_id: None,
             model: "gpt-4.1".to_string(),
             base_url: None,
             api_key_env: Some("OPPI_OPENAI_API_KEY".to_string()),
@@ -12040,6 +34006,7 @@ You are a careful repo helper.
 
         let claude = ProviderConfig::OpenAiCompatible(OpenAiCompatibleConfig {
             flavor: DirectProviderFlavor::OpenAiCompatible,
+            provider_id: None,
             model: "claude-opus-4.7".to_string(),
             base_url: Some("http://127.0.0.1:3456".to_string()),
             api_key_env: Some(MERIDIAN_API_KEY_ENV.to_string()),
@@ -12061,6 +34028,7 @@ You are a careful repo helper.
     fn effort_argument_suggestions_follow_model_limits() {
         let gpt51 = ProviderConfig::OpenAiCompatible(OpenAiCompatibleConfig {
             flavor: DirectProviderFlavor::OpenAiCodex,
+            provider_id: None,
             model: "gpt-5.1".to_string(),
             base_url: None,
             api_key_env: None,
@@ -12077,6 +34045,7 @@ You are a careful repo helper.
 
         let gpt54 = ProviderConfig::OpenAiCompatible(OpenAiCompatibleConfig {
             flavor: DirectProviderFlavor::OpenAiCodex,
+            provider_id: None,
             model: "gpt-5.4".to_string(),
             base_url: None,
             api_key_env: None,
@@ -12099,6 +34068,7 @@ You are a careful repo helper.
     fn native_model_catalog_tracks_current_pi_defaults_and_provider_order() {
         let codex = ProviderConfig::OpenAiCompatible(OpenAiCompatibleConfig {
             flavor: DirectProviderFlavor::OpenAiCodex,
+            provider_id: None,
             model: OPENAI_CODEX_DEFAULT_MODEL.to_string(),
             base_url: None,
             api_key_env: None,
@@ -12118,6 +34088,7 @@ You are a careful repo helper.
 
         let copilot = ProviderConfig::OpenAiCompatible(OpenAiCompatibleConfig {
             flavor: DirectProviderFlavor::GitHubCopilot,
+            provider_id: None,
             model: GITHUB_COPILOT_DEFAULT_MODEL.to_string(),
             base_url: Some(GITHUB_COPILOT_DEFAULT_BASE_URL.to_string()),
             api_key_env: None,
@@ -12136,9 +34107,631 @@ You are a careful repo helper.
     }
 
     #[test]
+    fn custom_models_json_display_names_filter_like_pi_registry() {
+        let provider = ProviderConfig::OpenAiCompatible(OpenAiCompatibleConfig {
+            flavor: DirectProviderFlavor::OpenAiCodex,
+            provider_id: None,
+            model: OPENAI_CODEX_DEFAULT_MODEL.to_string(),
+            base_url: None,
+            api_key_env: None,
+            system_prompt: None,
+            temperature: None,
+            reasoning_effort: Some("medium".to_string()),
+            max_output_tokens: None,
+            stream: true,
+        });
+        let root = env::temp_dir().join(format!("oppi-custom-models-json-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("models.json");
+        fs::write(
+            &path,
+            r#"{
+              "providers": {
+                "openai-codex": {
+                  "models": [
+                    { "id": "gpt-local-coder", "name": "Local Coder" }
+                  ]
+                }
+              }
+            }"#,
+        )
+        .unwrap();
+
+        let refs = native_model_refs_for_provider_at_path(&provider, &path);
+        let filtered = filter_models(&refs, "Local");
+        let rendered = format_model_list(&refs, None, "Local", &BTreeMap::new());
+
+        assert!(
+            filtered.iter().any(|model| {
+                model.id == "gpt-local-coder" && model.display_name == "Local Coder"
+            })
+        );
+        assert!(rendered.contains("gpt-local-coder"));
+        assert!(rendered.contains("Local Coder"));
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn models_json_diagnostics_report_invalid_json_without_dropping_builtins() {
+        let provider = ProviderConfig::OpenAiCompatible(OpenAiCompatibleConfig {
+            flavor: DirectProviderFlavor::OpenAiCodex,
+            provider_id: None,
+            model: OPENAI_CODEX_DEFAULT_MODEL.to_string(),
+            base_url: None,
+            api_key_env: None,
+            system_prompt: None,
+            temperature: None,
+            reasoning_effort: Some("medium".to_string()),
+            max_output_tokens: None,
+            stream: true,
+        });
+        let root = env::temp_dir().join(format!(
+            "oppi-models-json-diagnostics-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("models.json");
+        fs::write(&path, r#"{ "providers": { "openai-codex": "#).unwrap();
+
+        let (refs, diagnostics) =
+            native_model_refs_for_provider_at_path_with_diagnostics(&provider, &path);
+        let rendered =
+            format_model_list_with_diagnostics(&refs, None, "", &BTreeMap::new(), &diagnostics);
+
+        assert!(
+            refs.iter()
+                .any(|model| model.id == OPENAI_CODEX_DEFAULT_MODEL)
+        );
+        assert!(
+            diagnostics
+                .iter()
+                .any(|message| message.contains("models.json") && message.contains("parse"))
+        );
+        assert!(rendered.contains("diagnostics:"));
+        assert!(rendered.contains("models.json"));
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn models_json_diagnostics_report_unsupported_api_unknown_override_and_missing_auth() {
+        let provider = ProviderConfig::OpenAiCompatible(OpenAiCompatibleConfig {
+            flavor: DirectProviderFlavor::OpenAiCodex,
+            provider_id: None,
+            model: OPENAI_CODEX_DEFAULT_MODEL.to_string(),
+            base_url: None,
+            api_key_env: None,
+            system_prompt: None,
+            temperature: None,
+            reasoning_effort: Some("medium".to_string()),
+            max_output_tokens: None,
+            stream: true,
+        });
+        let root = env::temp_dir().join(format!(
+            "oppi-models-json-diagnostics-rest-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("models.json");
+        fs::write(
+            &path,
+            r#"{
+              "providers": {
+                "openai-codex": {
+                  "modelOverrides": {
+                    "gpt-ghost": { "name": "Ghost Route" }
+                  },
+                  "models": [
+                    {
+                      "id": "codex-anthropic-route",
+                      "name": "Codex Anthropic Route",
+                      "api": "anthropic-messages"
+                    }
+                  ]
+                },
+                "local-no-auth": {
+                  "baseUrl": "http://localhost:11434/v1",
+                  "api": "openai-completions",
+                  "models": [
+                    { "id": "llama3.1:8b" }
+                  ]
+                },
+                "gemini-proxy": {
+                  "baseUrl": "https://generativelanguage.googleapis.com/v1beta",
+                  "api": "google-generative-ai",
+                  "apiKey": "GEMINI_API_KEY",
+                  "models": [
+                    { "id": "gemma-4-31b-it" }
+                  ]
+                }
+              }
+            }"#,
+        )
+        .unwrap();
+
+        let (_, diagnostics) =
+            native_model_refs_for_provider_at_path_with_diagnostics(&provider, &path);
+
+        assert!(diagnostics.iter().any(|message| {
+            message.contains("unsupported provider API")
+                && message.contains("anthropic-messages")
+                && message.contains("codex-anthropic-route")
+        }));
+        assert!(diagnostics.iter().any(|message| {
+            message.contains("unsupported provider API")
+                && message.contains("google-generative-ai")
+                && message.contains("gemini-proxy")
+        }));
+        assert!(diagnostics.iter().any(|message| {
+            message.contains("ignored modelOverrides")
+                && message.contains("openai-codex")
+                && message.contains("gpt-ghost")
+        }));
+        assert!(diagnostics.iter().any(|message| {
+            message.contains("apiKey")
+                && message.contains("required")
+                && message.contains("local-no-auth")
+        }));
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn models_json_merge_applies_overrides_and_custom_upserts_like_pi_registry() {
+        let provider = ProviderConfig::OpenAiCompatible(OpenAiCompatibleConfig {
+            flavor: DirectProviderFlavor::OpenAiCodex,
+            provider_id: None,
+            model: OPENAI_CODEX_DEFAULT_MODEL.to_string(),
+            base_url: None,
+            api_key_env: None,
+            system_prompt: None,
+            temperature: None,
+            reasoning_effort: Some("medium".to_string()),
+            max_output_tokens: None,
+            stream: true,
+        });
+        let root = env::temp_dir().join(format!("oppi-models-json-merge-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("models.json");
+        fs::write(
+            &path,
+            r#"{
+              "providers": {
+                "openai-codex": {
+                  "baseUrl": "https://proxy.example.com/backend-api",
+                  "api": "openai-completions",
+                  "headers": { "x-provider-route": "codex" },
+                  "compat": { "supportsReasoningEffort": false },
+                  "modelOverrides": {
+                    "gpt-5.3-codex": {
+                      "name": "GPT 5.3 Codex Routed",
+                      "reasoning": false,
+                      "input": ["text", "image"],
+                      "cost": { "input": 1.25 },
+                      "contextWindow": 111000,
+                      "maxTokens": 22222,
+                      "headers": { "x-model-route": "codex-53" },
+                      "compat": { "supportsDeveloperRole": false }
+                    }
+                  },
+                  "models": [
+                    {
+                      "id": "gpt-5.4",
+                      "name": "GPT 5.4 Custom Replacement",
+                      "reasoning": true,
+                      "input": ["text"],
+                      "contextWindow": 333000,
+                      "maxTokens": 44444,
+                      "headers": { "x-custom-route": "replacement" },
+                      "compat": { "supportsReasoningEffort": true }
+                    },
+                    {
+                      "id": "gpt-local-coder",
+                      "name": "Local Coder",
+                      "api": "openai-completions",
+                      "baseUrl": "http://localhost:11434/v1",
+                      "headers": { "x-local-route": "1" }
+                    }
+                  ]
+                }
+              }
+            }"#,
+        )
+        .unwrap();
+
+        let (entries, diagnostics) =
+            native_model_entries_for_provider_at_path_with_diagnostics(&provider, &path);
+        assert_eq!(diagnostics, Vec::<String>::new());
+
+        let overridden = entries
+            .iter()
+            .find(|model| model.id == "gpt-5.3-codex")
+            .unwrap();
+        assert_eq!(overridden.display_name, "GPT 5.3 Codex Routed");
+        assert_eq!(
+            overridden.base_url.as_deref(),
+            Some("https://proxy.example.com/backend-api")
+        );
+        assert_eq!(overridden.reasoning, Some(false));
+        assert_eq!(overridden.input, vec!["text", "image"]);
+        assert_eq!(overridden.context_window, Some(111000));
+        assert_eq!(overridden.max_tokens, Some(22222));
+        assert_eq!(
+            overridden.headers.as_ref().unwrap()["x-provider-route"],
+            json!("codex")
+        );
+        assert_eq!(
+            overridden.headers.as_ref().unwrap()["x-model-route"],
+            json!("codex-53")
+        );
+        assert_eq!(
+            overridden.compat.as_ref().unwrap()["supportsReasoningEffort"],
+            json!(false)
+        );
+        assert_eq!(
+            overridden.compat.as_ref().unwrap()["supportsDeveloperRole"],
+            json!(false)
+        );
+        assert_eq!(overridden.cost.as_ref().unwrap()["input"], json!(1.25));
+
+        let replaced = entries.iter().find(|model| model.id == "gpt-5.4").unwrap();
+        assert_eq!(replaced.display_name, "GPT 5.4 Custom Replacement");
+        assert_eq!(replaced.context_window, Some(333000));
+        assert_eq!(replaced.max_tokens, Some(44444));
+        assert_eq!(replaced.reasoning, Some(true));
+        assert_eq!(
+            replaced.compat.as_ref().unwrap()["supportsReasoningEffort"],
+            json!(true)
+        );
+        assert_eq!(
+            entries.iter().filter(|model| model.id == "gpt-5.4").count(),
+            1
+        );
+
+        let appended = entries
+            .iter()
+            .find(|model| model.id == "gpt-local-coder")
+            .unwrap();
+        assert_eq!(appended.display_name, "Local Coder");
+        assert_eq!(appended.api.as_deref(), Some("openai-completions"));
+        assert_eq!(
+            appended.base_url.as_deref(),
+            Some("http://localhost:11434/v1")
+        );
+        assert!(
+            entries
+                .iter()
+                .position(|model| model.id == "gpt-local-coder")
+                > entries.iter().position(|model| model.id == "gpt-5.4")
+        );
+
+        let refs = native_model_refs_for_provider_at_path(&provider, &path);
+        let rendered = format_model_list(&refs, None, "Routed", &BTreeMap::new());
+        assert!(rendered.contains("gpt-5.3-codex"));
+        assert!(rendered.contains("GPT 5.3 Codex Routed"));
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn model_auth_availability_filters_unconfigured_provider_and_allows_all_registry_entries() {
+        let provider = ProviderConfig::OpenAiCompatible(OpenAiCompatibleConfig {
+            flavor: DirectProviderFlavor::OpenAiCodex,
+            provider_id: None,
+            model: OPENAI_CODEX_DEFAULT_MODEL.to_string(),
+            base_url: None,
+            api_key_env: None,
+            system_prompt: None,
+            temperature: None,
+            reasoning_effort: Some("medium".to_string()),
+            max_output_tokens: None,
+            stream: true,
+        });
+        let root = env::temp_dir().join(format!(
+            "oppi-model-auth-availability-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let models_path = root.join("models.json");
+        let codex_auth_path = root.join("auth.json");
+        let copilot_auth_path = root.join("copilot-auth.json");
+
+        let (available_without_auth, diagnostics) =
+            main_model_refs_for_provider_at_path_with_auth_paths(
+                None,
+                &[],
+                &provider,
+                &models_path,
+                &codex_auth_path,
+                &copilot_auth_path,
+                true,
+            );
+        let (all_without_auth, _) = main_model_refs_for_provider_at_path_with_auth_paths(
+            None,
+            &[],
+            &provider,
+            &models_path,
+            &codex_auth_path,
+            &copilot_auth_path,
+            false,
+        );
+
+        assert_eq!(diagnostics, Vec::<String>::new());
+        assert!(available_without_auth.is_empty());
+        assert!(
+            all_without_auth
+                .iter()
+                .any(|model| model.id == OPENAI_CODEX_DEFAULT_MODEL)
+        );
+
+        fs::write(
+            &models_path,
+            r#"{
+              "providers": {
+                "openai-codex": {
+                  "apiKey": "!do-not-run-during-listing",
+                  "models": [
+                    { "id": "gpt-local-coder", "name": "Local Coder" }
+                  ]
+                }
+              }
+            }"#,
+        )
+        .unwrap();
+
+        let (available_from_models_json_auth, _) =
+            main_model_refs_for_provider_at_path_with_auth_paths(
+                None,
+                &[],
+                &provider,
+                &models_path,
+                &codex_auth_path,
+                &copilot_auth_path,
+                true,
+            );
+        assert!(
+            available_from_models_json_auth
+                .iter()
+                .any(|model| model.id == OPENAI_CODEX_DEFAULT_MODEL)
+        );
+        assert!(
+            available_from_models_json_auth
+                .iter()
+                .any(|model| model.id == "gpt-local-coder" && model.display_name == "Local Coder")
+        );
+
+        let (show_all, filter) = parse_models_command_args("--all Local");
+        assert!(show_all);
+        assert_eq!(filter, "Local");
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn model_auth_availability_reads_codex_and_copilot_auth_store_status() {
+        let root = env::temp_dir().join(format!("oppi-model-auth-stores-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let models_path = root.join("missing-models.json");
+        let codex_auth_path = root.join("codex-auth.json");
+        let copilot_auth_path = root.join("copilot-auth.json");
+        fs::write(
+            &codex_auth_path,
+            r#"{
+              "openai-codex": {
+                "type": "oauth",
+                "access": "codex-access",
+                "refresh": "codex-refresh",
+                "accountId": "acct_123"
+              }
+            }"#,
+        )
+        .unwrap();
+        fs::write(
+            &copilot_auth_path,
+            r#"{
+              "github-copilot": {
+                "type": "oauth",
+                "access": "copilot-access;proxy-ep=proxy.individual.githubcopilot.com",
+                "refresh": "copilot-refresh",
+                "expires": 4102444800
+              }
+            }"#,
+        )
+        .unwrap();
+
+        let codex_provider = ProviderConfig::OpenAiCompatible(OpenAiCompatibleConfig {
+            flavor: DirectProviderFlavor::OpenAiCodex,
+            provider_id: None,
+            model: OPENAI_CODEX_DEFAULT_MODEL.to_string(),
+            base_url: None,
+            api_key_env: None,
+            system_prompt: None,
+            temperature: None,
+            reasoning_effort: Some("medium".to_string()),
+            max_output_tokens: None,
+            stream: true,
+        });
+        let copilot_provider = ProviderConfig::OpenAiCompatible(OpenAiCompatibleConfig {
+            flavor: DirectProviderFlavor::GitHubCopilot,
+            provider_id: None,
+            model: GITHUB_COPILOT_DEFAULT_MODEL.to_string(),
+            base_url: None,
+            api_key_env: None,
+            system_prompt: None,
+            temperature: None,
+            reasoning_effort: Some("medium".to_string()),
+            max_output_tokens: None,
+            stream: true,
+        });
+
+        let (codex_models, _) = main_model_refs_for_provider_at_path_with_auth_paths(
+            None,
+            &[],
+            &codex_provider,
+            &models_path,
+            &codex_auth_path,
+            &copilot_auth_path,
+            true,
+        );
+        let (copilot_models, _) = main_model_refs_for_provider_at_path_with_auth_paths(
+            None,
+            &[],
+            &copilot_provider,
+            &models_path,
+            &codex_auth_path,
+            &copilot_auth_path,
+            true,
+        );
+
+        assert!(codex_models.iter().any(|model| model.id == "gpt-5.5"));
+        assert!(
+            copilot_models
+                .iter()
+                .any(|model| model.id == GITHUB_COPILOT_DEFAULT_MODEL)
+        );
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn custom_provider_model_selection_builds_openai_compatible_config_from_env_ref() {
+        let root = env::temp_dir().join(format!(
+            "oppi-custom-provider-selection-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("models.json");
+        fs::write(
+            &path,
+            r#"{
+              "providers": {
+                "ollama": {
+                  "baseUrl": "http://localhost:11434/v1",
+                  "api": "openai-completions",
+                  "apiKey": "OPPI_OLLAMA_API_KEY",
+                  "models": [
+                    {
+                      "id": "qwen2.5-coder:7b",
+                      "name": "Qwen Coder Local",
+                      "maxTokens": 12345,
+                      "compat": { "supportsReasoningEffort": false }
+                    }
+                  ]
+                }
+              }
+            }"#,
+        )
+        .unwrap();
+
+        let provider =
+            custom_provider_config_for_model_at_path("ollama/qwen2.5-coder:7b", &path).unwrap();
+
+        assert_eq!(provider_name(&provider), "ollama");
+        match provider {
+            ProviderConfig::OpenAiCompatible(config) => {
+                assert_eq!(config.flavor, DirectProviderFlavor::OpenAiCompatible);
+                assert_eq!(config.model, "qwen2.5-coder:7b");
+                assert_eq!(
+                    config.base_url.as_deref(),
+                    Some("http://localhost:11434/v1")
+                );
+                assert_eq!(config.api_key_env.as_deref(), Some("OPPI_OLLAMA_API_KEY"));
+                assert_eq!(config.max_output_tokens, Some(12345));
+                assert_eq!(config.reasoning_effort, None);
+                assert!(config.stream);
+            }
+            ProviderConfig::Mock => panic!("expected OpenAI-compatible custom provider"),
+        }
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn custom_provider_model_selection_rejects_unsupported_apis_and_raw_keys() {
+        let root = env::temp_dir().join(format!(
+            "oppi-custom-provider-rejections-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("models.json");
+        fs::write(
+            &path,
+            r#"{
+              "providers": {
+                "anthropic-proxy": {
+                  "baseUrl": "https://proxy.example.com/v1",
+                  "api": "anthropic-messages",
+                  "apiKey": "OPPI_ANTHROPIC_PROXY_API_KEY",
+                  "models": [
+                    { "id": "claude-proxy" }
+                  ]
+                },
+                "google-proxy": {
+                  "baseUrl": "https://generativelanguage.googleapis.com/v1beta",
+                  "api": "google-generative-ai",
+                  "apiKey": "OPPI_GOOGLE_PROXY_API_KEY",
+                  "models": [
+                    { "id": "gemma-4-31b-it" }
+                  ]
+                },
+                "literal-local": {
+                  "baseUrl": "http://localhost:11434/v1",
+                  "api": "openai-completions",
+                  "apiKey": "ollama",
+                  "models": [
+                    { "id": "llama3.1:8b" }
+                  ]
+                },
+                "command-local": {
+                  "baseUrl": "http://localhost:11434/v1",
+                  "api": "openai-completions",
+                  "apiKey": "!op read op://vault/item/key",
+                  "models": [
+                    { "id": "qwen2.5-coder:7b" }
+                  ]
+                }
+              }
+            }"#,
+        )
+        .unwrap();
+
+        let anthropic =
+            custom_provider_config_for_model_at_path("anthropic-proxy/claude-proxy", &path)
+                .expect_err("anthropic custom API should be rejected");
+        assert!(anthropic.contains("unsupported api anthropic-messages"));
+
+        let google = custom_provider_config_for_model_at_path("google-proxy/gemma-4-31b-it", &path)
+            .expect_err("google custom API should be rejected");
+        assert!(google.contains("unsupported api google-generative-ai"));
+
+        let literal = custom_provider_config_for_model_at_path("literal-local/llama3.1:8b", &path)
+            .expect_err("literal apiKey should be rejected");
+        assert!(literal.contains("safe environment variable reference"));
+        assert!(literal.contains("raw or literal keys"));
+
+        let command =
+            custom_provider_config_for_model_at_path("command-local/qwen2.5-coder:7b", &path)
+                .expect_err("command apiKey should be rejected");
+        assert!(command.contains("command-backed"));
+        assert!(command.contains("safe environment variable reference"));
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
     fn scoped_model_scope_preserves_order_and_pi_settings_key() {
         let provider = ProviderConfig::OpenAiCompatible(OpenAiCompatibleConfig {
             flavor: DirectProviderFlavor::OpenAiCodex,
+            provider_id: None,
             model: OPENAI_CODEX_DEFAULT_MODEL.to_string(),
             base_url: None,
             api_key_env: None,
@@ -12174,6 +34767,54 @@ You are a careful repo helper.
     }
 
     #[test]
+    fn scoped_model_list_renders_runtime_registry_models_and_scope_order() {
+        let provider = ProviderConfig::OpenAiCompatible(OpenAiCompatibleConfig {
+            flavor: DirectProviderFlavor::OpenAiCodex,
+            provider_id: None,
+            model: OPENAI_CODEX_DEFAULT_MODEL.to_string(),
+            base_url: None,
+            api_key_env: None,
+            system_prompt: None,
+            temperature: None,
+            reasoning_effort: Some("medium".to_string()),
+            max_output_tokens: None,
+            stream: true,
+        });
+        let registry = ModelRegistryListResult {
+            provider: "openai-codex".to_string(),
+            scope: vec![
+                "openai-codex/gpt-local-coder".to_string(),
+                "gpt-5.4-mini".to_string(),
+            ],
+            available_only: false,
+            selected_model: None,
+            items: vec![
+                ModelRef {
+                    id: "gpt-5.4-mini".to_string(),
+                    provider: "openai-codex".to_string(),
+                    display_name: "GPT 5.4 Mini".to_string(),
+                    context_window: None,
+                    role: None,
+                },
+                ModelRef {
+                    id: "gpt-local-coder".to_string(),
+                    provider: "openai-codex".to_string(),
+                    display_name: "Local Coder".to_string(),
+                    context_window: None,
+                    role: None,
+                },
+            ],
+            diagnostics: Vec::new(),
+        };
+
+        let rendered = format_scoped_models_from_registry(&provider, &registry);
+
+        assert!(rendered.contains("patterns: openai-codex/gpt-local-coder, gpt-5.4-mini"));
+        assert!(rendered.contains("resolved: gpt-local-coder, gpt-5.4-mini"));
+        assert!(rendered.contains("gpt-local-coder (Local Coder)"));
+    }
+
+    #[test]
     fn provider_status_redacts_credentials_and_roles_filter_models() {
         let mut role_models = BTreeMap::new();
         role_models.insert("reviewer".to_string(), "gpt-review".to_string());
@@ -12186,12 +34827,14 @@ You are a careful repo helper.
                 id: "gpt-main".to_string(),
                 provider: "openai-compatible".to_string(),
                 display_name: "Main".to_string(),
+                context_window: None,
                 role: None,
             },
             ModelRef {
                 id: "gpt-review".to_string(),
                 provider: "openai-compatible".to_string(),
                 display_name: "Reviewer".to_string(),
+                context_window: None,
                 role: Some("reviewer".to_string()),
             },
         ];
@@ -12207,6 +34850,7 @@ You are a careful repo helper.
         );
         let provider = ProviderConfig::OpenAiCompatible(OpenAiCompatibleConfig {
             flavor: DirectProviderFlavor::OpenAiCompatible,
+            provider_id: None,
             model: "gpt-main".to_string(),
             base_url: Some("https://user:secret@example.com/v1".to_string()),
             api_key_env: Some("OPPI_OPENAI_API_KEY".to_string()),
@@ -12237,6 +34881,7 @@ You are a careful repo helper.
         assert!(login_subscription_picker_panel().contains("native browser OAuth"));
         let codex = OpenAiCompatibleConfig {
             flavor: DirectProviderFlavor::OpenAiCodex,
+            provider_id: None,
             model: OPENAI_CODEX_DEFAULT_MODEL.to_string(),
             base_url: None,
             api_key_env: None,
@@ -12254,6 +34899,7 @@ You are a careful repo helper.
         );
         let copilot = OpenAiCompatibleConfig {
             flavor: DirectProviderFlavor::GitHubCopilot,
+            provider_id: None,
             model: GITHUB_COPILOT_DEFAULT_MODEL.to_string(),
             base_url: Some(GITHUB_COPILOT_DEFAULT_BASE_URL.to_string()),
             api_key_env: None,
@@ -12278,6 +34924,17 @@ You are a careful repo helper.
         assert!(login_action_approved(&["--yes"]));
         assert!(!login_action_approved(&[]));
         assert!(meridian_status_panel().contains("no hidden npx"));
+    }
+
+    #[test]
+    fn native_usage_status_note_stays_local_without_punting_to_pi_usage() {
+        let note = native_usage_status_note();
+        assert!(note.contains("provider-neutral/local only"));
+        assert!(note.contains("do not claim subscription remaining limits"));
+        assert!(
+            note.contains("native shell turns do not automatically inject recalled memory yet")
+        );
+        assert!(!note.contains("use stable Pi /usage"));
     }
 
     #[test]
@@ -12310,6 +34967,7 @@ You are a careful repo helper.
     fn prompt_variant_appends_to_provider_system_prompt() {
         let config = OpenAiCompatibleConfig {
             flavor: DirectProviderFlavor::OpenAiCompatible,
+            provider_id: None,
             model: "mock".to_string(),
             base_url: None,
             api_key_env: None,
@@ -12343,6 +35001,7 @@ You are a careful repo helper.
     fn feature_routing_appends_to_native_provider_without_duplicates() {
         let config = OpenAiCompatibleConfig {
             flavor: DirectProviderFlavor::OpenAiCompatible,
+            provider_id: None,
             model: "mock".to_string(),
             base_url: None,
             api_key_env: None,
@@ -12369,6 +35028,7 @@ You are a careful repo helper.
     fn goal_continuation_appends_to_provider_system_prompt() {
         let config = OpenAiCompatibleConfig {
             flavor: DirectProviderFlavor::OpenAiCompatible,
+            provider_id: None,
             model: "mock".to_string(),
             base_url: None,
             api_key_env: None,

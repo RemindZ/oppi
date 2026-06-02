@@ -3,13 +3,16 @@ import { StringEnum } from "@mariozechner/pi-ai";
 import { Text } from "@mariozechner/pi-tui";
 import { Type, type Static } from "typebox";
 import { randomBytes } from "node:crypto";
-import { createWriteStream, existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
-import { mkdir, readFile, stat, unlink } from "node:fs/promises";
-import { delimiter, join, resolve } from "node:path";
+import { closeSync, createWriteStream, existsSync, mkdirSync, openSync, readSync, statSync } from "node:fs";
+import { appendFile, mkdir, readFile, stat, unlink, writeFile } from "node:fs/promises";
+import { dirname, delimiter, join, resolve } from "node:path";
 import { platform, tmpdir } from "node:os";
+import { fileURLToPath } from "node:url";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { registerBackgroundTask, updateBackgroundTask } from "./background-tasks";
+import { effectiveSandboxConfig, readPermissionConfig } from "./permissions";
 
+const __dirname = dirname(fileURLToPath(import.meta.url));
 const SHELL_OUTPUT_DIR = join("output", "shelltool");
 const DEFAULT_TIMEOUT_MS = 120_000;
 const MAX_TIMEOUT_MS = 30 * 60_000;
@@ -20,6 +23,8 @@ const MAX_TASKS = 80;
 const PROGRESS_INTERVAL_MS = 1_000;
 const TASK_STALL_AFTER_MS = 60_000;
 const BG_OUTPUT_MAX_BYTES = 25 * 1024 * 1024;
+const RUST_SANDBOX_ENV = "OPPI_SHELL_EXEC_RUST_SANDBOX";
+const REQUIRE_RUST_SANDBOX_ENV = "OPPI_REQUIRE_RUST_SANDBOX";
 
 const shellKindSchema = StringEnum(["auto", "bash", "powershell"] as const, {
   description: "Shell provider. auto uses PowerShell on Windows when available, otherwise Bash/POSIX shell.",
@@ -34,7 +39,7 @@ const shellExecSchema = Type.Object(
     run_in_background: Type.Optional(Type.Boolean({ description: "Start the command as a background task and return immediately with a task ID." })),
     background_on_timeout: Type.Optional(Type.Boolean({ description: "If true, timeout leaves the process running as a background task instead of killing it." })),
     cwd: Type.Optional(Type.String({ description: "Optional working directory. Relative paths resolve from the session cwd/current shell cwd." })),
-    dangerouslyDisableSandbox: Type.Optional(Type.Boolean({ description: "Accepted for compatibility. Stage 1 shell_exec does not provide a native sandbox boundary." })),
+    dangerouslyDisableSandbox: Type.Optional(Type.Boolean({ description: "Bypass OPPi's Rust sandbox routing for this call when explicitly approved." })),
   },
   { additionalProperties: false },
 );
@@ -72,6 +77,16 @@ type ShellTask = ShellExecDetails & {
   outputPathAbs: string;
   lastOutputBytes: number;
   lastOutputAt: number;
+};
+
+type RustSandboxExecResult = {
+  decision?: { type?: string; reason?: string };
+  plan?: { sandboxType?: string; enforcement?: string };
+  exitCode?: number | null;
+  stdout?: string;
+  stderr?: string;
+  timedOut?: boolean;
+  audit?: unknown[];
 };
 
 const shellTaskSchema = Type.Object(
@@ -143,6 +158,45 @@ function findExecutable(names: string[], extra: string[] = []): string | undefin
   return undefined;
 }
 
+function resolveOppiServerBin(cwd: string): string | undefined {
+  const explicit = process.env.OPPI_SERVER_BIN?.trim();
+  if (explicit) return resolve(explicit);
+  const exe = platform() === "win32" ? "oppi-server.exe" : "oppi-server";
+  const candidates = [
+    resolve(cwd, "target", "debug", exe),
+    resolve(cwd, "target", "release", exe),
+    resolve(__dirname, "..", "..", "..", "target", "debug", exe),
+    resolve(__dirname, "..", "..", "..", "target", "release", exe),
+  ];
+  return candidates.find((candidate) => existsSync(candidate));
+}
+
+function rustSandboxEnabled(): boolean {
+  const raw = process.env[RUST_SANDBOX_ENV]?.trim().toLowerCase();
+  return raw !== "0" && raw !== "false" && raw !== "off" && raw !== "no";
+}
+
+function rustSandboxRequired(): boolean {
+  const raw = process.env[REQUIRE_RUST_SANDBOX_ENV]?.trim().toLowerCase();
+  return raw === "1" || raw === "true" || raw === "on" || raw === "yes";
+}
+
+function commandLooksLikeNetwork(command: string): boolean {
+  return /\b(?:curl|wget|iwr|irm|ssh|scp|sftp|rsync|git\s+(?:clone|fetch|pull|push)|npm\s+(?:install|add|publish)|pnpm\s+(?:install|add|dlx)|yarn\s+(?:install|add)|pip\s+install|uv\s+(?:add|pip|run)|docker\s+(?:pull|push|login)|gh\b|aws\b|az\b|gcloud\b|kubectl\b)\b/i.test(command);
+}
+
+function commandLooksLikeWrite(command: string): boolean {
+  return /(?:^|[\s;&|])(?:rm|del|rmdir|mkdir|touch|mv|cp|copy|xcopy|robocopy|echo\b.*>|set-content|out-file|new-item|remove-item|npm\s+(?:install|add)|pnpm\s+(?:install|add)|yarn\s+(?:install|add)|pip\s+install|cargo\s+(?:build|test|run|fmt|clippy)|go\s+(?:build|test|mod)|dotnet\s+(?:build|test|restore)|git\s+(?:checkout|switch|merge|rebase|reset|clean|commit|apply|am))\b/i.test(command)
+    || />|>>/.test(command);
+}
+
+function permissionModeForRust(mode: string): string {
+  if (mode === "read-only") return "read-only";
+  if (mode === "full-access") return "full-access";
+  if (mode === "default") return "default";
+  return "auto-review";
+}
+
 function resolveShell(choice: ShellChoice): { kind: ShellKind; executable: string } {
   const win = platform() === "win32";
   const bashExtras = win
@@ -190,14 +244,22 @@ function buildPowerShellArgs(command: string, cwdPath: string): string[] {
 }
 
 function readTail(path: string, maxBytes = INLINE_MAX_BYTES): string {
+  let fd: number | undefined;
   try {
     const stats = statSync(path);
     const bytes = Math.min(Math.max(1, maxBytes), stats.size);
-    const fd = readFileSync(path);
-    if (fd.length <= bytes) return fd.toString("utf8");
-    return fd.subarray(fd.length - bytes).toString("utf8");
+    if (bytes <= 0) return "";
+    fd = openSync(path, "r");
+    const buffer = Buffer.allocUnsafe(bytes);
+    const offset = Math.max(0, stats.size - bytes);
+    const read = readSync(fd, buffer, 0, bytes, offset);
+    return buffer.subarray(0, read).toString("utf8");
   } catch {
     return "";
+  } finally {
+    if (fd !== undefined) {
+      try { closeSync(fd); } catch { /* best effort */ }
+    }
   }
 }
 
@@ -257,6 +319,241 @@ function killProcessTree(task: ShellTask, signal: NodeJS.Signals = "SIGTERM"): v
 function resolveRunCwd(ctx: ExtensionContext, requested?: string): string {
   const base = sessionCwd || ctx.cwd;
   return requested ? resolve(base, requested) : base;
+}
+
+function buildRustSandboxParams(ctx: ExtensionContext, params: ShellExecInput, runCwd: string, timeoutSeconds: number) {
+  const permission = readPermissionConfig(ctx.cwd);
+  const sandbox = effectiveSandboxConfig(permission, ctx.cwd);
+  const mode = permissionModeForRust(permission.mode);
+  const filesystem = mode === "read-only" ? "readOnly" : mode === "full-access" ? "unrestricted" : "workspaceWrite";
+  const network = mode === "full-access" || sandbox.allowInternet || sandbox.allowSsh || sandbox.managedNetwork ? "enabled" : "disabled";
+  return {
+    policy: {
+      permissionProfile: {
+        mode,
+        readableRoots: sandbox.readableRoots,
+        writableRoots: sandbox.writableRoots,
+        protectedPatterns: sandbox.protectedPatterns,
+      },
+      network,
+      filesystem,
+    },
+    request: {
+      command: params.command,
+      cwd: runCwd,
+      writesFiles: commandLooksLikeWrite(params.command),
+      usesNetwork: commandLooksLikeNetwork(params.command),
+      touchesProtectedPath: false,
+      touchedPaths: [],
+    },
+    preference: "auto",
+    approvalGranted: true,
+    managedNetwork: sandbox.managedNetwork,
+    timeoutMs: timeoutSeconds * 1000,
+    maxOutputBytes: INLINE_MAX_BYTES,
+  };
+}
+
+function startRustSandboxExec(ctx: ExtensionContext, params: ShellExecInput, runCwd: string, timeoutSeconds: number): { child: ChildProcessWithoutNullStreams; result: Promise<RustSandboxExecResult> } {
+  const serverBin = resolveOppiServerBin(ctx.cwd);
+  if (!serverBin) throw new Error("Rust sandbox server not found. Build `cargo build -p oppi-server` or set OPPI_SERVER_BIN.");
+  const authToken = randomBytes(16).toString("hex");
+  const request = {
+    jsonrpc: "2.0",
+    id: "shell_exec",
+    method: "sandbox/exec",
+    params: { ...buildRustSandboxParams(ctx, params, runCwd, timeoutSeconds), authToken },
+  };
+  const child = spawn(serverBin, ["--stdio"], {
+    cwd: ctx.cwd,
+    env: { ...process.env, OPPI_SERVER_AUTH_TOKEN: authToken, OPPI_EXPERIMENTAL_RUNTIME: "1" },
+    stdio: ["pipe", "pipe", "pipe"],
+    windowsHide: true,
+  });
+  const result = new Promise<RustSandboxExecResult>((resolveResult, rejectResult) => {
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk: Buffer) => { stdout += chunk.toString("utf8"); });
+    child.stderr.on("data", (chunk: Buffer) => { stderr += chunk.toString("utf8"); });
+    child.on("error", rejectResult);
+    child.on("close", () => {
+      const line = stdout.split(/\r?\n/).find((item) => item.trim());
+      if (!line) {
+        rejectResult(new Error(`Rust sandbox server returned no response.${stderr.trim() ? ` stderr: ${stderr.trim()}` : ""}`));
+        return;
+      }
+      try {
+        const response = JSON.parse(line);
+        if (response.error) {
+          rejectResult(new Error(response.error.message || JSON.stringify(response.error)));
+          return;
+        }
+        resolveResult(response.result as RustSandboxExecResult);
+      } catch (error) {
+        rejectResult(new Error(`Invalid Rust sandbox response: ${error instanceof Error ? error.message : String(error)}${stderr.trim() ? ` stderr: ${stderr.trim()}` : ""}`));
+      }
+    });
+  });
+  child.stdin.end(`${JSON.stringify(request)}\n`);
+  return { child, result };
+}
+
+function callRustSandboxExec(ctx: ExtensionContext, params: ShellExecInput, runCwd: string, timeoutSeconds: number): Promise<RustSandboxExecResult> {
+  return startRustSandboxExec(ctx, params, runCwd, timeoutSeconds).result;
+}
+
+function rustSandboxDenied(result: RustSandboxExecResult): boolean {
+  return result.decision?.type === "deny" || result.decision?.type === "Deny";
+}
+
+function applyRustSandboxResultToTask(task: ShellTask, result: RustSandboxExecResult, output: string): void {
+  const completedAt = new Date().toISOString();
+  const denied = rustSandboxDenied(result);
+  task.child = undefined;
+  task.exitCode = result.exitCode ?? null;
+  task.status = denied ? "failed" : result.timedOut ? "timed_out" : result.exitCode === 0 ? "completed" : "failed";
+  task.cwdAfter = task.cwdBefore;
+  task.outputBytes = Buffer.byteLength(output, "utf8");
+  task.truncated = task.outputBytes > INLINE_MAX_BYTES;
+  task.timedOut = result.timedOut;
+  task.completedAt = completedAt;
+  task.durationMs = Date.parse(completedAt) - Date.parse(task.startedAt);
+  task.lastOutputBytes = task.outputBytes;
+  task.lastOutputAt = Date.now();
+  task.stalledHint = result.plan ? `Rust sandbox: ${result.plan.sandboxType ?? "unknown"}/${result.plan.enforcement ?? "unknown"}` : undefined;
+}
+
+async function runRustSandboxedShellCommand(ctx: ExtensionContext, params: ShellExecInput, choice: ShellChoice, runCwd: string, timeoutSeconds: number): Promise<ShellTask> {
+  const shell = resolveShell(choice);
+  const id = taskId();
+  const outputDir = ensureOutputDir(ctx.cwd);
+  const outputPathAbs = join(outputDir, `${id}.log`);
+  const startedAt = new Date().toISOString();
+  const result = await callRustSandboxExec(ctx, params, runCwd, timeoutSeconds);
+  const output = `${result.stdout || ""}${result.stderr || ""}`;
+  await mkdir(dirname(outputPathAbs), { recursive: true });
+  await writeFile(outputPathAbs, output, "utf8");
+  const task: ShellTask = {
+    taskId: id,
+    shell: shell.kind,
+    command: params.command,
+    description: params.description,
+    status: "running",
+    cwdBefore: runCwd,
+    outputPath: displayPath(ctx.cwd, outputPathAbs),
+    outputPathAbs,
+    outputBytes: 0,
+    truncated: false,
+    startedAt,
+    cwdPath: "",
+    lastOutputBytes: 0,
+    lastOutputAt: Date.now(),
+  };
+  applyRustSandboxResultToTask(task, result, output);
+  if (rustSandboxDenied(result) && result.decision?.reason) {
+    await appendFile(outputPathAbs, `\n[Rust sandbox denied] ${result.decision?.reason}\n`, "utf8");
+  }
+  tasks.set(id, task);
+  registerBackgroundTask({
+    id,
+    kind: "shell",
+    source: "shell_exec",
+    title: params.description || params.command,
+    description: params.description,
+    command: params.command,
+    cwd: runCwd,
+    outputPath: task.outputPath,
+    outputBytes: task.outputBytes,
+    status: task.status,
+    startedAt: task.startedAt,
+    completedAt: task.completedAt,
+    readOutput: (maxBytes) => readTail(outputPathAbs, maxBytes),
+  });
+  trimTasks();
+  sessionCwd = runCwd;
+  return task;
+}
+
+function startRustSandboxedShellTask(ctx: ExtensionContext, params: ShellExecInput, choice: ShellChoice, runCwd: string, timeoutSeconds: number): ShellTask {
+  const shell = resolveShell(choice);
+  const id = taskId();
+  const outputDir = ensureOutputDir(ctx.cwd);
+  const outputPathAbs = join(outputDir, `${id}.log`);
+  const startedAt = new Date().toISOString();
+  const { child, result } = startRustSandboxExec(ctx, params, runCwd, timeoutSeconds);
+  const task: ShellTask = {
+    taskId: id,
+    shell: shell.kind,
+    command: params.command,
+    description: params.description,
+    status: "backgrounded",
+    backgrounded: true,
+    cwdBefore: runCwd,
+    outputPath: displayPath(ctx.cwd, outputPathAbs),
+    outputPathAbs,
+    outputBytes: 0,
+    truncated: false,
+    startedAt,
+    child,
+    cwdPath: "",
+    lastOutputBytes: 0,
+    lastOutputAt: Date.now(),
+    stalledHint: "Rust sandbox execution is running in the background.",
+  };
+  tasks.set(id, task);
+  registerBackgroundTask({
+    id,
+    kind: "shell",
+    source: "shell_exec",
+    title: params.description || params.command,
+    description: params.description,
+    command: params.command,
+    cwd: runCwd,
+    outputPath: task.outputPath,
+    outputBytes: 0,
+    status: "backgrounded",
+    startedAt,
+    readOutput: (maxBytes) => readTail(outputPathAbs, maxBytes),
+    metadata: { rustSandbox: true, runInBackground: true },
+  });
+  void writeFile(outputPathAbs, "[Rust sandbox task started]\n", "utf8");
+  result.then(async (sandboxResult) => {
+    if (task.status === "killed") return;
+    const output = `${sandboxResult.stdout || ""}${sandboxResult.stderr || ""}`;
+    await writeFile(outputPathAbs, output, "utf8");
+    if (rustSandboxDenied(sandboxResult) && sandboxResult.decision?.reason) {
+      await appendFile(outputPathAbs, `\n[Rust sandbox denied] ${sandboxResult.decision.reason}\n`, "utf8");
+    }
+    applyRustSandboxResultToTask(task, sandboxResult, readTail(outputPathAbs, Number.MAX_SAFE_INTEGER));
+    updateBackgroundTask(id, {
+      status: task.status,
+      outputBytes: task.outputBytes,
+      completedAt: task.completedAt,
+      stalledHint: task.stalledHint,
+      metadata: { rustSandbox: true, runInBackground: true, exitCode: task.exitCode },
+    });
+  }).catch(async (error) => {
+    if (task.status === "killed") return;
+    const message = error instanceof Error ? error.message : String(error);
+    await writeFile(outputPathAbs, `[Rust sandbox error] ${message}\n`, "utf8");
+    task.child = undefined;
+    task.status = "failed";
+    task.exitCode = null;
+    task.completedAt = new Date().toISOString();
+    task.durationMs = Date.parse(task.completedAt) - Date.parse(task.startedAt);
+    task.outputBytes = Buffer.byteLength(readTail(outputPathAbs, Number.MAX_SAFE_INTEGER), "utf8");
+    task.lastOutputBytes = task.outputBytes;
+    task.lastOutputAt = Date.now();
+    updateBackgroundTask(id, {
+      status: "failed",
+      outputBytes: task.outputBytes,
+      completedAt: task.completedAt,
+      stalledHint: message,
+      metadata: { rustSandbox: true, runInBackground: true },
+    });
+  });
+  trimTasks();
+  return task;
 }
 
 function startShellCommand(ctx: ExtensionContext, params: ShellExecInput, choice: ShellChoice, runCwd: string): ShellTask {
@@ -337,6 +634,7 @@ function startShellCommand(ctx: ExtensionContext, params: ShellExecInput, choice
   child.on("exit", async (code, signal) => {
     output.end();
     task.child = undefined;
+    const wasBackgrounded = task.status === "backgrounded" || task.backgrounded === true;
     task.exitCode = code;
     task.signal = signal;
     task.completedAt = new Date().toISOString();
@@ -350,7 +648,7 @@ function startShellCommand(ctx: ExtensionContext, params: ShellExecInput, choice
     } else {
       task.status = "failed";
     }
-    if (task.status !== "backgrounded") {
+    if (!wasBackgrounded) {
       try {
         const cwdAfter = (await readFile(cwdPath, "utf8")).trim();
         if (cwdAfter) {
@@ -422,7 +720,7 @@ function renderShellResult(result: { content?: Array<{ text?: string }>; details
 }
 
 export default function shellToolExtension(pi: ExtensionAPI) {
-  pi.registerTool({
+  const shellExecTool: any = {
     name: "shell_exec",
     label: "Shell",
     description:
@@ -433,6 +731,7 @@ export default function shellToolExtension(pi: ExtensionAPI) {
       "When using shell_exec, provide a concise active-voice description for nontrivial commands and set run_in_background only when the immediate result is not needed.",
       "When using shell_exec on Windows, choose shell=powershell for PowerShell syntax and shell=bash only for Git Bash/POSIX syntax; quote paths with spaces.",
       "Do not use shell_exec for interactive prompts, password entry, polling sleep loops, destructive git operations, or production deploys unless the user explicitly requested them.",
+      "shell_exec routes foreground and background commands through OPPi's Rust sandbox when available; use dangerouslyDisableSandbox only when the user explicitly approves a bypass.",
     ],
     parameters: shellExecSchema,
     async execute(_toolCallId, params: ShellExecInput, signal, onUpdate, ctx) {
@@ -441,7 +740,32 @@ export default function shellToolExtension(pi: ExtensionAPI) {
       const runCwd = resolveRunCwd(ctx, params.cwd);
       if (!existsSync(runCwd)) throw new Error(`Working directory does not exist: ${runCwd}`);
       if (params.dangerouslyDisableSandbox) {
-        ctx.ui?.notify?.("shell_exec: dangerouslyDisableSandbox was requested; Stage 1 has no native sandbox boundary.", "warning");
+        ctx.ui?.notify?.("shell_exec: dangerouslyDisableSandbox requested; bypassing Rust sandbox.", "warning");
+      } else if (rustSandboxEnabled()) {
+        if (params.run_in_background) {
+          try {
+            const task = startRustSandboxedShellTask(ctx, params, choice, runCwd, timeoutSeconds);
+            return {
+              content: [{ type: "text", text: `Started Rust-sandboxed background shell task ${task.taskId}. Output: ${task.outputPath}` }],
+              details: { ...task, child: undefined, outputPathAbs: undefined, cwdPath: undefined },
+            };
+          } catch (error) {
+            if (rustSandboxRequired()) throw error;
+            ctx.ui?.notify?.(`Rust sandbox unavailable; falling back to legacy shell_exec: ${error instanceof Error ? error.message : String(error)}`, "warning");
+          }
+        } else {
+          try {
+            const task = await runRustSandboxedShellCommand(ctx, params, choice, runCwd, timeoutSeconds);
+            const preview = await readOutputPreview(task.outputPathAbs);
+            const text = buildResultText(task, preview);
+            const safeDetails = { ...task, child: undefined, outputPathAbs: undefined, cwdPath: undefined };
+            if (task.status === "failed" || task.status === "timed_out" || task.status === "killed") throw new Error(text);
+            return { content: [{ type: "text", text }], details: safeDetails };
+          } catch (error) {
+            if (rustSandboxRequired()) throw error;
+            ctx.ui?.notify?.(`Rust sandbox unavailable; falling back to legacy shell_exec: ${error instanceof Error ? error.message : String(error)}`, "warning");
+          }
+        }
       }
 
       const task = startShellCommand(ctx, params, choice, runCwd);
@@ -546,9 +870,11 @@ export default function shellToolExtension(pi: ExtensionAPI) {
     renderResult(result, options, theme) {
       return renderShellResult(result as any, options, theme);
     },
-  });
+  };
 
-  pi.registerTool({
+  pi.registerTool(shellExecTool);
+
+  const shellTaskTool: any = {
     name: "shell_task",
     label: "Shell Task",
     description: "List, read, or kill background shell_exec tasks.",
@@ -588,7 +914,9 @@ export default function shellToolExtension(pi: ExtensionAPI) {
         details,
       };
     },
-  });
+  };
+
+  pi.registerTool(shellTaskTool);
 
   pi.on("session_start", (_event, ctx) => {
     sessionCwd = ctx.cwd;

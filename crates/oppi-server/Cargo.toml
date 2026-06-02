@@ -8,6 +8,7 @@ version.workspace = true
 
 [dependencies]
 oppi-core.workspace = true
+oppi-memory.workspace = true
 oppi-protocol.workspace = true
 oppi-sandbox.workspace = true
 serde.workspace = true

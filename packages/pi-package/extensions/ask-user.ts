@@ -42,6 +42,7 @@ type AskUserDetails = {
 
 export const ASK_USER_TIMEOUT_MINUTES = [0, 1, 2, 5, 10] as const;
 const DEFAULT_ASK_USER_TIMEOUT_MINUTES: AskUserConfig["timeoutMinutes"] = 5;
+export const ASK_USER_ANSWER_EXTENSION_MS = 30_000;
 
 const AskUserOptionSchema = Type.Object(
   {
@@ -168,6 +169,14 @@ function formatCountdown(ms: number): string {
   return `${minutes}:${String(seconds).padStart(2, "0")}`;
 }
 
+export function extendAskUserDeadline(deadlineAtMs: number, extensionMs = ASK_USER_ANSWER_EXTENSION_MS): number {
+  return deadlineAtMs + Math.max(0, extensionMs);
+}
+
+export function askUserRemainingMs(deadlineAtMs: number, nowMs = Date.now()): number {
+  return Math.max(0, deadlineAtMs - nowMs);
+}
+
 export default function askUserExtension(pi: ExtensionAPI) {
   const registerTool = pi.registerTool.bind(pi) as (tool: any) => void;
   registerTool({
@@ -204,8 +213,8 @@ export default function askUserExtension(pi: ExtensionAPI) {
         let cached: string[] | undefined;
         const answers = new Map<string, AskUserAnswer>();
         let closed = false;
-        const startedAt = Date.now();
         const timeoutMs = config.timeoutMinutes === 0 ? 0 : config.timeoutMinutes * 60_000;
+        let deadlineAt = timeoutMs > 0 ? Date.now() + timeoutMs : 0;
 
         const editorTheme: EditorTheme = {
           borderColor: (s) => theme.fg("accent", s),
@@ -250,6 +259,25 @@ export default function askUserExtension(pi: ExtensionAPI) {
         let timeout: ReturnType<typeof setTimeout> | undefined;
         let countdownTimer: ReturnType<typeof setInterval> | undefined;
 
+        function scheduleTimeout(): void {
+          if (timeout) clearTimeout(timeout);
+          timeout = undefined;
+          if (timeoutMs <= 0 || closed) return;
+          timeout = setTimeout(() => complete(false, true), askUserRemainingMs(deadlineAt));
+          timeout.unref?.();
+        }
+
+        function extendCountdownForAnswer(): void {
+          if (timeoutMs <= 0 || closed) return;
+          deadlineAt = extendAskUserDeadline(deadlineAt);
+          scheduleTimeout();
+        }
+
+        function recordAnswer(q: AskUserQuestion, answer: AskUserAnswer): void {
+          answers.set(q.id, answer);
+          extendCountdownForAnswer();
+        }
+
         function complete(cancelled: boolean, timedOut = false): void {
           if (closed) return;
           closed = true;
@@ -269,8 +297,7 @@ export default function askUserExtension(pi: ExtensionAPI) {
         }
 
         if (timeoutMs > 0) {
-          timeout = setTimeout(() => complete(false, true), timeoutMs);
-          timeout.unref?.();
+          scheduleTimeout();
           countdownTimer = setInterval(refresh, 1_000);
           countdownTimer.unref?.();
         }
@@ -294,9 +321,9 @@ export default function askUserExtension(pi: ExtensionAPI) {
 
         function setAnswer(q: AskUserQuestion, option: RenderOption): void {
           if (option.skip) {
-            answers.set(q.id, { questionId: q.id, skipped: true });
+            recordAnswer(q, { questionId: q.id, skipped: true });
           } else {
-            answers.set(q.id, { questionId: q.id, optionId: option.id, label: option.label });
+            recordAnswer(q, { questionId: q.id, optionId: option.id, label: option.label });
           }
           moveToNext();
         }
@@ -304,7 +331,7 @@ export default function askUserExtension(pi: ExtensionAPI) {
         editor.onSubmit = (value) => {
           const text = value.trim();
           if (!text) return;
-          answers.set(question().id, { questionId: question().id, text });
+          recordAnswer(question(), { questionId: question().id, text });
           editor.setText("");
           inputMode = false;
           moveToNext();
@@ -321,7 +348,7 @@ export default function askUserExtension(pi: ExtensionAPI) {
             if (isEnterKey(data)) {
               const text = editor.getExpandedText().trim();
               if (text) {
-                answers.set(question().id, { questionId: question().id, text });
+                recordAnswer(question(), { questionId: question().id, text });
                 editor.setText("");
                 inputMode = false;
                 moveToNext();
@@ -395,7 +422,7 @@ export default function askUserExtension(pi: ExtensionAPI) {
           const add = (line = "") => lines.push(truncateToWidth(line, width));
 
           add(theme.fg("accent", "─".repeat(width)));
-          const remainingMs = timeoutMs > 0 ? Math.max(0, timeoutMs - (Date.now() - startedAt)) : 0;
+          const remainingMs = timeoutMs > 0 ? askUserRemainingMs(deadlineAt) : 0;
           const timeoutText = timeoutMs > 0 ? ` · timeout ${formatCountdown(remainingMs)}` : " · timeout off";
           add(`${theme.fg("accent", theme.bold(title))} ${theme.fg("dim", `${current + 1}/${questions.length}${timeoutText}`)}`);
           if (questions.length > 1) {
@@ -433,7 +460,7 @@ export default function askUserExtension(pi: ExtensionAPI) {
 
           add();
           add(theme.fg("dim", inputMode ? "Enter submit custom • Esc options" : "1-9 pick • ↑↓ select • ←→ question • Enter confirm • Esc cancel"));
-          if (timeoutMs > 0) add(theme.fg("dim", "On timeout, answered questions are kept and unanswered questions use their recommended/default option."));
+          if (timeoutMs > 0) add(theme.fg("dim", "Each answer adds 30s; on timeout, unanswered questions use recommended/default options."));
           if (current === questions.length - 1 && !isComplete()) add(theme.fg("warning", "Required questions remain unanswered."));
           add(theme.fg("accent", "─".repeat(width)));
           cached = lines;

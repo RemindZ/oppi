@@ -9,3 +9,6 @@ version.workspace = true
 [dependencies]
 oppi-protocol.workspace = true
 serde.workspace = true
+
+[dev-dependencies]
+tempfile = "3"

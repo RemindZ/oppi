@@ -6,11 +6,7 @@ import { getAgentDir } from "@mariozechner/pi-coding-agent";
 
 export type PromptVariant = "off" | "promptname_a" | "promptname_b";
 
-export type PromptVariantSurface =
-  | "main-system-append.md"
-  | "review-system-append.md"
-  | "permissions-auto-review-system.md"
-  | "image-gen-codex-native-adapter-instructions.md";
+export type PromptVariantSurface = string;
 
 type PromptVariantInfo = {
   id: PromptVariant;
@@ -61,7 +57,11 @@ function readJson(path: string): OppiSettingsFile {
 }
 
 function parseVariant(value: unknown): PromptVariant | undefined {
-  return VARIANTS.some((variant) => variant.id === value) ? (value as PromptVariant) : undefined;
+  if (typeof value !== "string") return undefined;
+  const normalized = value.trim().toLowerCase();
+  if (["a", "prompt-a", "normal", "loop", "agentic"].includes(normalized)) return "promptname_a";
+  if (["b", "prompt-b", "caveman", "compressed"].includes(normalized)) return "promptname_b";
+  return VARIANTS.some((variant) => variant.id === normalized) ? (normalized as PromptVariant) : undefined;
 }
 
 function normalizeVariant(value: unknown): PromptVariant {
@@ -100,7 +100,7 @@ function repoRoot(): string {
   return resolve(here, "../../..");
 }
 
-function readPromptVariantPath(relativePath: string): { text?: string; path?: string; error?: string } {
+export function readPromptCatalogPath(relativePath: string): { text?: string; path?: string; error?: string } {
   const candidates = [
     resolve(repoRoot(), relativePath),
     resolve(process.cwd(), relativePath),
@@ -118,14 +118,19 @@ function readPromptVariantPath(relativePath: string): { text?: string; path?: st
 
 function readVariantAppend(info: PromptVariantInfo): { text?: string; path?: string; error?: string } {
   if (!info.appendPath) return {};
-  return readPromptVariantPath(info.appendPath);
+  return readPromptCatalogPath(info.appendPath);
 }
 
 export function readPromptVariantSurface(surface: PromptVariantSurface): { variant: PromptVariant; text?: string; path?: string; error?: string } {
   const variant = selectedPromptVariant();
   if (variant === "off") return { variant };
-  const result = readPromptVariantPath(`systemprompts/experiments/${variant}/${surface}`);
+  const result = readPromptCatalogPath(`systemprompts/experiments/${variant}/${surface}`);
   return { variant, ...result };
+}
+
+export function promptVariantAppend(surface: PromptVariantSurface): string {
+  const variant = readPromptVariantSurface(surface);
+  return variant.text ? `\n\n<!-- OPPi prompt variant: ${variant.variant} (${variant.path}) -->\n\n${variant.text}` : "";
 }
 
 function setStatus(ctx: ExtensionContext): void {
@@ -146,9 +151,16 @@ async function chooseVariant(ctx: ExtensionCommandContext): Promise<PromptVarian
 }
 
 function completionItems(prefix: string) {
-  return VARIANTS
-    .filter((variant) => variant.id.startsWith(prefix.trim().toLowerCase()))
-    .map((variant) => ({ value: variant.id, label: `${variant.label} — ${variant.description}` }));
+  const normalized = prefix.trim().toLowerCase();
+  const aliases = [
+    { value: "a", label: "a — Agentic-loop overlay with normal OPPi output style." },
+    { value: "b", label: "b — Caveman compressed overlay, normal OPPi output style." },
+    { value: "caveman", label: "caveman — Alias for b." },
+  ];
+  return [
+    ...VARIANTS.map((variant) => ({ value: variant.id, label: `${variant.label} — ${variant.description}` })),
+    ...aliases,
+  ].filter((item) => item.value.startsWith(normalized));
 }
 
 export default function promptVariantExtension(pi: ExtensionAPI) {
@@ -177,7 +189,7 @@ export default function promptVariantExtension(pi: ExtensionAPI) {
   });
 
   pi.registerCommand("prompt-variant", {
-    description: "Select OPPi system prompt A/B variant: /prompt-variant [off|promptname_a|promptname_b].",
+    description: "Select OPPi system prompt A/B variant: /prompt-variant [off|a|b|promptname_a|promptname_b].",
     getArgumentCompletions: completionItems,
     handler: async (args, ctx) => {
       const trimmed = args.trim();

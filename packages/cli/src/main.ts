@@ -3,7 +3,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, dirname, isAbsolute, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { createRequire } from "node:module";
 import { createServer } from "node:http";
 import { createInterface } from "node:readline";
@@ -478,6 +478,14 @@ export function parseRuntimeWorkerProvider(value: string | undefined, throwOnInv
   if (["openai-codex", "codex", "chatgpt", "subscription"].includes(normalized)) return "openai-codex";
   if (throwOnInvalid) throw new Error(`Unknown runtime-worker provider: ${value}`);
   return undefined;
+}
+
+export function defaultRuntimeWorkerModelForProvider(provider: RuntimeWorkerProvider): string {
+  switch (provider) {
+    case "openai-compatible":
+    case "openai-codex":
+      return "gpt-5.5";
+  }
 }
 
 function openAiCompatibleReasoningEffort(effort: RuntimeWorkerEffort | undefined, diagnostics: string[] = []): string | undefined {
@@ -1791,11 +1799,11 @@ type RuntimeWorkerMemoryBridge = {
   contextMarkdown?: string;
   contextBytes?: number;
   memoryCount?: number;
-  backend?: any;
-  project?: { cwd: string; displayName?: string };
   settings?: RuntimeWorkerMemorySettings;
   diagnostics: string[];
 };
+
+type RuntimeWorkerJsonRpcRequest = <T>(method: string, params?: Record<string, unknown>) => Promise<T>;
 
 function normalizeRuntimeWorkerMemorySettings(value: any): RuntimeWorkerMemorySettings {
   return {
@@ -1806,14 +1814,7 @@ function normalizeRuntimeWorkerMemorySettings(value: any): RuntimeWorkerMemorySe
   };
 }
 
-function readRuntimeWorkerMemorySettings(hoppi: any, settingsPath: string, diagnostics: string[]): RuntimeWorkerMemorySettings {
-  if (typeof hoppi.readHoppiMemorySettings === "function") {
-    try {
-      return normalizeRuntimeWorkerMemorySettings(hoppi.readHoppiMemorySettings({ settingsPath }));
-    } catch (error) {
-      diagnostics.push(`Hoppi memory settings read failed; using safe defaults. ${redactText(error instanceof Error ? error.message : String(error))}`);
-    }
-  }
+function readRuntimeWorkerMemorySettings(settingsPath: string): RuntimeWorkerMemorySettings {
   return normalizeRuntimeWorkerMemorySettings(readPackageJson(settingsPath)?.oppi?.memory);
 }
 
@@ -1865,10 +1866,6 @@ function runtimeWorkerMemoryMode(command: Extract<OppiCommand, { type: "runtime-
   return coerceRuntimeWorkerMemoryMode(env.OPPI_RUNTIME_WORKER_MEMORY);
 }
 
-function runtimeWorkerProjectRef(cwd: string): { cwd: string; displayName?: string } {
-  return { cwd, displayName: basename(cwd) || undefined };
-}
-
 function appendMemoryToSystemPrompt(systemPrompt: unknown, context: string | undefined): string | undefined {
   const base = typeof systemPrompt === "string" ? systemPrompt.trim() : "";
   if (!context?.trim()) return base || undefined;
@@ -1895,101 +1892,85 @@ async function prepareRuntimeWorkerMemoryBridge(command: Extract<OppiCommand, { 
     return { enabled: false, available: false, loaded: false, saved: false, diagnostics };
   }
 
+  const settingsPath = runtimeWorkerMemorySettingsPath(env, cwd);
+  const settings = readRuntimeWorkerMemorySettings(settingsPath);
+  const enabled = mode === "on" || settings.enabled;
+  if (!enabled) {
+    diagnostics.push("Hoppi memory is disabled by settings for the direct worker; continuing without memory.");
+    return { enabled: false, available: true, loaded: false, saved: false, settings, diagnostics };
+  }
+
+  return { enabled: true, available: false, loaded: false, saved: false, settings, diagnostics };
+}
+
+function runtimeWorkerMemoryCountFromNormalized(value: any): number {
+  return Math.max(
+    coerceMemoryCount(value?.memoryCount),
+    coerceMemoryCount(value?.status?.memoryCount),
+    coerceMemoryCount(value?.totalCount),
+    Array.isArray(value?.items) ? value.items.length : 0,
+  );
+}
+
+async function loadRuntimeWorkerMemoryFromRuntimeBackend(memory: RuntimeWorkerMemoryBridge, request: RuntimeWorkerJsonRpcRequest, threadId: string, prompt: string): Promise<void> {
+  if (!memory.enabled || !memory.settings) return;
+
   try {
-    const hoppi = await importHoppiModule(env, cwd);
-    const settingsPath = runtimeWorkerMemorySettingsPath(env, cwd);
-    const settings = readRuntimeWorkerMemorySettings(hoppi, settingsPath, diagnostics);
-    const enabled = mode === "on" || settings.enabled;
-    if (!enabled) {
-      diagnostics.push("Hoppi memory is disabled by settings for the direct worker; continuing without memory.");
-      return { enabled: false, available: true, loaded: false, saved: false, settings, diagnostics };
-    }
-
-    if (typeof hoppi.createHoppiBackend !== "function") throw new Error("Installed Hoppi module does not expose createHoppiBackend().");
-    const root = typeof hoppi.getDefaultHoppiRoot === "function" ? hoppi.getDefaultHoppiRoot() : join(homedir(), ".oppi", "hoppi");
-    const backend = hoppi.createHoppiBackend({ root });
-    if (!backend || typeof backend !== "object") throw new Error("Installed Hoppi module returned an invalid backend.");
-    if (typeof backend.init === "function") await backend.init();
-    const project = runtimeWorkerProjectRef(cwd);
-    const parts: string[] = [];
-    let memoryCount = 0;
-
-    if (typeof backend.status === "function") {
-      try {
-        const status = await backend.status(project);
-        memoryCount = Math.max(memoryCount, coerceMemoryCount(status?.memoryCount));
-      } catch (error) {
-        diagnostics.push(`Hoppi memory status unavailable; continuing recall. ${redactText(error instanceof Error ? error.message : String(error))}`);
-      }
-    }
-
-    if (settings.startupRecall && typeof backend.buildStartupContext === "function") {
-      try {
-        const startup = await backend.buildStartupContext({ project, maxMemories: 8, includePinned: true });
-        if (startup?.contextMarkdown?.trim()) parts.push(startup.contextMarkdown.trim());
-        memoryCount = Math.max(memoryCount, coerceMemoryCount(startup?.memoryCount));
-      } catch (error) {
-        diagnostics.push(`Hoppi startup recall failed; continuing with task recall. ${redactText(error instanceof Error ? error.message : String(error))}`);
-      }
-    }
-
-    if (settings.taskStartRecall && command.prompt.trim() && typeof backend.recall === "function") {
-      try {
-        const query = command.prompt.trim().slice(0, RUNTIME_WORKER_MEMORY_QUERY_MAX_CHARS);
-        const recall = await backend.recall({ project, query, budget: 900, limit: 5 });
-        if (recall?.contextMarkdown?.trim()) parts.push(recall.contextMarkdown.trim());
-        if (Array.isArray(recall?.memories)) memoryCount = Math.max(memoryCount, recall.memories.length);
-      } catch (error) {
-        diagnostics.push(`Hoppi task recall failed; continuing without recalled task context. ${redactText(error instanceof Error ? error.message : String(error))}`);
-      }
-    }
-
-    const { contextMarkdown, contextBytes, truncated } = buildRuntimeWorkerMemoryContext(parts);
-    if (truncated) diagnostics.push(`Hoppi memory context was truncated to ${contextBytes} bytes for provider prompt safety.`);
-    diagnostics.push(contextMarkdown
-      ? `Hoppi memory loaded ${memoryCount} project memor${memoryCount === 1 ? "y" : "ies"} into the direct-worker context (${contextBytes} bytes).`
-      : `Hoppi memory is enabled for the direct worker; no relevant project context was recalled.`);
-    return {
-      enabled: true,
-      available: true,
-      loaded: Boolean(contextMarkdown),
-      saved: false,
-      contextMarkdown,
-      contextBytes,
-      memoryCount,
-      backend,
-      project,
-      settings,
-      diagnostics,
-    };
+    const status = await request<any>("memory/backend/status", { threadId });
+    const normalized = status?.normalized ?? status;
+    memory.available = true;
+    memory.memoryCount = Math.max(memory.memoryCount ?? 0, runtimeWorkerMemoryCountFromNormalized(normalized));
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    diagnostics.push(isHoppiMissingMessage(message)
-      ? "Hoppi memory is enabled but the optional Hoppi package is unavailable; continuing without memory."
-      : `Hoppi memory unavailable for direct worker: ${redactText(message)}`);
-    return { enabled: true, available: false, loaded: false, saved: false, diagnostics };
+    memory.diagnostics.push(`Hoppi runtime backend status unavailable; continuing recall. ${redactText(error instanceof Error ? error.message : String(error))}`);
+  }
+
+  if (!memory.settings.startupRecall && !memory.settings.taskStartRecall) {
+    memory.diagnostics.push("Hoppi memory is enabled for the direct worker, but startup and task recall are disabled.");
+    return;
+  }
+
+  try {
+    const recall = await request<any>("memory/backend/recall", {
+      threadId,
+      prompt: prompt.trim().slice(0, RUNTIME_WORKER_MEMORY_QUERY_MAX_CHARS),
+      includeStartup: memory.settings.startupRecall,
+      includeTask: memory.settings.taskStartRecall,
+    });
+    const normalized = recall?.normalized ?? recall;
+    const { contextMarkdown, contextBytes, truncated } = buildRuntimeWorkerMemoryContext([String(normalized?.contextMarkdown ?? "")]);
+    memory.available = true;
+    memory.loaded = Boolean(contextMarkdown);
+    memory.contextMarkdown = contextMarkdown;
+    memory.contextBytes = contextBytes;
+    memory.memoryCount = Math.max(memory.memoryCount ?? 0, runtimeWorkerMemoryCountFromNormalized(normalized));
+    if (truncated) memory.diagnostics.push(`Hoppi memory context was truncated to ${contextBytes} bytes for provider prompt safety.`);
+    memory.diagnostics.push(contextMarkdown
+      ? `Hoppi memory loaded ${memory.memoryCount ?? 0} project memor${memory.memoryCount === 1 ? "y" : "ies"} into the direct-worker context through the runtime backend broker (${contextBytes} bytes).`
+      : "Hoppi memory is enabled for the direct worker; the runtime backend broker recalled no relevant project context.");
+  } catch (error) {
+    memory.diagnostics.push(`Hoppi runtime backend recall unavailable; continuing without recalled memory. ${redactText(error instanceof Error ? error.message : String(error))}`);
   }
 }
 
-async function rememberRuntimeWorkerTurn(memory: RuntimeWorkerMemoryBridge, prompt: string, assistantText: string, toolResultStatuses: readonly string[], threadId: string | undefined, turnId: string | undefined): Promise<boolean> {
-  if (!memory.enabled || !memory.available || !memory.settings?.turnSummaries || !memory.backend?.remember || !memory.project) return false;
+async function rememberRuntimeWorkerTurn(memory: RuntimeWorkerMemoryBridge, request: RuntimeWorkerJsonRpcRequest, threadId: string | undefined, prompt: string, assistantText: string, toolResultStatuses: readonly string[], turnId: string | undefined): Promise<boolean> {
+  if (!memory.enabled || !memory.available || !memory.settings?.turnSummaries || !threadId) return false;
   const summary = buildRuntimeWorkerMemorySummary(prompt, assistantText, toolResultStatuses, threadId, turnId);
   if (!summary) return false;
   try {
-    await memory.backend.remember({
-      project: memory.project,
+    const result = await request<any>("memory/backend/remember", {
+      threadId,
       content: summary,
       tags: ["oppi-runtime-worker", "oppi-turn-summary", "agent_end"],
       layer: "buffer",
-      confidence: "observed",
       source: "oppi:runtime-worker",
       sourceSessionId: threadId && turnId ? `${threadId}:${turnId}` : undefined,
     });
-    memory.saved = true;
-    memory.diagnostics.push("Hoppi memory saved a bounded direct-worker turn summary.");
+    const normalized = result?.normalized ?? result;
+    memory.saved = normalized?.saved !== false;
+    memory.diagnostics.push("Hoppi memory saved a bounded direct-worker turn summary through the runtime backend broker.");
     return true;
   } catch (error) {
-    memory.diagnostics.push(`Hoppi memory summary save failed: ${redactText(error instanceof Error ? error.message : String(error))}`);
+    memory.diagnostics.push(`Hoppi runtime backend summary save failed: ${redactText(error instanceof Error ? error.message : String(error))}`);
     return false;
   }
 }
@@ -2681,7 +2662,7 @@ async function runRuntimeWorkerPrompt(command: Extract<OppiCommand, { type: "run
     if (provider === "openai-codex") {
       modelProvider = {
         kind: "openai-codex",
-        model: command.model || env.OPPI_RUNTIME_WORKER_MODEL?.trim() || "gpt-5.4",
+        model: command.model || env.OPPI_RUNTIME_WORKER_MODEL?.trim() || defaultRuntimeWorkerModelForProvider(provider),
         systemPrompt: command.systemPrompt || env.OPPI_RUNTIME_WORKER_SYSTEM_PROMPT?.trim() || "You are OPPi's experimental direct Rust worker. Be concise, use tools only when useful, and surface uncertainty.",
         ...(effort && effort !== "off" ? { reasoningEffort: effort } : {}),
         maxOutputTokens: command.maxOutputTokens ?? 2048,
@@ -2691,7 +2672,7 @@ async function runRuntimeWorkerPrompt(command: Extract<OppiCommand, { type: "run
     } else {
       modelProvider = {
         kind: "openai-compatible",
-        model: command.model || env.OPPI_RUNTIME_WORKER_MODEL?.trim() || "gpt-4.1-mini",
+        model: command.model || env.OPPI_RUNTIME_WORKER_MODEL?.trim() || defaultRuntimeWorkerModelForProvider(provider),
         ...(command.baseUrl || env.OPPI_RUNTIME_WORKER_BASE_URL?.trim() ? { baseUrl: command.baseUrl || env.OPPI_RUNTIME_WORKER_BASE_URL?.trim() } : {}),
         ...(providerKeyEnv ? { apiKeyEnv: providerKeyEnv } : {}),
         systemPrompt: command.systemPrompt || env.OPPI_RUNTIME_WORKER_SYSTEM_PROMPT?.trim() || "You are OPPi's experimental direct Rust worker. Be concise, use tools only when useful, and surface uncertainty.",
@@ -2717,8 +2698,6 @@ async function runRuntimeWorkerPrompt(command: Extract<OppiCommand, { type: "run
   const followUp = prepareRuntimeWorkerFollowUpChain(promptVariant, env, cwd, diagnostics);
 
   const memory = await prepareRuntimeWorkerMemoryBridge(command, env, cwd);
-  diagnostics.push(...memory.diagnostics);
-  modelProvider.systemPrompt = appendMemoryToSystemPrompt(modelProvider.systemPrompt, memory.contextMarkdown);
 
   const serverCommand = process.platform === "win32" && /\.(?:cmd|bat)$/i.test(serverBin)
     ? { command: "cmd.exe", args: ["/d", "/s", "/c", serverBin, "--stdio"] }
@@ -2767,15 +2746,8 @@ async function runRuntimeWorkerPrompt(command: Extract<OppiCommand, { type: "run
     });
     const threadId = String(start.thread.id);
     if (memory.enabled) {
-      await request("memory/set", {
-        threadId,
-        status: {
-          enabled: memory.available,
-          backend: "hoppi",
-          scope: "project",
-          memoryCount: memory.memoryCount ?? 0,
-        },
-      }).catch((error) => diagnostics.push(`Rust memory status update failed: ${redactText(error instanceof Error ? error.message : String(error))}`));
+      await loadRuntimeWorkerMemoryFromRuntimeBackend(memory, request, threadId, command.prompt);
+      modelProvider.systemPrompt = appendMemoryToSystemPrompt(modelProvider.systemPrompt, memory.contextMarkdown);
     }
     let run = await request<any>("turn/run-agentic", {
       threadId,
@@ -2807,15 +2779,16 @@ async function runRuntimeWorkerPrompt(command: Extract<OppiCommand, { type: "run
       diagnostics.push(`Rust todo state unavailable: ${redactText(error instanceof Error ? error.message : String(error))}`);
       return undefined;
     });
+    const allEvents = Array.isArray(listed.events) ? listed.events : [];
+    const assistantText = assistantTextFromEvents(run?.events) || assistantTextFromEvents(allEvents);
+    const directToolStatuses = toolStatuses(run?.events);
+    const memorySaved = await rememberRuntimeWorkerTurn(memory, request, threadId, command.prompt, assistantText, directToolStatuses, run?.turn?.id);
     const debug = await request<any>("debug/bundle", {});
     await request("server/shutdown", {});
     child.stdin.end();
     const code = await closePromise;
     if (code !== 0) diagnostics.push(`oppi-server exited with code ${code ?? "signal"}`);
 
-    const allEvents = Array.isArray(listed.events) ? listed.events : [];
-    const assistantText = assistantTextFromEvents(run?.events) || assistantTextFromEvents(allEvents);
-    const directToolStatuses = toolStatuses(run?.events);
     const assistantDeltaCount = assistantDeltaEvents(run?.events).length;
     const providerStreamed = command.mock
       ? mock?.requests.some((request) => { try { return JSON.parse(request.body || "{}").stream === true; } catch { return false; } })
@@ -2831,7 +2804,6 @@ async function runRuntimeWorkerPrompt(command: Extract<OppiCommand, { type: "run
     if (followUp && followUpProviderPromptIncluded === false) diagnostics.push("OPPi follow-up context was delegated to Rust but did not reach the mock provider system prompt.");
     const memoryProviderPromptIncluded = command.mock ? providerPromptContainsMemory(mock?.requests, memory.contextMarkdown) : undefined;
     if (memory.loaded && memoryProviderPromptIncluded === false) diagnostics.push("Hoppi memory was loaded but did not reach the mock provider system prompt.");
-    const memorySaved = await rememberRuntimeWorkerTurn(memory, command.prompt, assistantText, directToolStatuses, threadId, run?.turn?.id);
     for (const diagnostic of memory.diagnostics) {
       if (!diagnostics.includes(diagnostic)) diagnostics.push(diagnostic);
     }
@@ -3157,11 +3129,20 @@ function withNativeShellDefaults(args: string[], serverBin: string, env: Env = p
   const next = [...args];
   if (!shellArgsHaveOption(next, "--server")) next.push("--server", serverBin);
   if (!shellArgsOnlyListSessions(next) && !shellArgsHaveProvider(next)) {
-    next.unshift("--model", env.OPPI_RUNTIME_WORKER_MODEL?.trim() || "gpt-4.1-mini");
-    const baseUrl = env.OPPI_RUNTIME_WORKER_BASE_URL?.trim();
-    if (baseUrl && !shellArgsHaveOption(next, "--base-url")) next.push("--base-url", baseUrl);
-    const apiKeyEnv = directWorkerApiKeyEnvName(env);
-    if (apiKeyEnv && isDirectWorkerApiKeyEnvAllowed(apiKeyEnv) && !shellArgsHaveOption(next, "--api-key-env")) next.push("--api-key-env", apiKeyEnv);
+    const provider = parseRuntimeWorkerProvider(env.OPPI_RUNTIME_WORKER_PROVIDER) ?? "openai-codex";
+    next.unshift(
+      "--provider",
+      provider,
+      "--model",
+      env.OPPI_RUNTIME_WORKER_MODEL?.trim()
+        || defaultRuntimeWorkerModelForProvider(provider),
+    );
+    if (provider === "openai-compatible") {
+      const baseUrl = env.OPPI_RUNTIME_WORKER_BASE_URL?.trim();
+      if (baseUrl && !shellArgsHaveOption(next, "--base-url")) next.push("--base-url", baseUrl);
+      const apiKeyEnv = directWorkerApiKeyEnvName(env);
+      if (apiKeyEnv && isDirectWorkerApiKeyEnvAllowed(apiKeyEnv) && !shellArgsHaveOption(next, "--api-key-env")) next.push("--api-key-env", apiKeyEnv);
+    }
   }
   return next;
 }
@@ -3201,13 +3182,18 @@ function runNativeShellSmoke(command: Extract<OppiCommand, { type: "tui" }>): nu
     else console.error(payload.diagnostics[0]);
     return 1;
   }
-  const target = windowsCmdShim(shellBin, ["--mock", "--json", "--server", serverBin, "OPPi native shell smoke: reply ok."]);
+  const smokeShellArgs = withNativeShellDefaults(
+    command.shellArgs.filter((arg) => arg !== "--json"),
+    serverBin,
+  );
+  const smokeMode = shellArgsHaveOption(smokeShellArgs, "--mock") ? "mock" : "live";
+  const target = windowsCmdShim(shellBin, [...smokeShellArgs, "--json", "OPPi native shell smoke: reply ok."]);
   const result = spawnSync(target.command, target.args, {
     encoding: "utf8",
     timeout: 15_000,
     windowsHide: true,
     maxBuffer: 1024 * 1024,
-    env: nativeShellEnv(command, true),
+    env: nativeShellEnv(command, smokeMode === "mock"),
   });
   const stdout = redactText(String(result.stdout ?? ""));
   const stderr = redactText(String(result.stderr ?? ""));
@@ -3221,7 +3207,7 @@ function runNativeShellSmoke(command: Extract<OppiCommand, { type: "tui" }>): nu
     durationMs: Date.now() - started,
     stdoutLineCount: stdoutLines.length,
     diagnostics: [
-      ok ? "native shell mock smoke completed" : result.error?.message || stderr.trim() || `oppi-shell exited ${result.status ?? "without a code"}`,
+      ok ? `native shell ${smokeMode} smoke completed` : result.error?.message || stderr.trim() || `oppi-shell exited ${result.status ?? "without a code"}`,
     ],
     stderr: stderr.trim() || undefined,
   };
@@ -3877,7 +3863,7 @@ Usage:
   oppi runtime-worker smoke [--json]
   oppi runtime-worker [run] <prompt> [--json] [--provider openai-compatible|openai-codex] [--model <id>] [--base-url <url>] [--api-key-env <name>] [--auto-approve] [--mock] [--memory|--no-memory] [--effort off|minimal|low|medium|high|xhigh] [--prompt-variant off|a|b|caveman]
   oppi tui [oppi-shell options]
-  oppi tui smoke --mock [--json]
+  oppi tui smoke [--json] [--mock]
   oppi tui dogfood --mock [--json] [--require-background-lifecycle]
   oppi server --stdio --experimental
   oppi plugin list|add|install|enable|disable|remove|doctor [--json]
@@ -3892,8 +3878,8 @@ OPPi options:
 Environment:
   OPPI_UPDATE_CHECK=0      Disable the daily npm update banner
   OPPI_RUNTIME_LOOP_MODE   off | command | default-with-fallback (default)
-  OPPI_RUNTIME_WORKER_PROVIDER openai-compatible (default) or openai-codex auth-store provider
-  OPPI_RUNTIME_WORKER_MODEL Direct-worker model id (default: gpt-4.1-mini; gpt-5.4 for openai-codex)
+  OPPI_RUNTIME_WORKER_PROVIDER Direct-worker provider override; native TUI defaults to openai-codex
+  OPPI_RUNTIME_WORKER_MODEL Direct-worker model id (default: gpt-5.5 for GPT providers)
   OPPI_RUNTIME_WORKER_API_KEY_ENV Direct-worker key env; must be OPPI_*_API_KEY, OPPI_OPENAI_API_KEY, or OPENAI_API_KEY
   OPPI_RUNTIME_WORKER_MEMORY auto | on | off for direct-worker Hoppi recall/write
   OPPI_RUNTIME_WORKER_EFFORT off | minimal | low | medium | high | xhigh for provider reasoning effort
@@ -3909,18 +3895,19 @@ Native helper examples:
   oppi sandbox setup-windows --dry-run --json
   oppi sandbox setup-windows --yes
 
-Experimental Rust runtime:
+Rust runtime and native UI:
   cargo build -p oppi-server -p oppi-shell
   oppi runtime-loop smoke --json
   oppi runtime-worker smoke --json
   oppi runtime-worker "summarize this repository" --json
   oppi runtime-worker "summarize this repository" --no-memory
-  oppi tui --experimental
-  oppi tui smoke --mock --json
+  oppi tui
+  oppi tui smoke --json
   oppi tui dogfood --mock --json
   oppi tui dogfood --mock --json --require-background-lifecycle
   oppi resume 019e0965-e833-7093-88ea-79a2baf0fc48
   oppi server --stdio --experimental
+  Legacy 'oppi tui --experimental' is accepted as a no-op compatibility flag.
 
 Plugin examples:
   oppi plugin add ./my-pi-package --local

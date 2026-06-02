@@ -44,10 +44,14 @@
     "oppi-native": "./dist/main.js",
     "oppi-rs": "./dist/main.js"
   },
+  "dependencies": {
+    "@oppiai/cli": "workspace:^0.2.11"
+  },
   "scripts": {
     "check": "tsc --noEmit",
     "build": "tsc && node -e \"try{require('fs').chmodSync('dist/main.js',0o755)}catch{}\"",
     "build:binaries": "node scripts/build-binaries.mjs",
+    "verify:pack": "node scripts/verify-pack.mjs",
     "test": "pnpm run build && node --test dist/main.test.js",
     "prepack": "pnpm run build && pnpm run build:binaries"
   },
