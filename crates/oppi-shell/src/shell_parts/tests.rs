@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::*;
 
     fn fake_codex_access_token(account_id: &str) -> String {
         let header = URL_SAFE_NO_PAD.encode(br#"{"alg":"none"}"#);

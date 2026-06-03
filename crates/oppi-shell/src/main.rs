@@ -24,6 +24,9 @@ mod provider_ui;
 mod ratatui_ui;
 #[path = "shell_parts/rendering.rs"]
 mod rendering;
+#[cfg(test)]
+#[path = "shell_parts/tests.rs"]
+mod shell_tests;
 #[path = "shell_parts/slash_palette.rs"]
 mod slash_palette;
 mod tui;
@@ -422,5 +425,3 @@ fn should_print_startup_banner(json_output: bool, quiet_startup: bool) -> bool {
 include!("shell_parts/session.rs");
 
 include!("shell_parts/models_and_memory.rs");
-
-include!("shell_parts/tests.rs");
