@@ -1182,6 +1182,7 @@ struct ShellSession {
     pending_approval: Option<PendingApproval>,
     pending_question: Option<PendingQuestion>,
     active_turn_id: Option<String>,
+    active_turn_model_provider: Option<OpenAiCompatibleConfig>,
     todo_state: TodoState,
     current_goal: Option<ThreadGoal>,
     usage_state: NativeUsageState,
@@ -1408,6 +1409,7 @@ impl ShellSession {
             pending_approval: None,
             pending_question: None,
             active_turn_id: None,
+            active_turn_model_provider: None,
             todo_state: TodoState::default(),
             current_goal: None,
             usage_state: NativeUsageState::default(),
@@ -1586,6 +1588,7 @@ impl ShellSession {
                 &self.permission_sandbox_settings,
             ),
         });
+        let mut active_turn_model_provider = None;
         match &effective_provider {
             ProviderConfig::Mock => {
                 params["modelSteps"] = mock_model_steps_for_prompt(prompt, &self.cwd);
@@ -1594,6 +1597,7 @@ impl ShellSession {
                 }
             }
             ProviderConfig::OpenAiCompatible(config) => {
+                active_turn_model_provider = Some(config.clone());
                 let hoppi_recall = self.prepare_hoppi_recall_for_prompt(prompt);
                 let mut provider_json = openai_provider_json(config);
                 apply_feature_routing_to_provider(&mut provider_json, &self.prompt_variant);
@@ -1622,6 +1626,7 @@ impl ShellSession {
             .ok_or_else(|| "turn/run-agentic returned no turn id".to_string())?
             .to_string();
         self.active_turn_id = Some(turn_id.clone());
+        self.active_turn_model_provider = active_turn_model_provider;
         self.emit_terminal_progress(true, json_output);
         self.sync_ui_docks();
         Ok(turn_id)
@@ -3635,6 +3640,7 @@ impl ShellSession {
         self.pending_approval = None;
         self.pending_question = None;
         self.active_turn_id = None;
+        self.active_turn_model_provider = None;
         self.current_goal = None;
         self.tool_calls.clear();
         self.background_summary = None;
@@ -6287,11 +6293,13 @@ impl ShellSession {
             "turnId": pending.turn_id,
             "approvedToolCallIds": approved_tool_call_ids,
         });
+        let mut active_turn_model_provider = None;
         match provider {
             ProviderConfig::Mock => {
                 params["modelSteps"] = mock_model_steps_after_approval(pending.tool_call.as_ref());
             }
             ProviderConfig::OpenAiCompatible(config) => {
+                active_turn_model_provider = Some(config.clone());
                 let mut provider_json = openai_provider_json(config);
                 apply_feature_routing_to_provider(&mut provider_json, &self.prompt_variant);
                 apply_prompt_variant_to_provider(&mut provider_json, &self.prompt_variant);
@@ -6300,6 +6308,7 @@ impl ShellSession {
             }
         }
         self.rpc.request("turn/resume-agentic", params)?;
+        self.active_turn_model_provider = active_turn_model_provider;
         self.print_text(&format!("approved {}", pending.request_id), json_output)?;
         let _ = self.poll_until_turn_boundary(json_output)?;
         Ok(())
@@ -6358,11 +6367,13 @@ impl ShellSession {
                 "timedOut": timed_out,
             },
         });
+        let mut active_turn_model_provider = None;
         match provider {
             ProviderConfig::Mock => {
                 params["modelSteps"] = mock_model_steps_after_answer();
             }
             ProviderConfig::OpenAiCompatible(config) => {
+                active_turn_model_provider = Some(config.clone());
                 let mut provider_json = openai_provider_json(config);
                 apply_feature_routing_to_provider(&mut provider_json, &self.prompt_variant);
                 apply_prompt_variant_to_provider(&mut provider_json, &self.prompt_variant);
@@ -6371,6 +6382,7 @@ impl ShellSession {
             }
         }
         self.rpc.request("turn/resume-agentic", params)?;
+        self.active_turn_model_provider = active_turn_model_provider;
         Ok(())
     }
 
@@ -6459,6 +6471,7 @@ impl ShellSession {
                     self.maybe_remember_hoppi_turn(turn_id);
                     self.steered_turns.remove(turn_id);
                     self.active_turn_id = None;
+                    self.active_turn_model_provider = None;
                     self.emit_terminal_progress(false, matches!(output, EventOutputMode::Json));
                     outcome = Some(TurnOutcome::Completed);
                 }
@@ -6467,6 +6480,7 @@ impl ShellSession {
                         self.steered_turns.remove(turn_id);
                     }
                     self.active_turn_id = None;
+                    self.active_turn_model_provider = None;
                     self.emit_terminal_progress(false, matches!(output, EventOutputMode::Json));
                     outcome = Some(TurnOutcome::Aborted(reason.clone()));
                 }
@@ -6475,6 +6489,7 @@ impl ShellSession {
                         self.steered_turns.remove(turn_id);
                     }
                     self.active_turn_id = None;
+                    self.active_turn_model_provider = None;
                     self.emit_terminal_progress(false, matches!(output, EventOutputMode::Json));
                     outcome = Some(TurnOutcome::Interrupted(reason.clone()));
                 }
@@ -6600,6 +6615,7 @@ impl ShellSession {
             }),
         )?;
         self.active_turn_id = None;
+        self.active_turn_model_provider = None;
         self.pending_approval = None;
         self.pending_question = None;
         self.emit_terminal_progress(false, json_output);
@@ -6973,6 +6989,9 @@ impl ShellSession {
         let Some(events) = self.hoppi_thread_events() else {
             return;
         };
+        if self.maybe_distill_hoppi_turn(&events, turn_id) {
+            return;
+        }
         let Some(summary) = build_hoppi_turn_summary_from_events(
             &events,
             &self.thread_id,
@@ -6996,6 +7015,42 @@ impl ShellSession {
         {
             self.mark_hoppi_memory_dirty();
         }
+    }
+
+    fn maybe_distill_hoppi_turn(&mut self, events: &[Event], turn_id: &str) -> bool {
+        let params = {
+            let Some(provider) = self.active_turn_model_provider.as_ref() else {
+                return false;
+            };
+            match memory_distill_turn_params_from_events(
+                &self.memory_settings,
+                events,
+                Path::new(&self.cwd),
+                &self.thread_id,
+                turn_id,
+                self.last_prompt.as_deref(),
+                provider,
+            ) {
+                Ok(params) => params,
+                Err(_) => return false,
+            }
+        };
+        let Ok(value) = self.rpc.request("memory/distill-turn", params) else {
+            return true;
+        };
+        self.record_memory_status_from_value(&value);
+        let remembered = value
+            .get("remembered")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let recurring_saved = value
+            .get("recurringSavedCount")
+            .and_then(Value::as_u64)
+            .unwrap_or(0);
+        if remembered || recurring_saved > 0 {
+            self.mark_hoppi_memory_dirty();
+        }
+        true
     }
 
     fn maybe_remember_hoppi_exit_recap(&mut self) {

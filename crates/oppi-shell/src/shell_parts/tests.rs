@@ -3581,6 +3581,165 @@ export function createHoppiBackend() {
     }
 
     #[test]
+    fn memory_distill_turn_from_events_builds_model_distiller_request() {
+        let events = vec![
+            Event {
+                id: 1,
+                thread_id: "thread-1".to_string(),
+                turn_id: Some("turn-1".to_string()),
+                created_at_ms: 1,
+                kind: EventKind::ItemCompleted {
+                    item: oppi_protocol::Item {
+                        id: "user-1".to_string(),
+                        thread_id: "thread-1".to_string(),
+                        turn_id: "turn-1".to_string(),
+                        kind: ItemKind::UserMessage {
+                            text: "Please compare Rust-native OPPi memory against Plan 75."
+                                .to_string(),
+                        },
+                    },
+                },
+            },
+            Event {
+                id: 2,
+                thread_id: "thread-1".to_string(),
+                turn_id: Some("turn-1".to_string()),
+                created_at_ms: 2,
+                kind: EventKind::ItemCompleted {
+                    item: oppi_protocol::Item {
+                        id: "assistant-1".to_string(),
+                        thread_id: "thread-1".to_string(),
+                        turn_id: "turn-1".to_string(),
+                        kind: ItemKind::AssistantMessage {
+                            text: "Mapped the remaining native memory lifecycle gaps.".to_string(),
+                        },
+                    },
+                },
+            },
+            Event {
+                id: 3,
+                thread_id: "thread-1".to_string(),
+                turn_id: Some("turn-2".to_string()),
+                created_at_ms: 3,
+                kind: EventKind::ItemCompleted {
+                    item: oppi_protocol::Item {
+                        id: "user-2".to_string(),
+                        thread_id: "thread-1".to_string(),
+                        turn_id: "turn-2".to_string(),
+                        kind: ItemKind::UserMessage {
+                            text: "Wire memory/distill-turn into the native shell lifecycle."
+                                .to_string(),
+                        },
+                    },
+                },
+            },
+            Event {
+                id: 4,
+                thread_id: "thread-1".to_string(),
+                turn_id: Some("turn-2".to_string()),
+                created_at_ms: 4,
+                kind: EventKind::ItemCompleted {
+                    item: oppi_protocol::Item {
+                        id: "assistant-2".to_string(),
+                        thread_id: "thread-1".to_string(),
+                        turn_id: "turn-2".to_string(),
+                        kind: ItemKind::AssistantMessage {
+                            text: "Added a focused request builder test before touching the lifecycle hook."
+                                .to_string(),
+                        },
+                    },
+                },
+            },
+            Event {
+                id: 5,
+                thread_id: "other-thread".to_string(),
+                turn_id: Some("turn-2".to_string()),
+                created_at_ms: 5,
+                kind: EventKind::ItemCompleted {
+                    item: oppi_protocol::Item {
+                        id: "other-assistant".to_string(),
+                        thread_id: "other-thread".to_string(),
+                        turn_id: "turn-2".to_string(),
+                        kind: ItemKind::AssistantMessage {
+                            text: "This should not leak into the distiller request.".to_string(),
+                        },
+                    },
+                },
+            },
+        ];
+        let settings = MemorySettings {
+            enabled: true,
+            turn_summaries: true,
+            agent_model: "gpt".to_string(),
+            ..MemorySettings::default()
+        };
+        let provider = OpenAiCompatibleConfig {
+            flavor: DirectProviderFlavor::OpenAiCompatible,
+            provider_id: Some("fixture-provider".to_string()),
+            model: "fixture-memory-model".to_string(),
+            base_url: Some("http://127.0.0.1:4321".to_string()),
+            api_key_env: Some("OPPI_TEST_MEMORY_MODEL_KEY".to_string()),
+            system_prompt: Some("Base system".to_string()),
+            temperature: Some(0.2),
+            reasoning_effort: Some("medium".to_string()),
+            max_output_tokens: Some(2048),
+            stream: true,
+        };
+
+        let params = memory_distill_turn_params_from_events(
+            &settings,
+            &events,
+            Path::new("E:\\RepositoryV2\\oppi"),
+            "thread-1",
+            "turn-2",
+            Some("fallback prompt must not override event user text"),
+            &provider,
+        )
+        .unwrap();
+
+        assert_eq!(params["threadId"], "thread-1");
+        assert_eq!(
+            params["userText"],
+            "Wire memory/distill-turn into the native shell lifecycle."
+        );
+        assert_eq!(
+            params["assistantText"],
+            "Added a focused request builder test before touching the lifecycle hook."
+        );
+        assert_eq!(params["sourceProject"], "E:\\RepositoryV2\\oppi");
+        assert_eq!(params["sourceSessionId"], "thread-1:turn-2");
+        assert_eq!(params["agentModel"], "gpt");
+        assert_eq!(
+            params["recentUserTexts"],
+            json!([
+                "Please compare Rust-native OPPi memory against Plan 75.",
+                "Wire memory/distill-turn into the native shell lifecycle."
+            ])
+        );
+        assert_eq!(
+            params["recentAssistantTexts"],
+            json!([
+                "Mapped the remaining native memory lifecycle gaps.",
+                "Added a focused request builder test before touching the lifecycle hook."
+            ])
+        );
+        assert_eq!(params["modelProvider"]["kind"], "openai-compatible");
+        assert_eq!(params["modelProvider"]["model"], "fixture-memory-model");
+        assert_eq!(params["modelProvider"]["baseUrl"], "http://127.0.0.1:4321");
+        assert_eq!(
+            params["modelProvider"]["apiKeyEnv"],
+            "OPPI_TEST_MEMORY_MODEL_KEY"
+        );
+        assert_eq!(params["modelProvider"]["stream"], true);
+        assert!(
+            !params["assistantText"]
+                .as_str()
+                .unwrap()
+                .contains("other thread")
+        );
+    }
+
+    #[test]
     fn hoppi_session_recap_from_events_builds_recent_exit_memory() {
         let events = vec![
             Event {

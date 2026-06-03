@@ -2464,6 +2464,103 @@ fn build_hoppi_turn_summary_from_events(
     )
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct HoppiTurnDistillTexts {
+    user_text: String,
+    assistant_text: String,
+    recent_user_texts: Vec<String>,
+    recent_assistant_texts: Vec<String>,
+}
+
+fn hoppi_turn_distill_texts_from_events(
+    events: &[Event],
+    thread_id: &str,
+    turn_id: &str,
+    fallback_prompt: Option<&str>,
+) -> Option<HoppiTurnDistillTexts> {
+    let mut user_text = fallback_prompt.unwrap_or_default().to_string();
+    let mut saw_turn_user = false;
+    let mut assistant_parts = Vec::new();
+    let mut user_texts = Vec::new();
+    let mut assistant_texts = Vec::new();
+    for event in events.iter().filter(|event| event.thread_id == thread_id) {
+        let EventKind::ItemCompleted { item } = &event.kind else {
+            continue;
+        };
+        if item.thread_id != thread_id {
+            continue;
+        }
+        match &item.kind {
+            ItemKind::UserMessage { text } => {
+                user_texts.push(text.clone());
+                if item.turn_id == turn_id {
+                    saw_turn_user = true;
+                    user_text = text.clone();
+                }
+            }
+            ItemKind::AssistantMessage { text } => {
+                assistant_texts.push(text.clone());
+                if item.turn_id == turn_id {
+                    assistant_parts.push(text.clone());
+                }
+            }
+            _ => {}
+        }
+    }
+    if !saw_turn_user && !user_text.trim().is_empty() {
+        user_texts.push(user_text.clone());
+    }
+
+    let user_text = truncate_hoppi_summary_part(&compact_hoppi_summary_text(&user_text), 4_000);
+    let assistant_text = truncate_hoppi_summary_part(
+        &compact_hoppi_summary_text(&assistant_parts.join("\n\n")),
+        6_000,
+    );
+    if is_low_signal_hoppi_memory_text(&user_text) || is_low_signal_hoppi_memory_text(&assistant_text)
+    {
+        return None;
+    }
+
+    Some(HoppiTurnDistillTexts {
+        user_text,
+        assistant_text,
+        recent_user_texts: recent_unique_hoppi_texts(&user_texts, 8, 512),
+        recent_assistant_texts: recent_unique_hoppi_texts(&assistant_texts, 8, 512),
+    })
+}
+
+fn memory_distill_turn_params_from_events(
+    settings: &MemorySettings,
+    events: &[Event],
+    cwd: &Path,
+    thread_id: &str,
+    turn_id: &str,
+    fallback_prompt: Option<&str>,
+    provider: &OpenAiCompatibleConfig,
+) -> Result<Value, String> {
+    if !settings.enabled {
+        return Err("Hoppi turn distillation skipped: memory disabled".to_string());
+    }
+    if !settings.turn_summaries {
+        return Err("Hoppi turn distillation skipped: turn summaries disabled".to_string());
+    }
+    let texts = hoppi_turn_distill_texts_from_events(events, thread_id, turn_id, fallback_prompt)
+        .ok_or_else(|| {
+            "Hoppi turn distillation skipped: no completed user/assistant turn text".to_string()
+        })?;
+    Ok(json!({
+        "threadId": thread_id,
+        "userText": texts.user_text,
+        "assistantText": texts.assistant_text,
+        "sourceProject": cwd.display().to_string(),
+        "sourceSessionId": format!("{thread_id}:{turn_id}"),
+        "recentUserTexts": texts.recent_user_texts,
+        "recentAssistantTexts": texts.recent_assistant_texts,
+        "agentModel": memory_model_preference_or_auto(&settings.agent_model),
+        "modelProvider": openai_provider_json(provider),
+    }))
+}
+
 fn is_low_signal_hoppi_memory_text(text: &str) -> bool {
     let normalized = compact_hoppi_summary_text(text).to_lowercase();
     normalized.is_empty()

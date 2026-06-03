@@ -70,6 +70,13 @@ Provider auth:
 - `/login subscription copilot [--enterprise <domain>]` uses Pi's GitHub device-code OAuth flow, stores tokens in the protected auth store, and configures the native `github-copilot` provider.
 - `/login subscription claude` uses the explicit Meridian bridge flow over Claude Code SDK auth; installs/starts are never hidden, and `/login subscription claude login` is the explicit `claude login` step when needed.
 
+Memory backend status:
+
+- `OPPI_MEMORY_BACKEND=auto` or unset keeps the bounded Node/TypeScript Hoppi adapter as the default when available.
+- `OPPI_MEMORY_BACKEND=node` forces that Node/TypeScript adapter.
+- `OPPI_MEMORY_BACKEND=embedded` forces the Rust embedded JSON/lexical adapter. Embedded currently supports status, remember, recall, list, forget, pin/unpin, update, and supersede, but dashboard UI, embeddings, remote sync, richer search, and deeper model maintenance remain follow-up work.
+- Completed native direct-provider turns now call runtime `memory/distill-turn` when Memory and turn summaries are enabled, using the provider that ran or resumed the turn. Mock/no-model turns keep the bounded `memory/backend/remember` summary fallback.
+
 Manual equivalent:
 
 ```bash
