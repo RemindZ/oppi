@@ -7064,6 +7064,8 @@ mod tests {
 
         assert!(result.available);
         assert!(result.remembered);
+        assert_eq!(result.job_id, "mem-job-1");
+        assert!(!result.cancelled);
         assert_eq!(result.model_used.as_deref(), Some("mock-memory-model"));
         let record = result.record.as_ref().expect("distilled memory record");
         assert!(record.id.starts_with("turn-memory-"));
@@ -7121,6 +7123,82 @@ mod tests {
         assert!(requests[0].contains("continue with the plan"));
         assert!(requests[0].contains("\"max_tokens\":420"));
         assert!(requests[0].contains("\"reasoning_effort\":\"minimal\""));
+    }
+
+    #[test]
+    fn memory_distill_job_terminal_updates_do_not_overwrite_cancelled_job() {
+        let mut runtime = Runtime::new();
+        let runtime_thread = thread(&mut runtime);
+        let started = runtime
+            .update_memory_job(MemoryJobUpdateParams {
+                thread_id: runtime_thread.id.clone(),
+                job_id: Some("distill-job-cancel".to_string()),
+                kind: MemoryJobKind::Remember,
+                stage: Some("turn-distillation".to_string()),
+                status: MemoryJobStatus::Running,
+                source: Some("memory-distiller".to_string()),
+                message: Some("Distilling completed turn memory through model provider.".to_string()),
+                queued_at: None,
+                started_at: None,
+                finished_at: None,
+                record_count: 0,
+                deleted_count: 0,
+                dry_run: false,
+                backend_applied: false,
+                agent_model: Some("memory-agent".to_string()),
+                deep_model: None,
+                model_used: None,
+            })
+            .unwrap();
+        assert_eq!(started.queue_depth, 1);
+
+        runtime
+            .cancel_memory_job(MemoryJobCancelParams {
+                thread_id: runtime_thread.id.clone(),
+                job_id: "distill-job-cancel".to_string(),
+                reason: Some("user cancelled distillation".to_string()),
+                finished_at: Some("2026-06-04T12:00:00Z".to_string()),
+            })
+            .unwrap();
+
+        let (finish_cancelled, finish_events) = runtime
+            .finish_memory_distill_job(
+                &runtime_thread.id,
+                "distill-job-cancel",
+                "Distilled turn memory.",
+                2,
+                Some("memory-agent".to_string()),
+                Some("memory-model".to_string()),
+            )
+            .unwrap();
+        assert!(finish_cancelled);
+        assert!(finish_events.is_empty());
+
+        assert!(runtime.fail_memory_distill_job(
+            &runtime_thread.id,
+            "distill-job-cancel",
+            "provider completed after cancellation".to_string(),
+            Some("memory-agent".to_string()),
+        ));
+
+        let jobs = runtime
+            .list_memory_jobs(MemoryJobsListParams {
+                thread_id: Some(runtime_thread.id),
+                include_finished: true,
+                limit: Some(10),
+            })
+            .unwrap();
+        assert_eq!(jobs.queue_depth, 0);
+        let job = jobs
+            .items
+            .iter()
+            .find(|job| job.id == "distill-job-cancel")
+            .unwrap();
+        assert_eq!(job.status, MemoryJobStatus::Cancelled);
+        assert_eq!(job.message.as_deref(), Some("user cancelled distillation"));
+        assert_eq!(job.record_count, 0);
+        assert_eq!(job.agent_model.as_deref(), Some("memory-agent"));
+        assert_eq!(job.model_used, None);
     }
 
     #[test]

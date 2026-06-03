@@ -679,7 +679,7 @@ pub struct AskUserResponse {
     pub request_id: QuestionId,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub answers: Vec<AskUserAnswer>,
-    #[serde(default, skip_serializing_if = "is_false")]
+    #[serde(default)]
     pub cancelled: bool,
     #[serde(default, skip_serializing_if = "is_false")]
     pub timed_out: bool,
@@ -3408,6 +3408,7 @@ pub struct MemoryDistillTurnParams {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MemoryDistillTurnResult {
+    pub job_id: MemoryJobId,
     pub status: MemoryStatus,
     pub available: bool,
     #[serde(default)]
@@ -3420,6 +3421,8 @@ pub struct MemoryDistillTurnResult {
     pub recurring_records: Vec<MemoryRecord>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_used: Option<String>,
+    #[serde(default)]
+    pub cancelled: bool,
     pub message: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub controls: Vec<MemoryControl>,
@@ -4834,6 +4837,7 @@ mod tests {
             ..MemoryRecord::default()
         };
         let result = MemoryDistillTurnResult {
+            job_id: "mem-job-1".to_string(),
             status: MemoryStatus {
                 enabled: true,
                 initialized: true,
@@ -4848,6 +4852,7 @@ mod tests {
             recurring_saved_count: 1,
             recurring_records: vec![candidate],
             model_used: Some("gpt-5.4-mini".to_string()),
+            cancelled: false,
             message: "Distilled turn memory and recorded 1 recurring task candidate.".to_string(),
             controls: Vec::new(),
             diagnostics: Vec::new(),
@@ -4859,9 +4864,11 @@ mod tests {
         assert_eq!(params_json["agentModel"], json!("gpt"));
         assert_eq!(params_json["sourceSessionId"], json!("session-1"));
         let result_json = serde_json::to_value(result).unwrap();
+        assert_eq!(result_json["jobId"], json!("mem-job-1"));
         assert_eq!(result_json["remembered"], json!(true));
         assert_eq!(result_json["recurringSavedCount"], json!(1));
         assert_eq!(result_json["modelUsed"], json!("gpt-5.4-mini"));
+        assert_eq!(result_json["cancelled"], json!(false));
         assert_eq!(
             result_json["recurringRecords"][0]["source"],
             json!("oppi:recurring-task-mining")

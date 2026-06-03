@@ -1659,9 +1659,7 @@ impl Runtime {
         backend_applied: bool,
         model_used: Option<String>,
     ) -> Result<(), RuntimeError> {
-        if self.memory_jobs.get(job_id).is_some_and(|job| {
-            job.thread_id == thread_id && job.status == MemoryJobStatus::Cancelled
-        }) {
+        if self.memory_job_is_cancelled(thread_id, job_id) {
             self.refresh_memory_queue_depth();
             return Ok(());
         }
@@ -1687,6 +1685,12 @@ impl Runtime {
         Ok(())
     }
 
+    fn memory_job_is_cancelled(&self, thread_id: &str, job_id: &str) -> bool {
+        self.memory_jobs.get(job_id).is_some_and(|job| {
+            job.thread_id == thread_id && job.status == MemoryJobStatus::Cancelled
+        })
+    }
+
     fn fail_memory_backend_job(
         &mut self,
         thread_id: &str,
@@ -1696,9 +1700,7 @@ impl Runtime {
         message: impl Into<String>,
         dry_run: bool,
     ) {
-        if self.memory_jobs.get(job_id).is_some_and(|job| {
-            job.thread_id == thread_id && job.status == MemoryJobStatus::Cancelled
-        }) {
+        if self.memory_job_is_cancelled(thread_id, job_id) {
             self.refresh_memory_queue_depth();
             return;
         }
@@ -3206,6 +3208,24 @@ impl Runtime {
                 return Err(error);
             }
         };
+        if self.memory_job_is_cancelled(&thread_id, &job_id) {
+            self.refresh_memory_queue_depth();
+            return Ok(MemoryDistillTurnResult {
+                job_id,
+                status: self.memory.clone(),
+                available: false,
+                remembered: false,
+                record: None,
+                recurring_saved_count: 0,
+                recurring_records: Vec::new(),
+                model_used: Some(model_used),
+                cancelled: true,
+                message: "Turn memory distillation was cancelled; rerun the completed-turn summary to retry it as a new job.".to_string(),
+                controls: Self::memory_job_controls(),
+                diagnostics,
+                events,
+            });
+        }
 
         let mut remembered = false;
         let mut record = None;
@@ -3249,14 +3269,62 @@ impl Runtime {
 
         let record_count = remembered as u64 + recurring_saved_count;
         let finish_message = memory_distill_turn_message(remembered, recurring_saved_count);
+        let (cancelled, finished_events) = self.finish_memory_distill_job(
+            &thread_id,
+            &job_id,
+            finish_message.clone(),
+            record_count,
+            agent_model,
+            Some(model_used.clone()),
+        )?;
+        events.extend(finished_events);
+
+        Ok(MemoryDistillTurnResult {
+            job_id,
+            status: self.memory.clone(),
+            available: !cancelled && (remembered || recurring_saved_count > 0),
+            remembered: !cancelled && remembered,
+            record: if cancelled { None } else { record },
+            recurring_saved_count: if cancelled { 0 } else { recurring_saved_count },
+            recurring_records: if cancelled {
+                Vec::new()
+            } else {
+                recurring_records
+            },
+            model_used: Some(model_used),
+            cancelled,
+            message: if cancelled {
+                "Turn memory distillation was cancelled; late terminal state was ignored.".to_string()
+            } else {
+                finish_message
+            },
+            controls: Self::memory_job_controls(),
+            diagnostics,
+            events,
+        })
+    }
+
+    fn finish_memory_distill_job(
+        &mut self,
+        thread_id: &str,
+        job_id: &str,
+        message: impl Into<String>,
+        record_count: u64,
+        agent_model: Option<String>,
+        model_used: Option<String>,
+    ) -> Result<(bool, Vec<Event>), RuntimeError> {
+        if self.memory_job_is_cancelled(thread_id, job_id) {
+            self.refresh_memory_queue_depth();
+            return Ok((true, Vec::new()));
+        }
         let finished = self.update_memory_job(MemoryJobUpdateParams {
-            thread_id: thread_id.clone(),
-            job_id: Some(job_id),
+            thread_id: thread_id.to_string(),
+            job_id: Some(job_id.to_string()),
             kind: MemoryJobKind::Remember,
             stage: Some("turn-distillation".to_string()),
             status: MemoryJobStatus::Succeeded,
             source: Some("memory-distiller".to_string()),
-            message: Some(finish_message.clone()),
+            message: Some(message.into()),
             queued_at: None,
             started_at: None,
             finished_at: None,
@@ -3266,23 +3334,9 @@ impl Runtime {
             backend_applied: false,
             agent_model,
             deep_model: None,
-            model_used: Some(model_used.clone()),
+            model_used,
         })?;
-        events.extend(finished.events);
-
-        Ok(MemoryDistillTurnResult {
-            status: self.memory.clone(),
-            available: remembered || recurring_saved_count > 0,
-            remembered,
-            record,
-            recurring_saved_count,
-            recurring_records,
-            model_used: Some(model_used),
-            message: finish_message,
-            controls: Self::memory_job_controls(),
-            diagnostics,
-            events,
-        })
+        Ok((false, finished.events))
     }
 
     fn fail_memory_distill_job(
@@ -3291,7 +3345,11 @@ impl Runtime {
         job_id: &str,
         message: String,
         agent_model: Option<String>,
-    ) {
+    ) -> bool {
+        if self.memory_job_is_cancelled(thread_id, job_id) {
+            self.refresh_memory_queue_depth();
+            return true;
+        }
         let _ = self.update_memory_job(MemoryJobUpdateParams {
             thread_id: thread_id.to_string(),
             job_id: Some(job_id.to_string()),
@@ -3311,6 +3369,7 @@ impl Runtime {
             deep_model: None,
             model_used: None,
         });
+        false
     }
 
     pub fn memory_recurring_candidates(

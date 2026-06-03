@@ -3792,7 +3792,9 @@ export function createHoppiBackend() {
         assert!(distilled.error.is_none(), "{:?}", distilled.error);
         let requests = server.join().unwrap();
         let result = distilled.result.unwrap();
+        assert_eq!(result["jobId"], json!("mem-job-1"));
         assert_eq!(result["remembered"], json!(true));
+        assert_eq!(result["cancelled"], json!(false));
         assert_eq!(result["modelUsed"], json!("mock-memory-model"));
         assert_eq!(result["recurringSavedCount"], json!(1));
         assert_eq!(result["record"]["source"], json!("oppi:turn-distillation"));
