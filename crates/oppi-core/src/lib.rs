@@ -7,6 +7,8 @@
 pub mod event_store;
 
 mod goals;
+#[path = "core_parts/memory_helpers.rs"]
+mod memory_helpers;
 
 use base64::{
     Engine as _,
@@ -18,6 +20,7 @@ use goals::{
     render_goal_budget_limit_prompt, render_goal_continuation_prompt, status_after_budget,
     validate_goal_budget, validate_goal_objective,
 };
+use memory_helpers::*;
 use oppi_agents::{AgentIndexOptions, built_in_agent_definitions, load_agent_index};
 use oppi_protocol::*;
 use oppi_sandbox::{
@@ -904,5 +907,4 @@ include!("core_parts/tools_guardian_registry.rs");
 
 include!("core_parts/runtime_impl.rs");
 
-include!("core_parts/memory_helpers.rs");
 include!("core_parts/tests.rs");

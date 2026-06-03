@@ -1,8 +1,10 @@
-fn numeric_suffix(id: &str) -> Option<u64> {
+use super::*;
+
+pub(super) fn numeric_suffix(id: &str) -> Option<u64> {
     id.rsplit_once('-')?.1.parse().ok()
 }
 
-fn normalize_thread_title(title: &str) -> Result<Option<String>, RuntimeError> {
+pub(super) fn normalize_thread_title(title: &str) -> Result<Option<String>, RuntimeError> {
     let title = title.trim();
     if title.is_empty() {
         return Ok(None);
@@ -17,7 +19,7 @@ fn normalize_thread_title(title: &str) -> Result<Option<String>, RuntimeError> {
     Ok(Some(title.to_string()))
 }
 
-fn event_store_error(error: event_store::EventStoreError) -> RuntimeError {
+pub(super) fn event_store_error(error: event_store::EventStoreError) -> RuntimeError {
     RuntimeError::new(
         "event_store_error",
         RuntimeErrorCategory::EventStore,
@@ -25,7 +27,7 @@ fn event_store_error(error: event_store::EventStoreError) -> RuntimeError {
     )
 }
 
-fn thread_item_matches_filter(
+pub(super) fn thread_item_matches_filter(
     kind: &ItemKind,
     labels: &[String],
     filter: ThreadItemFilter,
@@ -40,7 +42,7 @@ fn thread_item_matches_filter(
     }
 }
 
-fn normalize_thread_item_labels(labels: Vec<String>) -> Vec<String> {
+pub(super) fn normalize_thread_item_labels(labels: Vec<String>) -> Vec<String> {
     let mut seen = BTreeSet::new();
     let mut normalized = Vec::new();
     for label in labels {
@@ -55,7 +57,7 @@ fn normalize_thread_item_labels(labels: Vec<String>) -> Vec<String> {
     normalized
 }
 
-fn not_found(kind: &str, id: &str) -> RuntimeError {
+pub(super) fn not_found(kind: &str, id: &str) -> RuntimeError {
     RuntimeError::new(
         format!("{}_not_found", kind.replace(' ', "_")),
         RuntimeErrorCategory::NotFound,
@@ -63,13 +65,13 @@ fn not_found(kind: &str, id: &str) -> RuntimeError {
     )
 }
 
-fn memory_dashboard_fallback_url(url: &str) -> Option<String> {
+pub(super) fn memory_dashboard_fallback_url(url: &str) -> Option<String> {
     url.contains("hoppi.localhost")
         .then(|| url.replace("hoppi.localhost", "localhost"))
         .filter(|fallback| fallback != url)
 }
 
-fn memory_backend_recall_stage(params: &MemoryBackendRecallParams) -> &'static str {
+pub(super) fn memory_backend_recall_stage(params: &MemoryBackendRecallParams) -> &'static str {
     match (params.include_startup, params.include_task) {
         (true, true) => "recall-startup-task",
         (true, false) => "recall-startup",
@@ -78,7 +80,7 @@ fn memory_backend_recall_stage(params: &MemoryBackendRecallParams) -> &'static s
     }
 }
 
-fn memory_backend_list_stage(params: &MemoryBackendListParams) -> &'static str {
+pub(super) fn memory_backend_list_stage(params: &MemoryBackendListParams) -> &'static str {
     match (params.include_superseded, params.pinned_only) {
         (true, true) => "list-all-pinned",
         (true, false) => "list-all",
@@ -87,7 +89,7 @@ fn memory_backend_list_stage(params: &MemoryBackendListParams) -> &'static str {
     }
 }
 
-fn memory_backend_sync_stage(direction: MemoryBackendSyncDirection) -> &'static str {
+pub(super) fn memory_backend_sync_stage(direction: MemoryBackendSyncDirection) -> &'static str {
     match direction {
         MemoryBackendSyncDirection::Pull => "sync-pull",
         MemoryBackendSyncDirection::Push => "sync-push",
@@ -95,7 +97,7 @@ fn memory_backend_sync_stage(direction: MemoryBackendSyncDirection) -> &'static 
     }
 }
 
-fn memory_backend_required_text(
+pub(super) fn memory_backend_required_text(
     value: &str,
     field: &str,
     max_chars: usize,
@@ -111,7 +113,10 @@ fn memory_backend_required_text(
     Ok(value.chars().take(max_chars).collect())
 }
 
-fn memory_backend_optional_text(value: Option<String>, max_chars: usize) -> Option<String> {
+pub(super) fn memory_backend_optional_text(
+    value: Option<String>,
+    max_chars: usize,
+) -> Option<String> {
     value
         .as_deref()
         .map(str::trim)
@@ -127,7 +132,11 @@ fn memory_backend_optional_text_vec(values: Vec<String>, max_items: usize) -> Ve
         .collect()
 }
 
-fn memory_recurring_texts(values: Vec<String>, max_items: usize, max_chars: usize) -> Vec<String> {
+pub(super) fn memory_recurring_texts(
+    values: Vec<String>,
+    max_items: usize,
+    max_chars: usize,
+) -> Vec<String> {
     values
         .into_iter()
         .filter_map(|value| memory_backend_optional_text(Some(value), max_chars))
@@ -239,7 +248,7 @@ fn recurring_task_candidate_content(
     lines.join("\n")
 }
 
-fn recurring_task_candidate_record(
+pub(super) fn recurring_task_candidate_record(
     candidate: MemoryRecurringTaskCandidate,
     source_project: Option<&str>,
     source_session_id: Option<&str>,
@@ -293,19 +302,19 @@ fn recurring_task_candidate_record(
 }
 
 #[derive(Debug, Clone)]
-struct DistilledTurnMemory {
-    remember: bool,
-    request: Option<String>,
-    completed: Vec<String>,
-    learned: Vec<String>,
-    decisions: Vec<String>,
-    next: Vec<String>,
-    files: Vec<String>,
-    tags: Vec<String>,
-    recurring_tasks: Vec<MemoryRecurringTaskCandidate>,
+pub(super) struct DistilledTurnMemory {
+    pub(super) remember: bool,
+    pub(super) request: Option<String>,
+    pub(super) completed: Vec<String>,
+    pub(super) learned: Vec<String>,
+    pub(super) decisions: Vec<String>,
+    pub(super) next: Vec<String>,
+    pub(super) files: Vec<String>,
+    pub(super) tags: Vec<String>,
+    pub(super) recurring_tasks: Vec<MemoryRecurringTaskCandidate>,
 }
 
-fn memory_distiller_input(user_text: &str, assistant_text: &str) -> String {
+pub(super) fn memory_distiller_input(user_text: &str, assistant_text: &str) -> String {
     let payload = serde_json::to_string_pretty(&json!({
         "user": user_text,
         "assistant": assistant_text,
@@ -448,7 +457,9 @@ fn memory_distiller_recurring_candidates(value: &Value) -> Vec<MemoryRecurringTa
         .collect()
 }
 
-fn parse_memory_distiller_output(raw: &str) -> Result<DistilledTurnMemory, RuntimeError> {
+pub(super) fn parse_memory_distiller_output(
+    raw: &str,
+) -> Result<DistilledTurnMemory, RuntimeError> {
     let value = memory_distiller_json_object(raw)?;
     Ok(DistilledTurnMemory {
         remember: value
@@ -533,7 +544,7 @@ fn memory_distilled_turn_content(
     (content.len() >= 80).then_some(content)
 }
 
-fn memory_distilled_turn_record(
+pub(super) fn memory_distilled_turn_record(
     distilled: &DistilledTurnMemory,
     source_session_id: Option<&str>,
     source_project: Option<&str>,
@@ -567,7 +578,7 @@ fn memory_distilled_turn_record(
     })
 }
 
-fn memory_distill_turn_message(remembered: bool, recurring_saved_count: u64) -> String {
+pub(super) fn memory_distill_turn_message(remembered: bool, recurring_saved_count: u64) -> String {
     match (remembered, recurring_saved_count) {
         (true, 0) => "Distilled and recorded turn memory.".to_string(),
         (false, 0) => {
@@ -584,7 +595,7 @@ fn memory_distill_turn_message(remembered: bool, recurring_saved_count: u64) -> 
     }
 }
 
-fn sanitize_memory_backend_remember_params(
+pub(super) fn sanitize_memory_backend_remember_params(
     mut params: MemoryBackendRememberParams,
 ) -> Result<MemoryBackendRememberParams, RuntimeError> {
     params.content = memory_backend_required_text(&params.content, "content", 16_000)?;
@@ -595,7 +606,7 @@ fn sanitize_memory_backend_remember_params(
     Ok(params)
 }
 
-fn sanitize_memory_backend_list_params(
+pub(super) fn sanitize_memory_backend_list_params(
     mut params: MemoryBackendListParams,
 ) -> Result<MemoryBackendListParams, RuntimeError> {
     params.query = memory_backend_optional_text(params.query, 512);
@@ -603,7 +614,7 @@ fn sanitize_memory_backend_list_params(
     Ok(params)
 }
 
-fn sanitize_memory_backend_patch(
+pub(super) fn sanitize_memory_backend_patch(
     mut patch: MemoryRecordPatch,
 ) -> Result<MemoryRecordPatch, RuntimeError> {
     patch.content = memory_backend_optional_text(patch.content, 16_000);
@@ -616,7 +627,7 @@ fn sanitize_memory_backend_patch(
     Ok(patch)
 }
 
-fn sanitize_memory_backend_consolidate_params(
+pub(super) fn sanitize_memory_backend_consolidate_params(
     mut params: MemoryBackendConsolidateParams,
 ) -> Result<MemoryBackendConsolidateParams, RuntimeError> {
     params.stage = memory_backend_optional_text(params.stage, 128);
@@ -627,7 +638,7 @@ fn sanitize_memory_backend_consolidate_params(
     Ok(params)
 }
 
-fn sanitize_memory_backend_sync_params(
+pub(super) fn sanitize_memory_backend_sync_params(
     mut params: MemoryBackendSyncParams,
 ) -> Result<MemoryBackendSyncParams, RuntimeError> {
     params.repo_path = memory_backend_optional_text(params.repo_path, 4096);
@@ -806,7 +817,7 @@ fn annotate_memory_backend_status(
     status
 }
 
-fn memory_backend_optional_status_from_raw(
+pub(super) fn memory_backend_optional_status_from_raw(
     raw: &MemoryBackendRawResult,
     current: &MemoryStatus,
 ) -> Option<MemoryStatus> {
@@ -817,14 +828,14 @@ fn memory_backend_optional_status_from_raw(
         .map(|status| annotate_memory_backend_status(status, raw))
 }
 
-fn memory_backend_status_from_raw(
+pub(super) fn memory_backend_status_from_raw(
     raw: &MemoryBackendRawResult,
     current: &MemoryStatus,
 ) -> MemoryStatus {
     memory_backend_optional_status_from_raw(raw, current).unwrap_or_else(|| current.clone())
 }
 
-fn memory_backend_records_from_raw(raw: &MemoryBackendRawResult) -> Vec<MemoryRecord> {
+pub(super) fn memory_backend_records_from_raw(raw: &MemoryBackendRawResult) -> Vec<MemoryRecord> {
     raw.value
         .get("records")
         .or_else(|| raw.value.get("memories"))
@@ -835,7 +846,7 @@ fn memory_backend_records_from_raw(raw: &MemoryBackendRawResult) -> Vec<MemoryRe
         .unwrap_or_default()
 }
 
-fn memory_backend_record_from_raw(raw: &MemoryBackendRawResult) -> Option<MemoryRecord> {
+pub(super) fn memory_backend_record_from_raw(raw: &MemoryBackendRawResult) -> Option<MemoryRecord> {
     raw.value
         .get("record")
         .or_else(|| raw.value.get("memory"))
@@ -847,7 +858,7 @@ fn memory_backend_record_from_raw(raw: &MemoryBackendRawResult) -> Option<Memory
         .and_then(|value| serde_json::from_value::<MemoryRecord>(value).ok())
 }
 
-fn memory_remember_params_from_backend_raw(
+pub(super) fn memory_remember_params_from_backend_raw(
     params: &MemoryBackendRememberParams,
     raw: &MemoryBackendRawResult,
 ) -> MemoryRememberParams {
@@ -867,7 +878,7 @@ fn memory_remember_params_from_backend_raw(
     }
 }
 
-fn memory_consolidate_params_from_backend_raw(
+pub(super) fn memory_consolidate_params_from_backend_raw(
     params: &MemoryBackendConsolidateParams,
     raw: &MemoryBackendRawResult,
 ) -> MemoryConsolidateParams {
@@ -890,12 +901,12 @@ fn memory_consolidate_params_from_backend_raw(
     }
 }
 
-fn memory_backend_sync_record_count(value: &Value) -> u64 {
+pub(super) fn memory_backend_sync_record_count(value: &Value) -> u64 {
     memory_backend_u64_field(value, &["imported"]).unwrap_or(0)
         + memory_backend_u64_field(value, &["exported"]).unwrap_or(0)
 }
 
-fn memory_recall_params_from_backend_raw(
+pub(super) fn memory_recall_params_from_backend_raw(
     thread_id: &str,
     prompt: &str,
     raw: &MemoryBackendRawResult,
@@ -945,7 +956,7 @@ fn memory_recall_params_from_backend_raw(
     }
 }
 
-fn memory_record_matches_query(record: &MemoryRecord, query: &str) -> bool {
+pub(super) fn memory_record_matches_query(record: &MemoryRecord, query: &str) -> bool {
     let query = query.trim().to_ascii_lowercase();
     if query.is_empty() {
         return true;
@@ -966,7 +977,7 @@ fn memory_record_matches_query(record: &MemoryRecord, query: &str) -> bool {
             .is_some_and(|confidence| confidence.to_ascii_lowercase().contains(&query))
 }
 
-fn memory_record_patch_is_empty(patch: &MemoryRecordPatch) -> bool {
+pub(super) fn memory_record_patch_is_empty(patch: &MemoryRecordPatch) -> bool {
     patch.content.is_none()
         && patch.tags.is_none()
         && patch.pinned.is_none()
@@ -976,7 +987,7 @@ fn memory_record_patch_is_empty(patch: &MemoryRecordPatch) -> bool {
         && patch.superseded_by.is_none()
 }
 
-fn apply_memory_record_patch(record: &mut MemoryRecord, patch: &MemoryRecordPatch) {
+pub(super) fn apply_memory_record_patch(record: &mut MemoryRecord, patch: &MemoryRecordPatch) {
     if let Some(content) = &patch.content {
         record.content = content.clone();
     }
@@ -1000,7 +1011,7 @@ fn apply_memory_record_patch(record: &mut MemoryRecord, patch: &MemoryRecordPatc
     }
 }
 
-fn already_exists(kind: &str, id: &str) -> RuntimeError {
+pub(super) fn already_exists(kind: &str, id: &str) -> RuntimeError {
     RuntimeError::new(
         format!("{}_already_exists", kind.replace(' ', "_")),
         RuntimeErrorCategory::AlreadyExists,
@@ -1008,7 +1019,7 @@ fn already_exists(kind: &str, id: &str) -> RuntimeError {
     )
 }
 
-fn already_resolved(kind: &str, id: &str) -> RuntimeError {
+pub(super) fn already_resolved(kind: &str, id: &str) -> RuntimeError {
     RuntimeError::new(
         format!("{}_already_resolved", kind.replace(' ', "_")),
         RuntimeErrorCategory::AlreadyResolved,
@@ -1016,7 +1027,7 @@ fn already_resolved(kind: &str, id: &str) -> RuntimeError {
     )
 }
 
-fn agent_name_slug(name: &str) -> Result<String, RuntimeError> {
+pub(super) fn agent_name_slug(name: &str) -> Result<String, RuntimeError> {
     let mut slug = String::new();
     let mut pending_dash = false;
     for character in name.trim().chars() {
@@ -1042,7 +1053,7 @@ fn agent_name_slug(name: &str) -> Result<String, RuntimeError> {
     Ok(slug)
 }
 
-fn invalid_goal_request(message: String) -> RuntimeError {
+pub(super) fn invalid_goal_request(message: String) -> RuntimeError {
     RuntimeError::new(
         "invalid_goal",
         RuntimeErrorCategory::InvalidRequest,
@@ -1050,7 +1061,7 @@ fn invalid_goal_request(message: String) -> RuntimeError {
     )
 }
 
-fn thread_goal_status_name(status: ThreadGoalStatus) -> &'static str {
+pub(super) fn thread_goal_status_name(status: ThreadGoalStatus) -> &'static str {
     match status {
         ThreadGoalStatus::Active => "active",
         ThreadGoalStatus::Paused => "paused",
@@ -1059,7 +1070,7 @@ fn thread_goal_status_name(status: ThreadGoalStatus) -> &'static str {
     }
 }
 
-fn turn_status_name(status: TurnStatus) -> &'static str {
+pub(super) fn turn_status_name(status: TurnStatus) -> &'static str {
     match status {
         TurnStatus::Queued => "queued",
         TurnStatus::Running => "running",
@@ -1071,14 +1082,14 @@ fn turn_status_name(status: TurnStatus) -> &'static str {
     }
 }
 
-fn turn_is_terminal(turn: &Turn) -> bool {
+pub(super) fn turn_is_terminal(turn: &Turn) -> bool {
     matches!(
         turn.status,
         TurnStatus::Completed | TurnStatus::Aborted | TurnStatus::Failed
     )
 }
 
-fn ensure_turn_mutable(turn: &Turn) -> Result<(), RuntimeError> {
+pub(super) fn ensure_turn_mutable(turn: &Turn) -> Result<(), RuntimeError> {
     if turn_is_terminal(turn) {
         return Err(RuntimeError::new(
             "turn_not_mutable",
@@ -1089,7 +1100,7 @@ fn ensure_turn_mutable(turn: &Turn) -> Result<(), RuntimeError> {
     Ok(())
 }
 
-fn validate_tool_pairing(tools: &[SimulatedToolUse]) -> Result<(), RuntimeError> {
+pub(super) fn validate_tool_pairing(tools: &[SimulatedToolUse]) -> Result<(), RuntimeError> {
     let mut tracker = ToolPairingTracker::new();
     for simulated in tools {
         if simulated.result.call_id != simulated.call.id {
@@ -1121,4 +1132,3 @@ fn tool_error(error: oppi_tools::ToolPairingError) -> RuntimeError {
         format!("{error:?}"),
     )
 }
-
