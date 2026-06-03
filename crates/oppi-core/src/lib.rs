@@ -9,6 +9,8 @@ pub mod event_store;
 mod goals;
 #[path = "core_parts/memory_helpers.rs"]
 mod memory_helpers;
+#[path = "core_parts/providers.rs"]
+mod providers;
 #[path = "core_parts/tools_guardian_registry.rs"]
 mod tools_guardian_registry;
 
@@ -32,6 +34,7 @@ use oppi_sandbox::{
 use oppi_tools::{
     ToolPairingTracker, ToolRegistry, describe_tool_batch, partition_ordered_tool_batches,
 };
+use providers::*;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -205,7 +208,6 @@ const GITHUB_COPILOT_MODEL_CATALOG: &[&str] = &[
 const MERIDIAN_MODEL_CATALOG: &[&str] =
     &["claude-opus-4-6", "claude-sonnet-4-6", "claude-haiku-4-5"];
 
-include!("core_parts/providers.rs");
 fn truncate_chars(text: &str, max_chars: usize) -> String {
     let mut iter = text.chars();
     let truncated = iter.by_ref().take(max_chars).collect::<String>();

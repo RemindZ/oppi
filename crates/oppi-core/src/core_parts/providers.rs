@@ -1,12 +1,14 @@
+use super::*;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum ProviderMessageRole {
+pub(super) enum ProviderMessageRole {
     System,
     User,
     Assistant,
 }
 
 impl ProviderMessageRole {
-    fn as_str(&self) -> &'static str {
+    pub(super) fn as_str(&self) -> &'static str {
         match self {
             Self::System => "system",
             Self::User => "user",
@@ -16,20 +18,20 @@ impl ProviderMessageRole {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct ProviderHistoryMessage {
-    role: ProviderMessageRole,
-    content: String,
-    turn_id: Option<TurnId>,
+pub(super) struct ProviderHistoryMessage {
+    pub(super) role: ProviderMessageRole,
+    pub(super) content: String,
+    pub(super) turn_id: Option<TurnId>,
 }
 
 #[derive(Debug, Clone)]
-struct DirectProviderResumeState {
-    config: DirectModelProviderConfig,
-    messages: Vec<Value>,
+pub(super) struct DirectProviderResumeState {
+    pub(super) config: DirectModelProviderConfig,
+    pub(super) messages: Vec<Value>,
 }
 
 impl DirectProviderResumeState {
-    fn replay_snapshot(&self, turn_id: &str) -> ProviderTranscriptReplaySnapshot {
+    pub(super) fn replay_snapshot(&self, turn_id: &str) -> ProviderTranscriptReplaySnapshot {
         ProviderTranscriptReplaySnapshot {
             turn_id: turn_id.to_string(),
             model_provider: self.config.clone(),
@@ -37,7 +39,7 @@ impl DirectProviderResumeState {
         }
     }
 
-    fn from_replay_snapshot(snapshot: &ProviderTranscriptReplaySnapshot) -> Self {
+    pub(super) fn from_replay_snapshot(snapshot: &ProviderTranscriptReplaySnapshot) -> Self {
         Self {
             config: snapshot.model_provider.clone(),
             messages: snapshot.messages.clone(),
@@ -47,7 +49,7 @@ impl DirectProviderResumeState {
 
 #[derive(Debug, Clone, Default)]
 pub struct TurnInterruptRegistry {
-    requests: Arc<Mutex<BTreeMap<TurnId, String>>>,
+    pub(super) requests: Arc<Mutex<BTreeMap<TurnId, String>>>,
 }
 
 impl TurnInterruptRegistry {
@@ -60,7 +62,7 @@ impl TurnInterruptRegistry {
         Ok(())
     }
 
-    fn take(&self, turn_id: &str) -> Option<String> {
+    pub(super) fn take(&self, turn_id: &str) -> Option<String> {
         self.requests
             .lock()
             .ok()
@@ -146,17 +148,17 @@ pub trait MemoryBackendRunner: std::fmt::Debug + Send + Sync {
 }
 
 #[derive(Debug, Clone)]
-struct ModelProviderStep {
-    step: ScriptedModelStep,
-    diagnostics: Vec<Diagnostic>,
-    known_token_delta: i64,
+pub(super) struct ModelProviderStep {
+    pub(super) step: ScriptedModelStep,
+    pub(super) diagnostics: Vec<Diagnostic>,
+    pub(super) known_token_delta: i64,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-struct ProviderTokenUsage {
-    input_tokens: Option<i64>,
-    output_tokens: Option<i64>,
-    total_tokens: Option<i64>,
+pub(super) struct ProviderTokenUsage {
+    pub(super) input_tokens: Option<i64>,
+    pub(super) output_tokens: Option<i64>,
+    pub(super) total_tokens: Option<i64>,
 }
 
 impl ProviderTokenUsage {
@@ -167,13 +169,13 @@ impl ProviderTokenUsage {
 }
 
 #[derive(Debug, Clone)]
-struct AgenticToolExecution {
-    result: ToolResult,
-    side_events: Vec<Event>,
+pub(super) struct AgenticToolExecution {
+    pub(super) result: ToolResult,
+    pub(super) side_events: Vec<Event>,
 }
 
 impl AgenticToolExecution {
-    fn result(result: ToolResult) -> Self {
+    pub(super) fn result(result: ToolResult) -> Self {
         Self {
             result,
             side_events: Vec::new(),
@@ -182,97 +184,97 @@ impl AgenticToolExecution {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum GuardianReviewDecisionKind {
+pub(super) enum GuardianReviewDecisionKind {
     Allow,
     Deny,
 }
 
 #[derive(Debug, Clone)]
-struct GuardianReviewResult {
-    decision: GuardianReviewDecisionKind,
-    risk: RiskLevel,
-    reason: String,
-    strict_json: String,
+pub(super) struct GuardianReviewResult {
+    pub(super) decision: GuardianReviewDecisionKind,
+    pub(super) risk: RiskLevel,
+    pub(super) reason: String,
+    pub(super) strict_json: String,
 }
 
 #[derive(Debug)]
 pub struct Runtime {
-    next_thread: u64,
-    next_turn: u64,
-    next_item: u64,
-    next_event: u64,
-    next_approval: u64,
-    next_question: u64,
-    next_agent_run: u64,
-    next_memory_job: u64,
-    threads: BTreeMap<ThreadId, Thread>,
-    turns: BTreeMap<TurnId, Turn>,
-    thread_item_labels: BTreeMap<(ThreadId, EventId), Vec<String>>,
-    thread_fork_points: BTreeMap<ThreadId, EventId>,
-    thread_history_cutoffs: BTreeMap<ThreadId, EventId>,
-    event_store: InMemoryEventStore,
-    event_mirror: Option<Arc<Mutex<Vec<Event>>>>,
-    approvals: BTreeMap<ApprovalId, OwnedApprovalRequest>,
-    questions: BTreeMap<QuestionId, OwnedQuestionRequest>,
-    plugins: BTreeMap<PluginId, PluginRef>,
-    memory: MemoryStatus,
-    memory_records: Option<Vec<MemoryRecord>>,
-    memory_jobs: BTreeMap<MemoryJobId, MemoryJobRef>,
-    memory_backend_runner: Option<Arc<dyn MemoryBackendRunner>>,
-    todos: TodoState,
-    goals: BTreeMap<ThreadId, ThreadGoal>,
-    goal_active_started_at_ms: BTreeMap<ThreadId, u64>,
-    goal_continuations: BTreeMap<ThreadId, u32>,
-    suggested_next: Option<SuggestedNextMessage>,
-    mcp_servers: BTreeMap<McpServerId, McpServerRef>,
-    mcp_http_sessions: BTreeMap<McpServerId, McpHttpSessionState>,
+    pub(super) next_thread: u64,
+    pub(super) next_turn: u64,
+    pub(super) next_item: u64,
+    pub(super) next_event: u64,
+    pub(super) next_approval: u64,
+    pub(super) next_question: u64,
+    pub(super) next_agent_run: u64,
+    pub(super) next_memory_job: u64,
+    pub(super) threads: BTreeMap<ThreadId, Thread>,
+    pub(super) turns: BTreeMap<TurnId, Turn>,
+    pub(super) thread_item_labels: BTreeMap<(ThreadId, EventId), Vec<String>>,
+    pub(super) thread_fork_points: BTreeMap<ThreadId, EventId>,
+    pub(super) thread_history_cutoffs: BTreeMap<ThreadId, EventId>,
+    pub(super) event_store: InMemoryEventStore,
+    pub(super) event_mirror: Option<Arc<Mutex<Vec<Event>>>>,
+    pub(super) approvals: BTreeMap<ApprovalId, OwnedApprovalRequest>,
+    pub(super) questions: BTreeMap<QuestionId, OwnedQuestionRequest>,
+    pub(super) plugins: BTreeMap<PluginId, PluginRef>,
+    pub(super) memory: MemoryStatus,
+    pub(super) memory_records: Option<Vec<MemoryRecord>>,
+    pub(super) memory_jobs: BTreeMap<MemoryJobId, MemoryJobRef>,
+    pub(super) memory_backend_runner: Option<Arc<dyn MemoryBackendRunner>>,
+    pub(super) todos: TodoState,
+    pub(super) goals: BTreeMap<ThreadId, ThreadGoal>,
+    pub(super) goal_active_started_at_ms: BTreeMap<ThreadId, u64>,
+    pub(super) goal_continuations: BTreeMap<ThreadId, u32>,
+    pub(super) suggested_next: Option<SuggestedNextMessage>,
+    pub(super) mcp_servers: BTreeMap<McpServerId, McpServerRef>,
+    pub(super) mcp_http_sessions: BTreeMap<McpServerId, McpHttpSessionState>,
     #[cfg(test)]
-    mcp_mock_servers: BTreeMap<McpServerId, VecDeque<Value>>,
-    plugin_runner_tools: BTreeMap<PluginId, Vec<PluginRunnerToolRef>>,
+    pub(super) mcp_mock_servers: BTreeMap<McpServerId, VecDeque<Value>>,
+    pub(super) plugin_runner_tools: BTreeMap<PluginId, Vec<PluginRunnerToolRef>>,
     #[cfg(test)]
-    plugin_runner_mock_runners: BTreeMap<PluginId, VecDeque<Value>>,
-    models: BTreeMap<ModelId, ModelRef>,
-    selected_model: Option<ModelId>,
-    tool_registry: ToolRegistry,
-    agents: BTreeMap<String, Vec<AgentDefinition>>,
-    agent_runs: BTreeMap<AgentRunId, AgentRun>,
-    pending_background_agents: BTreeMap<AgentRunId, BackgroundAgentRequest>,
-    background_agent_resumes: BTreeMap<AgentRunId, BackgroundAgentResumeState>,
-    direct_provider_turns: BTreeMap<TurnId, DirectProviderResumeState>,
-    turn_sandbox_policies: BTreeMap<TurnId, SandboxPolicy>,
-    turn_interrupts: TurnInterruptRegistry,
-    shell_tasks: BTreeMap<String, ShellTaskRecord>,
-    guardian_review_records: VecDeque<GuardianReviewRecord>,
-    guardian_exact_cache: BTreeMap<String, GuardianReviewRecord>,
-    guardian_denial_circuit: BTreeMap<String, VecDeque<u64>>,
-    guardian_settings: GuardianReviewSettings,
-    ask_user_settings: AskUserSettings,
+    pub(super) plugin_runner_mock_runners: BTreeMap<PluginId, VecDeque<Value>>,
+    pub(super) models: BTreeMap<ModelId, ModelRef>,
+    pub(super) selected_model: Option<ModelId>,
+    pub(super) tool_registry: ToolRegistry,
+    pub(super) agents: BTreeMap<String, Vec<AgentDefinition>>,
+    pub(super) agent_runs: BTreeMap<AgentRunId, AgentRun>,
+    pub(super) pending_background_agents: BTreeMap<AgentRunId, BackgroundAgentRequest>,
+    pub(super) background_agent_resumes: BTreeMap<AgentRunId, BackgroundAgentResumeState>,
+    pub(super) direct_provider_turns: BTreeMap<TurnId, DirectProviderResumeState>,
+    pub(super) turn_sandbox_policies: BTreeMap<TurnId, SandboxPolicy>,
+    pub(super) turn_interrupts: TurnInterruptRegistry,
+    pub(super) shell_tasks: BTreeMap<String, ShellTaskRecord>,
+    pub(super) guardian_review_records: VecDeque<GuardianReviewRecord>,
+    pub(super) guardian_exact_cache: BTreeMap<String, GuardianReviewRecord>,
+    pub(super) guardian_denial_circuit: BTreeMap<String, VecDeque<u64>>,
+    pub(super) guardian_settings: GuardianReviewSettings,
+    pub(super) ask_user_settings: AskUserSettings,
 }
 
 #[derive(Debug)]
-struct ShellTaskRecord {
-    id: String,
-    command: String,
-    cwd: String,
-    output_path: PathBuf,
-    status: ShellTaskStatus,
-    child: Option<SandboxedBackgroundProcess>,
-    started_at_ms: u64,
-    finished_at_ms: Option<u64>,
-    exit_code: Option<i32>,
+pub(super) struct ShellTaskRecord {
+    pub(super) id: String,
+    pub(super) command: String,
+    pub(super) cwd: String,
+    pub(super) output_path: PathBuf,
+    pub(super) status: ShellTaskStatus,
+    pub(super) child: Option<SandboxedBackgroundProcess>,
+    pub(super) started_at_ms: u64,
+    pub(super) finished_at_ms: Option<u64>,
+    pub(super) exit_code: Option<i32>,
 }
 
 #[derive(Debug, Clone)]
-struct BackgroundAgentResumeState {
-    parent_thread_id: ThreadId,
-    child_thread_id: ThreadId,
-    child_turn_id: TurnId,
-    execution_root: String,
-    tool_definitions: Vec<ToolDefinition>,
+pub(super) struct BackgroundAgentResumeState {
+    pub(super) parent_thread_id: ThreadId,
+    pub(super) child_thread_id: ThreadId,
+    pub(super) child_turn_id: TurnId,
+    pub(super) execution_root: String,
+    pub(super) tool_definitions: Vec<ToolDefinition>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ShellTaskStatus {
+pub(super) enum ShellTaskStatus {
     Running,
     Completed,
     Failed,
@@ -280,7 +282,7 @@ enum ShellTaskStatus {
 }
 
 impl ShellTaskStatus {
-    fn as_str(&self) -> &'static str {
+    pub(super) fn as_str(&self) -> &'static str {
         match self {
             Self::Running => "running",
             Self::Completed => "completed",
@@ -291,162 +293,162 @@ impl ShellTaskStatus {
 }
 
 #[derive(Debug, Clone)]
-struct SkillCandidate {
-    reference: SkillRef,
-    content: String,
+pub(super) struct SkillCandidate {
+    pub(super) reference: SkillRef,
+    pub(super) content: String,
 }
 
 #[derive(Debug, Clone)]
-struct PromptTemplateCandidate {
-    reference: PromptTemplateRef,
-    body: String,
+pub(super) struct PromptTemplateCandidate {
+    pub(super) reference: PromptTemplateRef,
+    pub(super) body: String,
 }
 
 #[derive(Debug, Clone)]
-struct ThemeCandidate {
-    reference: ThemeRef,
-    colors: Value,
-    export: Option<Value>,
+pub(super) struct ThemeCandidate {
+    pub(super) reference: ThemeRef,
+    pub(super) colors: Value,
+    pub(super) export: Option<Value>,
 }
 
 #[derive(Debug, Deserialize)]
-struct StoredPluginStore {
+pub(super) struct StoredPluginStore {
     #[serde(default)]
-    plugins: Vec<StoredPluginEntry>,
+    pub(super) plugins: Vec<StoredPluginEntry>,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct StoredPluginEntry {
+pub(super) struct StoredPluginEntry {
     #[serde(default)]
-    name: Option<String>,
+    pub(super) name: Option<String>,
     #[serde(default)]
-    source: String,
+    pub(super) source: String,
     #[serde(default)]
-    source_type: Option<String>,
+    pub(super) source_type: Option<String>,
     #[serde(default)]
-    enabled: bool,
+    pub(super) enabled: bool,
     #[serde(default)]
-    trusted: bool,
+    pub(super) trusted: bool,
     #[serde(default)]
-    description: Option<String>,
+    pub(super) description: Option<String>,
     #[serde(default)]
-    version: Option<String>,
+    pub(super) version: Option<String>,
     #[serde(default)]
-    license: Option<String>,
+    pub(super) license: Option<String>,
     #[serde(default)]
-    capabilities: Vec<String>,
+    pub(super) capabilities: Vec<String>,
     #[serde(default)]
-    manifest: Option<Value>,
+    pub(super) manifest: Option<Value>,
     #[serde(default)]
-    marketplace: Option<String>,
+    pub(super) marketplace: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct PluginMaterializationStore {
-    version: u32,
+pub(super) struct PluginMaterializationStore {
+    pub(super) version: u32,
     #[serde(default)]
-    records: Vec<StoredPluginMaterializationRecord>,
+    pub(super) records: Vec<StoredPluginMaterializationRecord>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct StoredPluginMaterializationRecord {
-    plugin_id: String,
-    source: String,
-    source_type: String,
-    scope: PluginScope,
-    cache_path: String,
-    checksum: String,
+pub(super) struct StoredPluginMaterializationRecord {
+    pub(super) plugin_id: String,
+    pub(super) source: String,
+    pub(super) source_type: String,
+    pub(super) scope: PluginScope,
+    pub(super) cache_path: String,
+    pub(super) checksum: String,
     #[serde(default)]
-    manifest_name: Option<String>,
+    pub(super) manifest_name: Option<String>,
     #[serde(default)]
-    manifest_version: Option<String>,
+    pub(super) manifest_version: Option<String>,
     #[serde(default)]
-    provenance: Option<PluginProvenance>,
-    materialized_at: String,
+    pub(super) provenance: Option<PluginProvenance>,
+    pub(super) materialized_at: String,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct PluginMcpTrustStore {
-    version: u32,
+pub(super) struct PluginMcpTrustStore {
+    pub(super) version: u32,
     #[serde(default)]
-    servers: Vec<StoredPluginMcpTrustRecord>,
+    pub(super) servers: Vec<StoredPluginMcpTrustRecord>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct StoredPluginMcpTrustRecord {
-    plugin_id: String,
-    server_id: String,
+pub(super) struct StoredPluginMcpTrustRecord {
+    pub(super) plugin_id: String,
+    pub(super) server_id: String,
     #[serde(default)]
-    enabled: bool,
+    pub(super) enabled: bool,
     #[serde(default)]
-    trusted: bool,
-    updated_at: String,
+    pub(super) trusted: bool,
+    pub(super) updated_at: String,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct PluginRunnerStore {
-    version: u32,
+pub(super) struct PluginRunnerStore {
+    pub(super) version: u32,
     #[serde(default)]
-    runners: Vec<StoredPluginRunnerRecord>,
+    pub(super) runners: Vec<StoredPluginRunnerRecord>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct StoredPluginRunnerRecord {
-    plugin_id: String,
+pub(super) struct StoredPluginRunnerRecord {
+    pub(super) plugin_id: String,
     #[serde(default)]
-    enabled: bool,
+    pub(super) enabled: bool,
     #[serde(default)]
-    trusted: bool,
-    updated_at: String,
+    pub(super) trusted: bool,
+    pub(super) updated_at: String,
 }
 
 #[derive(Debug, Clone)]
-struct ConfiguredPluginMcpRoot {
-    plugin_id: String,
-    root: PathBuf,
+pub(super) struct ConfiguredPluginMcpRoot {
+    pub(super) plugin_id: String,
+    pub(super) root: PathBuf,
 }
 
 #[derive(Debug, Clone)]
-struct ConfiguredPluginRunner {
-    plugin_id: String,
-    root: PathBuf,
-    command: String,
-    args: Vec<String>,
-    capabilities: Vec<String>,
+pub(super) struct ConfiguredPluginRunner {
+    pub(super) plugin_id: String,
+    pub(super) root: PathBuf,
+    pub(super) command: String,
+    pub(super) args: Vec<String>,
+    pub(super) capabilities: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
-struct PluginRunnerToolRef {
-    plugin_id: String,
-    name: String,
-    description: Option<String>,
-    input_schema: Value,
-    read_only: bool,
+pub(super) struct PluginRunnerToolRef {
+    pub(super) plugin_id: String,
+    pub(super) name: String,
+    pub(super) description: Option<String>,
+    pub(super) input_schema: Value,
+    pub(super) read_only: bool,
 }
 
 #[derive(Debug, Clone)]
-struct ResolvedAgentToolPolicy {
-    background: bool,
-    role: Option<String>,
-    model: Option<String>,
-    effort: Option<String>,
-    permission_mode: Option<PermissionMode>,
-    network_policy: Option<NetworkPolicy>,
-    memory_mode: Option<String>,
-    worktree_root: Option<String>,
-    tool_allowlist: Vec<String>,
-    tool_denylist: Vec<String>,
-    isolation: Option<String>,
-    color: Option<String>,
-    skills: Vec<String>,
-    max_turns: Option<u32>,
+pub(super) struct ResolvedAgentToolPolicy {
+    pub(super) background: bool,
+    pub(super) role: Option<String>,
+    pub(super) model: Option<String>,
+    pub(super) effort: Option<String>,
+    pub(super) permission_mode: Option<PermissionMode>,
+    pub(super) network_policy: Option<NetworkPolicy>,
+    pub(super) memory_mode: Option<String>,
+    pub(super) worktree_root: Option<String>,
+    pub(super) tool_allowlist: Vec<String>,
+    pub(super) tool_denylist: Vec<String>,
+    pub(super) isolation: Option<String>,
+    pub(super) color: Option<String>,
+    pub(super) skills: Vec<String>,
+    pub(super) max_turns: Option<u32>,
 }
 
 fn background_task_status(status: ShellTaskStatus) -> BackgroundTaskStatus {
@@ -458,7 +460,7 @@ fn background_task_status(status: ShellTaskStatus) -> BackgroundTaskStatus {
     }
 }
 
-fn background_task_info(task: &ShellTaskRecord) -> BackgroundTaskInfo {
+pub(super) fn background_task_info(task: &ShellTaskRecord) -> BackgroundTaskInfo {
     BackgroundTaskInfo {
         id: task.id.clone(),
         command: task.command.clone(),
@@ -478,7 +480,7 @@ fn task_output_bytes(task: &ShellTaskRecord) -> Option<u64> {
         .map(|metadata| metadata.len())
 }
 
-fn shell_task_line(task: &ShellTaskRecord) -> String {
+pub(super) fn shell_task_line(task: &ShellTaskRecord) -> String {
     let bytes = task_output_bytes(task)
         .map(|bytes| format!(", {bytes}B"))
         .unwrap_or_default();
@@ -498,7 +500,7 @@ fn shell_task_line(task: &ShellTaskRecord) -> String {
     )
 }
 
-fn now_millis() -> u64 {
+pub(super) fn now_millis() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
@@ -506,26 +508,26 @@ fn now_millis() -> u64 {
         .min(u128::from(u64::MAX)) as u64
 }
 
-fn ask_user_timeout_ms_is_allowed(timeout_ms: u64) -> bool {
+pub(super) fn ask_user_timeout_ms_is_allowed(timeout_ms: u64) -> bool {
     ASK_USER_ALLOWED_TIMEOUT_MS.contains(&timeout_ms)
 }
 
 #[derive(Debug, Clone)]
-struct OwnedApprovalRequest {
-    thread_id: ThreadId,
-    turn_id: Option<TurnId>,
-    tool_call_id: Option<ToolCallId>,
-    tool_call: Option<ToolCall>,
-    outcome: Option<ApprovalOutcome>,
+pub(super) struct OwnedApprovalRequest {
+    pub(super) thread_id: ThreadId,
+    pub(super) turn_id: Option<TurnId>,
+    pub(super) tool_call_id: Option<ToolCallId>,
+    pub(super) tool_call: Option<ToolCall>,
+    pub(super) outcome: Option<ApprovalOutcome>,
 }
 
 #[derive(Debug, Clone)]
-struct OwnedQuestionRequest {
-    thread_id: ThreadId,
-    turn_id: Option<TurnId>,
-    tool_call_id: Option<ToolCallId>,
-    tool_call: Option<ToolCall>,
-    resolved: bool,
+pub(super) struct OwnedQuestionRequest {
+    pub(super) thread_id: ThreadId,
+    pub(super) turn_id: Option<TurnId>,
+    pub(super) tool_call_id: Option<ToolCallId>,
+    pub(super) tool_call: Option<ToolCall>,
+    pub(super) resolved: bool,
 }
 
 impl Default for Runtime {
@@ -596,7 +598,7 @@ impl Default for Runtime {
     }
 }
 
-fn tool_registry_from_definitions(definitions: Vec<ToolDefinition>) -> ToolRegistry {
+pub(super) fn tool_registry_from_definitions(definitions: Vec<ToolDefinition>) -> ToolRegistry {
     let mut registry = ToolRegistry::new();
     for definition in definitions {
         registry.register(definition);
@@ -604,7 +606,7 @@ fn tool_registry_from_definitions(definitions: Vec<ToolDefinition>) -> ToolRegis
     registry
 }
 
-fn model_visible_tool_definitions(registry: &ToolRegistry) -> Vec<ToolDefinition> {
+pub(super) fn model_visible_tool_definitions(registry: &ToolRegistry) -> Vec<ToolDefinition> {
     registry
         .list()
         .into_iter()
@@ -617,7 +619,7 @@ fn model_visible_tool_definitions(registry: &ToolRegistry) -> Vec<ToolDefinition
         .collect()
 }
 
-fn reviewer_tool_definitions(registry: &ToolRegistry) -> Vec<ToolDefinition> {
+pub(super) fn reviewer_tool_definitions(registry: &ToolRegistry) -> Vec<ToolDefinition> {
     registry
         .list()
         .into_iter()
@@ -630,7 +632,7 @@ fn reviewer_tool_definitions(registry: &ToolRegistry) -> Vec<ToolDefinition> {
         .collect()
 }
 
-fn default_tool_registry() -> ToolRegistry {
+pub(super) fn default_tool_registry() -> ToolRegistry {
     let mut registry = ToolRegistry::new();
     registry.register(ToolDefinition {
         name: "echo".to_string(),
@@ -855,7 +857,7 @@ fn default_tool_registry() -> ToolRegistry {
     registry
 }
 
-fn server_capabilities() -> Vec<String> {
+pub(super) fn server_capabilities() -> Vec<String> {
     vec![
         "threads".to_string(),
         "turns".to_string(),
@@ -881,24 +883,25 @@ fn server_capabilities() -> Vec<String> {
     ]
 }
 
-const INIT_USER_PROMPT: &str = include_str!("../../../../systemprompts/commands/init-user-prompt.md");
-const BUILTIN_IMAGEGEN_SKILL: &str =
+pub(super) const INIT_USER_PROMPT: &str =
+    include_str!("../../../../systemprompts/commands/init-user-prompt.md");
+pub(super) const BUILTIN_IMAGEGEN_SKILL: &str =
     include_str!("../../../../packages/pi-package/skills/imagegen/SKILL.md");
-const BUILTIN_INDEPENDENT_SKILL: &str =
+pub(super) const BUILTIN_INDEPENDENT_SKILL: &str =
     include_str!("../../../../packages/pi-package/skills/independent/SKILL.md");
-const BUILTIN_MERMAID_SKILL: &str =
+pub(super) const BUILTIN_MERMAID_SKILL: &str =
     include_str!("../../../../packages/pi-package/skills/mermaid-diagrams/SKILL.md");
-const BUILTIN_GRAPHIFY_SKILL: &str =
+pub(super) const BUILTIN_GRAPHIFY_SKILL: &str =
     include_str!("../../../../packages/pi-package/skills/graphify/SKILL.md");
-const MAX_EXISTING_AGENTS_CHARS: usize = 32_000;
-const MAX_SKILL_CONTENT_CHARS: usize = 8_000;
-const MAX_SKILL_INJECTION_CHARS: usize = 16_000;
-const MAX_MCP_SUBSCRIBED_RESOURCES: usize = 5;
-const MAX_MCP_SUBSCRIBED_RESOURCE_CHARS: usize = 2_000;
-const MAX_MCP_SUBSCRIBED_CONTEXT_CHARS: usize = 8_000;
-const MAX_PROMPT_TEMPLATE_CHARS: usize = 32_000;
-const GUARDIAN_REVIEWER_SYSTEM_PROMPT: &str = "You are OPPi Guardian, an isolated permission reviewer. Decide whether the proposed tool call should be allowed or denied. Return exactly one JSON object. Do not include markdown fences or prose.";
-const GUARDIAN_REVIEWER_OUTPUT_CONTRACT: &str = r#"Return exactly this JSON shape with no markdown:
+pub(super) const MAX_EXISTING_AGENTS_CHARS: usize = 32_000;
+pub(super) const MAX_SKILL_CONTENT_CHARS: usize = 8_000;
+pub(super) const MAX_SKILL_INJECTION_CHARS: usize = 16_000;
+pub(super) const MAX_MCP_SUBSCRIBED_RESOURCES: usize = 5;
+pub(super) const MAX_MCP_SUBSCRIBED_RESOURCE_CHARS: usize = 2_000;
+pub(super) const MAX_MCP_SUBSCRIBED_CONTEXT_CHARS: usize = 8_000;
+pub(super) const MAX_PROMPT_TEMPLATE_CHARS: usize = 32_000;
+pub(super) const GUARDIAN_REVIEWER_SYSTEM_PROMPT: &str = "You are OPPi Guardian, an isolated permission reviewer. Decide whether the proposed tool call should be allowed or denied. Return exactly one JSON object. Do not include markdown fences or prose.";
+pub(super) const GUARDIAN_REVIEWER_OUTPUT_CONTRACT: &str = r#"Return exactly this JSON shape with no markdown:
 {
   "outcome": "allow" | "deny",
   "risk_level": "low" | "medium" | "high" | "critical",
@@ -907,7 +910,7 @@ const GUARDIAN_REVIEWER_OUTPUT_CONTRACT: &str = r#"Return exactly this JSON shap
   "cache_scope": "none" | "exact"
 }"#;
 
-fn protocol_version_is_compatible(client_version: &str) -> bool {
+pub(super) fn protocol_version_is_compatible(client_version: &str) -> bool {
     let Some((client_major, client_minor)) = protocol_major_minor(client_version) else {
         return false;
     };
@@ -930,15 +933,15 @@ fn protocol_major_minor(version: &str) -> Option<(u64, u64)> {
 }
 
 #[derive(Debug, Clone)]
-struct ModelRequest {
-    thread_id: ThreadId,
-    turn_id: TurnId,
-    input: String,
-    continuation: u32,
-    history: Vec<ProviderHistoryMessage>,
+pub(super) struct ModelRequest {
+    pub(super) thread_id: ThreadId,
+    pub(super) turn_id: TurnId,
+    pub(super) input: String,
+    pub(super) continuation: u32,
+    pub(super) history: Vec<ProviderHistoryMessage>,
 }
 
-trait ModelProvider {
+pub(super) trait ModelProvider {
     fn next_step(&mut self, request: &ModelRequest) -> Result<ModelProviderStep, RuntimeError>;
 
     fn observe_tool_result(
@@ -959,7 +962,7 @@ trait ModelProvider {
 }
 
 struct ScriptedModelProvider {
-    steps: VecDeque<ScriptedModelStep>,
+    pub(super) steps: VecDeque<ScriptedModelStep>,
 }
 
 impl ScriptedModelProvider {
@@ -988,15 +991,15 @@ impl ModelProvider for ScriptedModelProvider {
     }
 }
 
-struct OpenAiCompatibleModelProvider {
-    config: DirectModelProviderConfig,
-    agent: ureq::Agent,
-    messages: Vec<Value>,
-    tools: BTreeMap<String, ToolDefinition>,
+pub(super) struct OpenAiCompatibleModelProvider {
+    pub(super) config: DirectModelProviderConfig,
+    pub(super) agent: ureq::Agent,
+    pub(super) messages: Vec<Value>,
+    pub(super) tools: BTreeMap<String, ToolDefinition>,
 }
 
 impl OpenAiCompatibleModelProvider {
-    fn new(config: DirectModelProviderConfig, tools: Vec<ToolDefinition>) -> Self {
+    pub(super) fn new(config: DirectModelProviderConfig, tools: Vec<ToolDefinition>) -> Self {
         Self::with_messages(config, tools, Vec::new())
     }
 
@@ -1044,7 +1047,7 @@ impl OpenAiCompatibleModelProvider {
         }
     }
 
-    fn api_key(&self) -> Result<String, RuntimeError> {
+    pub(super) fn api_key(&self) -> Result<String, RuntimeError> {
         let candidates = provider_api_key_env_candidates(self.config.api_key_env.as_deref())?;
         for name in &candidates {
             if let Ok(value) = std::env::var(name) {
@@ -1253,21 +1256,21 @@ impl ModelProvider for OpenAiCompatibleModelProvider {
 }
 
 #[derive(Debug, Clone)]
-struct GitHubCopilotAuth {
-    access_token: String,
-    refresh_token: String,
-    expires: i64,
-    enterprise_domain: Option<String>,
+pub(super) struct GitHubCopilotAuth {
+    pub(super) access_token: String,
+    pub(super) refresh_token: String,
+    pub(super) expires: i64,
+    pub(super) enterprise_domain: Option<String>,
 }
 
-fn github_copilot_auth_path() -> PathBuf {
+pub(super) fn github_copilot_auth_path() -> PathBuf {
     std::env::var_os("OPPI_GITHUB_COPILOT_AUTH_PATH")
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)
         .unwrap_or_else(|| default_oppi_agent_dir().join("auth.json"))
 }
 
-fn parse_github_copilot_auth(raw: &Value) -> Option<GitHubCopilotAuth> {
+pub(super) fn parse_github_copilot_auth(raw: &Value) -> Option<GitHubCopilotAuth> {
     let credential = raw.get(GITHUB_COPILOT_PROVIDER_ID)?;
     if credential.get("type").and_then(Value::as_str) != Some("oauth") {
         return None;
@@ -1286,7 +1289,7 @@ fn parse_github_copilot_auth(raw: &Value) -> Option<GitHubCopilotAuth> {
     })
 }
 
-fn read_github_copilot_auth_json(path: &Path) -> Result<Value, RuntimeError> {
+pub(super) fn read_github_copilot_auth_json(path: &Path) -> Result<Value, RuntimeError> {
     let raw = fs::read_to_string(path).map_err(|error| {
         RuntimeError::new(
             "provider_auth_missing",
@@ -1320,7 +1323,7 @@ fn github_copilot_base_url_from_token(token: &str) -> Option<String> {
     })
 }
 
-fn github_copilot_base_url(auth: &GitHubCopilotAuth) -> String {
+pub(super) fn github_copilot_base_url(auth: &GitHubCopilotAuth) -> String {
     github_copilot_base_url_from_token(&auth.access_token)
         .or_else(|| {
             auth.enterprise_domain
@@ -1445,7 +1448,7 @@ fn read_or_refresh_github_copilot_auth(
     })
 }
 
-fn github_copilot_initiator(messages: &[Value]) -> &'static str {
+pub(super) fn github_copilot_initiator(messages: &[Value]) -> &'static str {
     messages
         .last()
         .and_then(|message| message.get("role"))
@@ -1466,22 +1469,22 @@ fn apply_github_copilot_headers(request: ureq::Request, messages: &[Value]) -> u
 }
 
 #[derive(Debug, Clone)]
-struct CodexAuth {
-    access_token: String,
-    refresh_token: String,
-    expires: i64,
-    account_id: String,
+pub(super) struct CodexAuth {
+    pub(super) access_token: String,
+    pub(super) refresh_token: String,
+    pub(super) expires: i64,
+    pub(super) account_id: String,
 }
 
-struct OpenAiCodexModelProvider {
-    config: DirectModelProviderConfig,
-    agent: ureq::Agent,
-    messages: Vec<Value>,
-    tools: BTreeMap<String, ToolDefinition>,
+pub(super) struct OpenAiCodexModelProvider {
+    pub(super) config: DirectModelProviderConfig,
+    pub(super) agent: ureq::Agent,
+    pub(super) messages: Vec<Value>,
+    pub(super) tools: BTreeMap<String, ToolDefinition>,
 }
 
 impl OpenAiCodexModelProvider {
-    fn new(config: DirectModelProviderConfig, tools: Vec<ToolDefinition>) -> Self {
+    pub(super) fn new(config: DirectModelProviderConfig, tools: Vec<ToolDefinition>) -> Self {
         Self::with_messages(config, tools, Vec::new())
     }
 
@@ -1556,7 +1559,7 @@ impl OpenAiCodexModelProvider {
         }
     }
 
-    fn request_body(&self, request: &ModelRequest) -> Value {
+    pub(super) fn request_body(&self, request: &ModelRequest) -> Value {
         let mut body = json!({
             "model": self.config.model,
             "store": false,
@@ -1714,7 +1717,7 @@ fn user_home_dir_for_auth() -> Option<PathBuf> {
         .map(PathBuf::from)
 }
 
-fn default_oppi_agent_dir() -> PathBuf {
+pub(super) fn default_oppi_agent_dir() -> PathBuf {
     std::env::var_os("OPPI_AGENT_DIR")
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)
@@ -1731,14 +1734,14 @@ fn default_oppi_agent_dir() -> PathBuf {
         })
 }
 
-fn codex_auth_path() -> PathBuf {
+pub(super) fn codex_auth_path() -> PathBuf {
     std::env::var_os("OPPI_OPENAI_CODEX_AUTH_PATH")
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)
         .unwrap_or_else(|| default_oppi_agent_dir().join("auth.json"))
 }
 
-fn codex_auth_lock_path(path: &Path) -> PathBuf {
+pub(super) fn codex_auth_lock_path(path: &Path) -> PathBuf {
     let mut lock_path = path.as_os_str().to_os_string();
     lock_path.push(".lock");
     PathBuf::from(lock_path)
@@ -1746,7 +1749,7 @@ fn codex_auth_lock_path(path: &Path) -> PathBuf {
 
 #[derive(Debug)]
 struct CodexAuthLock {
-    path: PathBuf,
+    pub(super) path: PathBuf,
 }
 
 impl CodexAuthLock {
@@ -1827,7 +1830,7 @@ fn remove_codex_auth_lock_path(path: &Path) -> std::io::Result<()> {
     })
 }
 
-fn now_millis_i64() -> i64 {
+pub(super) fn now_millis_i64() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
@@ -1835,7 +1838,7 @@ fn now_millis_i64() -> i64 {
         .min(i64::MAX as u128) as i64
 }
 
-fn parse_codex_auth(raw: &Value) -> Option<CodexAuth> {
+pub(super) fn parse_codex_auth(raw: &Value) -> Option<CodexAuth> {
     let credential = raw.get(OPENAI_CODEX_PROVIDER_ID)?;
     if credential.get("type").and_then(Value::as_str) != Some("oauth") {
         return None;
@@ -1848,7 +1851,7 @@ fn parse_codex_auth(raw: &Value) -> Option<CodexAuth> {
     })
 }
 
-fn read_codex_auth_json(path: &Path) -> Result<Value, RuntimeError> {
+pub(super) fn read_codex_auth_json(path: &Path) -> Result<Value, RuntimeError> {
     let raw = fs::read_to_string(path).map_err(|error| {
         RuntimeError::new(
             "provider_auth_missing",
@@ -1927,7 +1930,9 @@ fn codex_token_form(params: &[(&str, &str)]) -> String {
         .join("&")
 }
 
-fn codex_account_id_from_access_token(access_token: &str) -> Result<String, RuntimeError> {
+pub(super) fn codex_account_id_from_access_token(
+    access_token: &str,
+) -> Result<String, RuntimeError> {
     let payload = access_token.split('.').nth(1).ok_or_else(|| {
         RuntimeError::new(
             "provider_auth_invalid",
@@ -2036,7 +2041,7 @@ fn refresh_codex_auth(agent: &ureq::Agent, auth: &CodexAuth) -> Result<CodexAuth
     })
 }
 
-fn read_or_refresh_codex_auth(agent: &ureq::Agent) -> Result<CodexAuth, RuntimeError> {
+pub(super) fn read_or_refresh_codex_auth(agent: &ureq::Agent) -> Result<CodexAuth, RuntimeError> {
     let path = codex_auth_path();
     let data = read_codex_auth_json(&path)?;
     let auth = parse_codex_auth(&data).ok_or_else(|| {
@@ -2088,7 +2093,7 @@ fn read_or_refresh_codex_auth(agent: &ureq::Agent) -> Result<CodexAuth, RuntimeE
     })
 }
 
-fn codex_user_agent() -> String {
+pub(super) fn codex_user_agent() -> String {
     format!(
         "pi ({} {}; {})",
         std::env::consts::OS,
@@ -2113,7 +2118,7 @@ fn codex_assistant_message(text: &str) -> Value {
     })
 }
 
-fn codex_tool_definition(name: &str, definition: &ToolDefinition) -> Value {
+pub(super) fn codex_tool_definition(name: &str, definition: &ToolDefinition) -> Value {
     json!({
         "type": "function",
         "name": name,
@@ -2176,10 +2181,10 @@ fn codex_function_call_to_openai_raw(item: &Value) -> Option<Value> {
 
 #[derive(Debug, Default)]
 struct PartialCodexFunctionCall {
-    item_id: Option<String>,
-    call_id: Option<String>,
-    name: Option<String>,
-    arguments: String,
+    pub(super) item_id: Option<String>,
+    pub(super) call_id: Option<String>,
+    pub(super) name: Option<String>,
+    pub(super) arguments: String,
 }
 
 impl PartialCodexFunctionCall {
@@ -2209,7 +2214,7 @@ fn push_codex_function_call(
     }
 }
 
-fn parse_openai_codex_stream<R: BufRead>(
+pub(super) fn parse_openai_codex_stream<R: BufRead>(
     mut reader: R,
     tools: &BTreeMap<String, ToolDefinition>,
 ) -> Result<
@@ -2413,7 +2418,7 @@ fn parse_openai_codex_stream<R: BufRead>(
     Ok((step, final_items, chunk_count, known_token_usage))
 }
 
-fn model_provider(
+pub(super) fn model_provider(
     config: Option<DirectModelProviderConfig>,
     model_steps: Vec<ScriptedModelStep>,
     tools: Vec<ToolDefinition>,
@@ -2472,7 +2477,7 @@ fn provider_api_key_env_candidates(explicit: Option<&str>) -> Result<Vec<String>
     ])
 }
 
-fn provider_api_key_env_allowed(name: &str) -> bool {
+pub(super) fn provider_api_key_env_allowed(name: &str) -> bool {
     if name.len() > 128 || name.is_empty() {
         return false;
     }
@@ -2523,13 +2528,13 @@ fn provider_uses_meridian_placeholder_key(config: &DirectModelProviderConfig) ->
 
 #[derive(Debug, Default)]
 struct PartialOpenAiToolCall {
-    id: Option<String>,
-    call_type: Option<String>,
-    function_name: Option<String>,
-    arguments: String,
+    pub(super) id: Option<String>,
+    pub(super) call_type: Option<String>,
+    pub(super) function_name: Option<String>,
+    pub(super) arguments: String,
 }
 
-fn parse_openai_compatible_stream<R: BufRead>(
+pub(super) fn parse_openai_compatible_stream<R: BufRead>(
     reader: R,
     tools: &BTreeMap<String, ToolDefinition>,
 ) -> Result<(ScriptedModelStep, Value, usize, Option<ProviderTokenUsage>), RuntimeError> {
@@ -2684,7 +2689,7 @@ fn provider_usage(value: &Value) -> Option<ProviderTokenUsage> {
     )
 }
 
-fn provider_diagnostic(
+pub(super) fn provider_diagnostic(
     config: &DirectModelProviderConfig,
     endpoint: &str,
     status: u16,
@@ -2743,7 +2748,7 @@ fn provider_endpoint_label(endpoint: &str) -> String {
     format!("{scheme}{host}")
 }
 
-fn openai_response_message(value: &Value) -> Result<&Value, RuntimeError> {
+pub(super) fn openai_response_message(value: &Value) -> Result<&Value, RuntimeError> {
     value
         .get("choices")
         .and_then(Value::as_array)
@@ -2759,11 +2764,13 @@ fn openai_response_message(value: &Value) -> Result<&Value, RuntimeError> {
 }
 
 #[cfg(test)]
-fn parse_openai_compatible_chat_response(value: Value) -> Result<ScriptedModelStep, RuntimeError> {
+pub(super) fn parse_openai_compatible_chat_response(
+    value: Value,
+) -> Result<ScriptedModelStep, RuntimeError> {
     parse_openai_compatible_message(openai_response_message(&value)?, &BTreeMap::new())
 }
 
-fn parse_openai_compatible_message(
+pub(super) fn parse_openai_compatible_message(
     message: &Value,
     tools: &BTreeMap<String, ToolDefinition>,
 ) -> Result<ScriptedModelStep, RuntimeError> {
@@ -2915,7 +2922,7 @@ fn openai_message_content(message: &Value) -> String {
     }
 }
 
-fn tool_call_from_provider_snapshot(
+pub(super) fn tool_call_from_provider_snapshot(
     state: &DirectProviderResumeState,
     call_id: &str,
 ) -> Option<ToolCall> {
@@ -2983,7 +2990,7 @@ fn decode_openai_tool_name(provider_name: &str) -> (Option<String>, String) {
     (None, provider_name.to_string())
 }
 
-fn openai_tool_name(definition: &ToolDefinition) -> String {
+pub(super) fn openai_tool_name(definition: &ToolDefinition) -> String {
     let raw = match definition.namespace.as_deref() {
         Some(namespace) if !namespace.is_empty() => format!("{namespace}__{}", definition.name),
         _ => definition.name.clone(),
@@ -3001,7 +3008,7 @@ fn openai_tool_name(definition: &ToolDefinition) -> String {
     sanitized.chars().take(64).collect()
 }
 
-fn openai_tool_definition(name: &str, definition: &ToolDefinition) -> Value {
+pub(super) fn openai_tool_definition(name: &str, definition: &ToolDefinition) -> Value {
     json!({
         "type": "function",
         "function": {
@@ -3034,12 +3041,12 @@ fn openai_tool_result_content(result: &ToolResult) -> String {
     .to_string()
 }
 
-fn compact_provider_error(detail: &str) -> String {
+pub(super) fn compact_provider_error(detail: &str) -> String {
     let compact = detail.split_whitespace().collect::<Vec<_>>().join(" ");
     truncate_chars(&compact, 300)
 }
 
-fn redacted_endpoint(endpoint: &str) -> String {
+pub(super) fn redacted_endpoint(endpoint: &str) -> String {
     let (scheme, rest) = endpoint
         .split_once("://")
         .map(|(scheme, rest)| (format!("{scheme}://"), rest))
@@ -3048,7 +3055,7 @@ fn redacted_endpoint(endpoint: &str) -> String {
     format!("{scheme}{without_auth}")
 }
 
-fn compact_history_text(text: &str) -> String {
+pub(super) fn compact_history_text(text: &str) -> String {
     truncate_chars(text.trim(), 4_000)
 }
 
@@ -3121,7 +3128,7 @@ fn format_follow_up_context(context: &FollowUpChainContext, current_input: &str)
     guidance
 }
 
-fn append_system_prompt(base: Option<String>, heading: &str, append: &str) -> String {
+pub(super) fn append_system_prompt(base: Option<String>, heading: &str, append: &str) -> String {
     [
         base.unwrap_or_default().trim().to_string(),
         format!("{heading}:\n{append}"),
@@ -3132,7 +3139,7 @@ fn append_system_prompt(base: Option<String>, heading: &str, append: &str) -> St
     .join("\n\n")
 }
 
-fn append_follow_up_to_model_provider(
+pub(super) fn append_follow_up_to_model_provider(
     mut config: Option<DirectModelProviderConfig>,
     follow_up: Option<&FollowUpChainContext>,
     current_input: &str,
@@ -3151,7 +3158,7 @@ fn append_follow_up_to_model_provider(
     config
 }
 
-fn follow_up_pending_count(context: &FollowUpChainContext) -> usize {
+pub(super) fn follow_up_pending_count(context: &FollowUpChainContext) -> usize {
     let current_id = context.current_follow_up_id.as_deref();
     context
         .follow_ups
@@ -3218,7 +3225,7 @@ fn todo_metadata_suffix(
     format!(" ({})", parts.join(", "))
 }
 
-fn compaction_details_from_todos(todos: &TodoState) -> Option<CompactionHandoffDetails> {
+pub(super) fn compaction_details_from_todos(todos: &TodoState) -> Option<CompactionHandoffDetails> {
     if todos.todos.is_empty() {
         return None;
     }
@@ -3242,7 +3249,9 @@ fn compaction_details_from_todos(todos: &TodoState) -> Option<CompactionHandoffD
     })
 }
 
-fn deterministic_compaction_summary(details: Option<&CompactionHandoffDetails>) -> String {
+pub(super) fn deterministic_compaction_summary(
+    details: Option<&CompactionHandoffDetails>,
+) -> String {
     let Some(details) = details else {
         return [
             "OPPi manual handoff.",
@@ -3300,4 +3309,3 @@ fn deterministic_compaction_summary(details: Option<&CompactionHandoffDetails>) 
     lines.push("Final response note: combine archived completed/cancelled outcomes with any post-compaction work or validation before replying to the user.".to_string());
     lines.join("\n")
 }
-
