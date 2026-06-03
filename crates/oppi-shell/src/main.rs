@@ -18,6 +18,8 @@ mod interactive;
 #[path = "shell_parts/provider_ui.rs"]
 mod provider_ui;
 mod ratatui_ui;
+#[path = "shell_parts/rendering.rs"]
+mod rendering;
 mod tui;
 
 use crossterm::event::{self, Event as CrosstermEvent, KeyCode, KeyEventKind, KeyModifiers};
@@ -29,6 +31,7 @@ use interactive::{
     maybe_run_hoppi_exit_sync, maybe_run_hoppi_lifecycle_sync, maybe_run_hoppi_startup_sync,
 };
 use provider_ui::*;
+use rendering::*;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::env;
@@ -414,7 +417,5 @@ include!("shell_parts/commands.rs");
 include!("shell_parts/models_and_memory.rs");
 
 include!("shell_parts/auth_settings.rs");
-
-include!("shell_parts/rendering.rs");
 
 include!("shell_parts/tests.rs");

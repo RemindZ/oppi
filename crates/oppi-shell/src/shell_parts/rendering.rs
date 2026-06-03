@@ -1,4 +1,6 @@
-fn format_approval_panel(request: &ApprovalRequest) -> String {
+use super::*;
+
+pub(super) fn format_approval_panel(request: &ApprovalRequest) -> String {
     let mut lines = vec![
         "approval needed".to_string(),
         format!("  reason: {}", request.reason),
@@ -17,7 +19,7 @@ fn format_approval_panel(request: &ApprovalRequest) -> String {
     lines.join("\n")
 }
 
-fn format_ask_user_panel(request: &AskUserRequest) -> String {
+pub(super) fn format_ask_user_panel(request: &AskUserRequest) -> String {
     let mut lines = vec![format!(
         "question: {}",
         request.title.as_deref().unwrap_or("user input requested")
@@ -36,7 +38,7 @@ fn format_ask_user_panel(request: &AskUserRequest) -> String {
     lines.join("\n")
 }
 
-fn ask_user_input_answers(request: &AskUserRequest, answer: &str) -> Vec<AskUserAnswer> {
+pub(super) fn ask_user_input_answers(request: &AskUserRequest, answer: &str) -> Vec<AskUserAnswer> {
     request
         .questions
         .iter()
@@ -62,7 +64,7 @@ fn ask_user_input_answers(request: &AskUserRequest, answer: &str) -> Vec<AskUser
         .collect()
 }
 
-fn ask_user_timeout_answers(request: &AskUserRequest) -> Vec<AskUserAnswer> {
+pub(super) fn ask_user_timeout_answers(request: &AskUserRequest) -> Vec<AskUserAnswer> {
     request
         .questions
         .iter()
@@ -106,7 +108,7 @@ fn ask_user_timeout_answers(request: &AskUserRequest) -> Vec<AskUserAnswer> {
         .collect()
 }
 
-fn ask_user_deadline_at(request: &AskUserRequest) -> Option<Instant> {
+pub(super) fn ask_user_deadline_at(request: &AskUserRequest) -> Option<Instant> {
     if request.timeout_ms == 0 {
         return None;
     }
@@ -117,11 +119,11 @@ fn compact_json(value: &Value) -> String {
     serde_json::to_string(value).unwrap_or_else(|_| "{}".to_string())
 }
 
-fn is_background_latest_alias(value: &str) -> bool {
+pub(super) fn is_background_latest_alias(value: &str) -> bool {
     matches!(value.to_ascii_lowercase().as_str(), "latest" | "last" | ".")
 }
 
-fn current_time_ms() -> Option<u64> {
+pub(super) fn current_time_ms() -> Option<u64> {
     Some(
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -147,7 +149,7 @@ fn task_output_bytes(task: &Value) -> Option<u64> {
     json_u64(task, "outputBytes")
 }
 
-fn select_background_task_id(value: &Value, running_only: bool) -> Option<String> {
+pub(super) fn select_background_task_id(value: &Value, running_only: bool) -> Option<String> {
     let items = value.get("items")?.as_array()?;
     items
         .iter()
@@ -172,7 +174,7 @@ fn select_background_task_id(value: &Value, running_only: bool) -> Option<String
         .map(|(_, id)| id)
 }
 
-fn format_duration_ms(ms: u64) -> String {
+pub(super) fn format_duration_ms(ms: u64) -> String {
     if ms < 1_000 {
         format!("{ms}ms")
     } else if ms < 60_000 {
@@ -197,7 +199,7 @@ fn format_task_elapsed(task: &Value) -> Option<String> {
         .map(|ms| format!("ran {}", format_duration_ms(ms)))
 }
 
-fn format_bytes(bytes: u64) -> String {
+pub(super) fn format_bytes(bytes: u64) -> String {
     if bytes < 1024 {
         format!("{bytes}B")
     } else if bytes < 1024 * 1024 {
@@ -255,7 +257,7 @@ fn format_background_counts(items: &[Value]) -> String {
         .join(", ")
 }
 
-fn background_summary_from_list(value: &Value) -> String {
+pub(super) fn background_summary_from_list(value: &Value) -> String {
     let Some(items) = value.get("items").and_then(Value::as_array) else {
         return "status unavailable".to_string();
     };
@@ -266,7 +268,7 @@ fn background_summary_from_list(value: &Value) -> String {
     format!("{}; latest={latest}", format_background_counts(items))
 }
 
-fn background_summary_from_read(value: &Value) -> String {
+pub(super) fn background_summary_from_read(value: &Value) -> String {
     let task = value.get("task").unwrap_or(&Value::Null);
     let id = task.get("id").and_then(Value::as_str).unwrap_or("task");
     let status = task
@@ -281,7 +283,7 @@ fn background_summary_from_read(value: &Value) -> String {
     format!("read {id} ({status}, {})", format_bytes(bytes))
 }
 
-fn background_summary_from_kill(value: &Value) -> String {
+pub(super) fn background_summary_from_kill(value: &Value) -> String {
     let task = value.get("task").unwrap_or(&Value::Null);
     let id = task.get("id").and_then(Value::as_str).unwrap_or("task");
     let status = task
@@ -291,7 +293,7 @@ fn background_summary_from_kill(value: &Value) -> String {
     format!("kill requested for {id} ({status})")
 }
 
-fn format_background_list(value: &Value) -> String {
+pub(super) fn format_background_list(value: &Value) -> String {
     let Some(items) = value.get("items").and_then(Value::as_array) else {
         return format!("background: {}", compact_json(value));
     };
@@ -334,7 +336,7 @@ fn format_background_list(value: &Value) -> String {
     lines.join("\n")
 }
 
-fn format_background_read(value: &Value) -> String {
+pub(super) fn format_background_read(value: &Value) -> String {
     let task = value.get("task").unwrap_or(&Value::Null);
     let id = task.get("id").and_then(Value::as_str).unwrap_or("unknown");
     let output = value.get("output").and_then(Value::as_str).unwrap_or("");
@@ -380,7 +382,7 @@ fn format_background_read(value: &Value) -> String {
     lines.join("\n")
 }
 
-fn format_background_kill(value: &Value) -> String {
+pub(super) fn format_background_kill(value: &Value) -> String {
     let task = value.get("task").unwrap_or(&Value::Null);
     let mut lines = vec![format!(
         "background {} [{}]: {}",
@@ -415,22 +417,22 @@ fn trim_output_tail(output: &str, max_chars: usize) -> String {
 }
 
 #[cfg(test)]
-fn render_event_line(event: &Event) -> Option<String> {
+pub(super) fn render_event_line(event: &Event) -> Option<String> {
     render_event_line_themed(event, "plain", &BTreeMap::new())
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct ThemeTokens {
-    accent: &'static str,
-    dim: &'static str,
-    code: &'static str,
-    success: &'static str,
-    warning: &'static str,
-    error: &'static str,
-    reset: &'static str,
+pub(super) struct ThemeTokens {
+    pub(super) accent: &'static str,
+    pub(super) dim: &'static str,
+    pub(super) code: &'static str,
+    pub(super) success: &'static str,
+    pub(super) warning: &'static str,
+    pub(super) error: &'static str,
+    pub(super) reset: &'static str,
 }
 
-fn plain_theme_tokens() -> ThemeTokens {
+pub(super) fn plain_theme_tokens() -> ThemeTokens {
     ThemeTokens {
         accent: "",
         dim: "",
@@ -442,14 +444,14 @@ fn plain_theme_tokens() -> ThemeTokens {
     }
 }
 
-fn theme_tokens(name: &str) -> ThemeTokens {
+pub(super) fn theme_tokens(name: &str) -> ThemeTokens {
     if !ansi_enabled() || name == "plain" {
         return plain_theme_tokens();
     }
     ansi_theme_tokens(name)
 }
 
-fn ansi_theme_tokens(name: &str) -> ThemeTokens {
+pub(super) fn ansi_theme_tokens(name: &str) -> ThemeTokens {
     match name {
         "light" => ThemeTokens {
             accent: "\x1b[34;1m",
@@ -481,7 +483,9 @@ fn ansi_theme_tokens(name: &str) -> ThemeTokens {
     }
 }
 
-fn line_theme_tokens_from_pi_theme_values(colors: &Value) -> Result<ThemeTokens, String> {
+pub(super) fn line_theme_tokens_from_pi_theme_values(
+    colors: &Value,
+) -> Result<ThemeTokens, String> {
     let base = ansi_theme_tokens("oppi");
     Ok(ThemeTokens {
         accent: line_theme_color(colors, "accent", base.accent)?,
@@ -567,11 +571,11 @@ fn leak_ansi_escape(value: String) -> &'static str {
     Box::leak(value.into_boxed_str())
 }
 
-fn ansi_enabled() -> bool {
+pub(super) fn ansi_enabled() -> bool {
     env::var_os("NO_COLOR").is_none() && env::var("TERM").map(|term| term != "dumb").unwrap_or(true)
 }
 
-fn paint(tokens: ThemeTokens, color: &'static str, text: impl AsRef<str>) -> String {
+pub(super) fn paint(tokens: ThemeTokens, color: &'static str, text: impl AsRef<str>) -> String {
     let text = text.as_ref();
     if color.is_empty() {
         text.to_string()
@@ -590,7 +594,7 @@ fn render_event_line_themed(
     render_event_line_with_tokens(event, tokens, calls)
 }
 
-fn render_event_line_with_tokens(
+pub(super) fn render_event_line_with_tokens(
     event: &Event,
     tokens: ThemeTokens,
     calls: &BTreeMap<String, ToolCall>,
@@ -765,7 +769,7 @@ fn guardian_cache_scope_label(scope: oppi_protocol::GuardianCacheScope) -> &'sta
     }
 }
 
-fn render_markdown(text: &str, theme: &str) -> String {
+pub(super) fn render_markdown(text: &str, theme: &str) -> String {
     let tokens = theme_tokens(theme);
     render_markdown_with_tokens(text, tokens)
 }
@@ -815,7 +819,7 @@ fn format_tool_call_started(call: &ToolCall, tokens: ThemeTokens) -> String {
     )
 }
 
-fn format_tool_result_digest(
+pub(super) fn format_tool_result_digest(
     result: &oppi_protocol::ToolResult,
     call: Option<&ToolCall>,
     tokens: ThemeTokens,
@@ -928,7 +932,7 @@ fn format_agent_started(run: &AgentRun, tokens: ThemeTokens) -> String {
     )
 }
 
-fn format_agent_poll_result(result: &AgentRunPollResult) -> String {
+pub(super) fn format_agent_poll_result(result: &AgentRunPollResult) -> String {
     let run = &result.run;
     let execution_root = run
         .execution_root
@@ -968,7 +972,7 @@ fn format_agent_poll_result(result: &AgentRunPollResult) -> String {
     }
 }
 
-fn format_side_question_result(value: &Value) -> Result<String, String> {
+pub(super) fn format_side_question_result(value: &Value) -> Result<String, String> {
     let side_thread_id = value
         .get("sideThreadId")
         .and_then(Value::as_str)
@@ -985,11 +989,11 @@ fn format_side_question_result(value: &Value) -> Result<String, String> {
     }
 }
 
-fn format_artifact_created(artifact: &ArtifactMetadata, tokens: ThemeTokens) -> String {
+pub(super) fn format_artifact_created(artifact: &ArtifactMetadata, tokens: ThemeTokens) -> String {
     format_artifact_created_inner(artifact, tokens, None, None)
 }
 
-fn format_artifact_created_with_image_settings(
+pub(super) fn format_artifact_created_with_image_settings(
     artifact: &ArtifactMetadata,
     tokens: ThemeTokens,
     settings: &ImageSettings,
@@ -1002,7 +1006,7 @@ fn format_artifact_created_with_image_settings(
     )
 }
 
-fn format_artifact_created_with_image_settings_and_protocol(
+pub(super) fn format_artifact_created_with_image_settings_and_protocol(
     artifact: &ArtifactMetadata,
     tokens: ThemeTokens,
     settings: &ImageSettings,
@@ -1078,16 +1082,16 @@ fn format_artifact_created_inner(
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum TerminalImageProtocol {
+pub(super) enum TerminalImageProtocol {
     KittyLocalFile,
     Iterm2InlineFile,
     Sixel,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct TerminalImageProtocolDetection {
-    protocol: Option<TerminalImageProtocol>,
-    source: &'static str,
+pub(super) struct TerminalImageProtocolDetection {
+    pub(super) protocol: Option<TerminalImageProtocol>,
+    pub(super) source: &'static str,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1119,7 +1123,7 @@ fn terminal_image_protocol_detection_from_env() -> TerminalImageProtocolDetectio
     )
 }
 
-fn terminal_image_protocol_from_env_values(
+pub(super) fn terminal_image_protocol_from_env_values(
     term: Option<&str>,
     term_program: Option<&str>,
     kitty_window_id: Option<&str>,
@@ -1135,7 +1139,7 @@ fn terminal_image_protocol_from_env_values(
     .protocol
 }
 
-fn terminal_image_protocol_from_env_values_with_override(
+pub(super) fn terminal_image_protocol_from_env_values_with_override(
     override_value: Option<&str>,
     term: Option<&str>,
     term_program: Option<&str>,
@@ -1167,7 +1171,7 @@ fn terminal_image_protocol_detection_from_env_values(
     )
 }
 
-fn terminal_image_protocol_detection_from_env_values_with_override(
+pub(super) fn terminal_image_protocol_detection_from_env_values_with_override(
     override_value: Option<&str>,
     term: Option<&str>,
     term_program: Option<&str>,
@@ -1355,7 +1359,7 @@ fn terminal_sixel_detection_from_env_values(term: Option<&str>) -> TerminalSixel
     }
 }
 
-fn image_preview_capabilities_from_env(settings: &ImageSettings) -> Value {
+pub(super) fn image_preview_capabilities_from_env(settings: &ImageSettings) -> Value {
     let override_value = env::var(IMAGE_PREVIEW_PROTOCOL_ENV).ok();
     let term = env::var("TERM").ok();
     let term_program = env::var("TERM_PROGRAM").ok();
@@ -1371,7 +1375,7 @@ fn image_preview_capabilities_from_env(settings: &ImageSettings) -> Value {
     )
 }
 
-fn image_preview_capabilities_from_env_values(
+pub(super) fn image_preview_capabilities_from_env_values(
     settings: &ImageSettings,
     term: Option<&str>,
     term_program: Option<&str>,
@@ -1443,7 +1447,7 @@ fn image_preview_capabilities_from_env_values_with_override(
     })
 }
 
-fn format_image_preview_capabilities(capabilities: &Value) -> String {
+pub(super) fn format_image_preview_capabilities(capabilities: &Value) -> String {
     let show_images = capabilities
         .get("showImages")
         .and_then(Value::as_bool)
@@ -1614,7 +1618,7 @@ fn artifact_extension(artifact: &ArtifactMetadata) -> Option<String> {
         .filter(|extension| !extension.is_empty())
 }
 
-fn artifact_hint(output: &str) -> Option<String> {
+pub(super) fn artifact_hint(output: &str) -> Option<String> {
     let value: Value = serde_json::from_str(output).ok()?;
     for key in ["outputPath", "path", "file"] {
         if let Some(path) = value.get(key).and_then(Value::as_str) {
@@ -1624,7 +1628,7 @@ fn artifact_hint(output: &str) -> Option<String> {
     None
 }
 
-struct RpcClient {
+pub(super) struct RpcClient {
     child: Child,
     stdin: ChildStdin,
     stdout: BufReader<std::process::ChildStdout>,
@@ -1632,7 +1636,7 @@ struct RpcClient {
 }
 
 impl RpcClient {
-    fn spawn(server: PathBuf) -> Result<Self, String> {
+    pub(super) fn spawn(server: PathBuf) -> Result<Self, String> {
         let mut command = Command::new(&server);
         command
             .arg("--stdio")
@@ -1665,7 +1669,7 @@ impl RpcClient {
         })
     }
 
-    fn request(&mut self, method: &str, params: Value) -> Result<Value, String> {
+    pub(super) fn request(&mut self, method: &str, params: Value) -> Result<Value, String> {
         let id = self.next_id;
         self.next_id += 1;
         let request = json!({
