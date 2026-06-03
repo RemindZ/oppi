@@ -9,6 +9,8 @@ pub mod event_store;
 mod goals;
 #[path = "core_parts/memory_helpers.rs"]
 mod memory_helpers;
+#[path = "core_parts/plugins_mcp.rs"]
+mod plugins_mcp;
 #[path = "core_parts/providers.rs"]
 mod providers;
 #[path = "core_parts/tools_guardian_registry.rs"]
@@ -34,6 +36,7 @@ use oppi_sandbox::{
 use oppi_tools::{
     ToolPairingTracker, ToolRegistry, describe_tool_batch, partition_ordered_tool_batches,
 };
+use plugins_mcp::*;
 use providers::*;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -906,8 +909,6 @@ fn subagent_system_prompt(
     prompt.push_str("Complete only the delegated task. Report concise results and blockers.\n");
     prompt
 }
-
-include!("core_parts/plugins_mcp.rs");
 
 include!("core_parts/runtime_impl.rs");
 

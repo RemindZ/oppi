@@ -1,3 +1,5 @@
+use super::*;
+
 fn skill_source_priority(source: SkillSource) -> u8 {
     match source {
         SkillSource::BuiltIn => 0,
@@ -8,7 +10,7 @@ fn skill_source_priority(source: SkillSource) -> u8 {
     }
 }
 
-fn builtin_skill_candidates() -> Vec<SkillCandidate> {
+pub(super) fn builtin_skill_candidates() -> Vec<SkillCandidate> {
     [
         ("builtin:imagegen", BUILTIN_IMAGEGEN_SKILL),
         ("builtin:independent", BUILTIN_INDEPENDENT_SKILL),
@@ -296,7 +298,7 @@ fn home_dir() -> Option<PathBuf> {
         .map(PathBuf::from)
 }
 
-fn user_home_base_dir() -> Option<PathBuf> {
+pub(super) fn user_home_base_dir() -> Option<PathBuf> {
     std::env::var_os("USERPROFILE")
         .or_else(|| std::env::var_os("HOME"))
         .map(PathBuf::from)
@@ -405,7 +407,7 @@ fn collect_theme_files(root: &Path, output: &mut Vec<PathBuf>) {
     }
 }
 
-fn project_skill_roots(cwd: &str) -> Vec<(PathBuf, bool, SkillSource)> {
+pub(super) fn project_skill_roots(cwd: &str) -> Vec<(PathBuf, bool, SkillSource)> {
     let mut roots = Vec::new();
     let mut current = PathBuf::from(cwd);
     loop {
@@ -426,7 +428,7 @@ fn project_skill_roots(cwd: &str) -> Vec<(PathBuf, bool, SkillSource)> {
     roots
 }
 
-fn project_prompt_roots(cwd: &str) -> Vec<(PathBuf, PromptTemplateSource)> {
+pub(super) fn project_prompt_roots(cwd: &str) -> Vec<(PathBuf, PromptTemplateSource)> {
     let mut roots = Vec::new();
     let mut current = PathBuf::from(cwd);
     loop {
@@ -445,7 +447,7 @@ fn project_prompt_roots(cwd: &str) -> Vec<(PathBuf, PromptTemplateSource)> {
     roots
 }
 
-fn project_theme_roots(cwd: &str) -> Vec<(PathBuf, ThemeSource)> {
+pub(super) fn project_theme_roots(cwd: &str) -> Vec<(PathBuf, ThemeSource)> {
     let mut roots = Vec::new();
     let mut current = PathBuf::from(cwd);
     loop {
@@ -458,7 +460,7 @@ fn project_theme_roots(cwd: &str) -> Vec<(PathBuf, ThemeSource)> {
     roots
 }
 
-fn user_skill_roots() -> Vec<(PathBuf, bool, SkillSource)> {
+pub(super) fn user_skill_roots() -> Vec<(PathBuf, bool, SkillSource)> {
     let mut roots = Vec::new();
     for key in ["OPPI_USER_SKILLS_DIR", "OPPI_SKILLS_DIR"] {
         if let Some(value) = std::env::var_os(key) {
@@ -480,7 +482,7 @@ fn user_skill_roots() -> Vec<(PathBuf, bool, SkillSource)> {
     roots
 }
 
-fn user_prompt_roots() -> Vec<(PathBuf, PromptTemplateSource)> {
+pub(super) fn user_prompt_roots() -> Vec<(PathBuf, PromptTemplateSource)> {
     let mut roots = Vec::new();
     for key in ["OPPI_USER_PROMPTS_DIR", "OPPI_PROMPTS_DIR"] {
         if let Some(value) = std::env::var_os(key) {
@@ -500,7 +502,7 @@ fn user_prompt_roots() -> Vec<(PathBuf, PromptTemplateSource)> {
     roots
 }
 
-fn user_theme_roots() -> Vec<(PathBuf, ThemeSource)> {
+pub(super) fn user_theme_roots() -> Vec<(PathBuf, ThemeSource)> {
     let mut roots = Vec::new();
     for key in ["OPPI_USER_THEMES_DIR", "OPPI_THEMES_DIR"] {
         if let Some(value) = std::env::var_os(key) {
@@ -517,7 +519,9 @@ fn user_theme_roots() -> Vec<(PathBuf, ThemeSource)> {
     roots
 }
 
-fn file_skill_candidates(roots: Vec<(PathBuf, bool, SkillSource)>) -> Vec<SkillCandidate> {
+pub(super) fn file_skill_candidates(
+    roots: Vec<(PathBuf, bool, SkillSource)>,
+) -> Vec<SkillCandidate> {
     let mut candidates = Vec::new();
     for (root, include_root_md, source) in roots {
         let mut files = Vec::new();
@@ -538,7 +542,7 @@ fn file_skill_candidates(roots: Vec<(PathBuf, bool, SkillSource)>) -> Vec<SkillC
     candidates
 }
 
-fn file_prompt_template_candidates(
+pub(super) fn file_prompt_template_candidates(
     roots: Vec<(PathBuf, PromptTemplateSource)>,
 ) -> Vec<PromptTemplateCandidate> {
     let mut candidates = Vec::new();
@@ -559,7 +563,7 @@ fn file_prompt_template_candidates(
     candidates
 }
 
-fn file_theme_candidates(roots: Vec<(PathBuf, ThemeSource)>) -> Vec<ThemeCandidate> {
+pub(super) fn file_theme_candidates(roots: Vec<(PathBuf, ThemeSource)>) -> Vec<ThemeCandidate> {
     let mut candidates = Vec::new();
     for (root, source) in roots {
         let mut files = Vec::new();
@@ -584,7 +588,7 @@ fn read_json_value(path: &Path) -> Option<Value> {
         .and_then(|content| serde_json::from_str(&content).ok())
 }
 
-fn read_plugin_mcp_trust_store(cwd: &str) -> PluginMcpTrustStore {
+pub(super) fn read_plugin_mcp_trust_store(cwd: &str) -> PluginMcpTrustStore {
     let path = plugin_mcp_trust_store_path(cwd);
     let Some(value) = read_json_value(&path) else {
         return PluginMcpTrustStore {
@@ -612,7 +616,7 @@ fn read_plugin_runner_store(cwd: &str) -> PluginRunnerStore {
     })
 }
 
-fn write_plugin_mcp_trust_store(
+pub(super) fn write_plugin_mcp_trust_store(
     cwd: &str,
     store: &PluginMcpTrustStore,
 ) -> Result<(), RuntimeError> {
@@ -1804,7 +1808,7 @@ fn configured_local_plugin_roots(cwd: Option<&str>) -> Vec<PathBuf> {
     roots
 }
 
-fn configured_plugin_mcp_roots(cwd: Option<&str>) -> Vec<ConfiguredPluginMcpRoot> {
+pub(super) fn configured_plugin_mcp_roots(cwd: Option<&str>) -> Vec<ConfiguredPluginMcpRoot> {
     let mut roots = Vec::new();
     let mut seen = BTreeSet::new();
     let records = read_plugin_materialization_records();
@@ -1860,7 +1864,7 @@ fn configured_plugin_mcp_roots(cwd: Option<&str>) -> Vec<ConfiguredPluginMcpRoot
     roots
 }
 
-fn configured_plugin_runner_entries(cwd: &str) -> Vec<ConfiguredPluginRunner> {
+pub(super) fn configured_plugin_runner_entries(cwd: &str) -> Vec<ConfiguredPluginRunner> {
     let mut runners = Vec::new();
     let mut seen = BTreeSet::new();
     let materialization_records = read_plugin_materialization_records();
@@ -2049,7 +2053,7 @@ fn plugin_ref_from_store_entry(
     }
 }
 
-fn configured_plugin_refs(cwd: Option<&str>) -> Vec<PluginRef> {
+pub(super) fn configured_plugin_refs(cwd: Option<&str>) -> Vec<PluginRef> {
     let mut refs = Vec::new();
     let records = read_plugin_materialization_records();
     let runner_records = cwd
@@ -2099,28 +2103,28 @@ fn configured_plugin_refs(cwd: Option<&str>) -> Vec<PluginRef> {
     refs
 }
 
-fn plugin_skill_candidates(cwd: Option<&str>) -> Vec<SkillCandidate> {
+pub(super) fn plugin_skill_candidates(cwd: Option<&str>) -> Vec<SkillCandidate> {
     configured_local_plugin_roots(cwd)
         .into_iter()
         .flat_map(|root| plugin_skill_candidates_from_root(&root))
         .collect()
 }
 
-fn plugin_prompt_template_candidates(cwd: Option<&str>) -> Vec<PromptTemplateCandidate> {
+pub(super) fn plugin_prompt_template_candidates(cwd: Option<&str>) -> Vec<PromptTemplateCandidate> {
     configured_local_plugin_roots(cwd)
         .into_iter()
         .flat_map(|root| plugin_prompt_template_candidates_from_root(&root))
         .collect()
 }
 
-fn plugin_theme_candidates(cwd: Option<&str>) -> Vec<ThemeCandidate> {
+pub(super) fn plugin_theme_candidates(cwd: Option<&str>) -> Vec<ThemeCandidate> {
     configured_local_plugin_roots(cwd)
         .into_iter()
         .flat_map(|root| plugin_theme_candidates_from_root(&root))
         .collect()
 }
 
-fn mcp_diagnostic(
+pub(super) fn mcp_diagnostic(
     code: impl Into<String>,
     message: impl Into<String>,
     severity: impl Into<Option<String>>,
@@ -2335,7 +2339,7 @@ fn apply_plugin_mcp_trust(
     server
 }
 
-fn plugin_mcp_refs_from_root(
+pub(super) fn plugin_mcp_refs_from_root(
     root: &Path,
     plugin_id: &str,
     trust_records: &[StoredPluginMcpTrustRecord],
@@ -2404,7 +2408,7 @@ fn configured_cli_mcp_refs(cwd: Option<&str>) -> Vec<McpServerRef> {
         .collect()
 }
 
-fn configured_mcp_refs(cwd: Option<&str>) -> Vec<McpServerRef> {
+pub(super) fn configured_mcp_refs(cwd: Option<&str>) -> Vec<McpServerRef> {
     let mut refs = BTreeMap::<McpServerId, McpServerRef>::new();
     for server in configured_plugin_mcp_refs(cwd) {
         refs.insert(server.id.clone(), server);
@@ -2429,14 +2433,14 @@ fn configured_mcp_refs(cwd: Option<&str>) -> Vec<McpServerRef> {
     refs.into_values().collect()
 }
 
-fn mcp_error(code: &str, message: impl Into<String>) -> RuntimeError {
+pub(super) fn mcp_error(code: &str, message: impl Into<String>) -> RuntimeError {
     RuntimeError::new(code, RuntimeErrorCategory::Provider, message)
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-struct McpHttpSessionState {
-    session_id: Option<String>,
-    protocol_version: Option<String>,
+pub(super) struct McpHttpSessionState {
+    pub(super) session_id: Option<String>,
+    pub(super) protocol_version: Option<String>,
 }
 
 fn mcp_http_auth_header_from_ref(auth_ref: Option<&str>) -> Result<String, RuntimeError> {
@@ -2491,7 +2495,7 @@ fn mcp_auth_ref_env_name(auth_ref: &str) -> Option<&str> {
     Some(env_name)
 }
 
-fn mcp_auth_ref_env_state_for_server(server: &McpServerRef) -> Option<(String, String)> {
+pub(super) fn mcp_auth_ref_env_state_for_server(server: &McpServerRef) -> Option<(String, String)> {
     let Some(McpTransportConfig::StreamableHttp {
         auth_ref: Some(auth_ref),
         ..
@@ -2508,7 +2512,7 @@ fn mcp_auth_ref_env_state_for_server(server: &McpServerRef) -> Option<(String, S
     Some((env_name.to_string(), state.to_string()))
 }
 
-fn mcp_auth_guidance_for_server(server: &McpServerRef) -> String {
+pub(super) fn mcp_auth_guidance_for_server(server: &McpServerRef) -> String {
     const PREFIX: &str = "MCP OAuth/browser auth is deferred in Rust-native OPPi";
     let Some(McpTransportConfig::StreamableHttp { auth_ref, .. }) = server.transport.as_ref()
     else {
@@ -2587,11 +2591,15 @@ fn mcp_transport_notification_method(message: &Value) -> Option<&str> {
 }
 
 #[cfg(test)]
-fn mcp_http_sse_response_result(method: &str, id: u64, body: &str) -> Result<Value, RuntimeError> {
+pub(super) fn mcp_http_sse_response_result(
+    method: &str,
+    id: u64,
+    body: &str,
+) -> Result<Value, RuntimeError> {
     mcp_http_sse_response_result_with_notifications(method, id, body).map(|result| result.0)
 }
 
-fn mcp_http_sse_response_result_with_notifications(
+pub(super) fn mcp_http_sse_response_result_with_notifications(
     method: &str,
     id: u64,
     body: &str,
@@ -2632,7 +2640,7 @@ fn mcp_http_sse_response_result_with_notifications(
     ))
 }
 
-trait McpTransportSession {
+pub(super) trait McpTransportSession {
     fn request(&mut self, method: &str, params: Value) -> Result<Value, RuntimeError>;
     fn notify(&mut self, method: &str, params: Value) -> Result<(), RuntimeError>;
     fn take_notifications(&mut self) -> Vec<Value> {
@@ -2645,14 +2653,14 @@ trait McpTransportSession {
 }
 
 #[cfg(test)]
-struct MockMcpTransport {
-    responses: VecDeque<Value>,
-    notifications: Vec<Value>,
+pub(super) struct MockMcpTransport {
+    pub(super) responses: VecDeque<Value>,
+    pub(super) notifications: Vec<Value>,
 }
 
 #[cfg(test)]
 impl MockMcpTransport {
-    fn new(responses: VecDeque<Value>) -> Self {
+    pub(super) fn new(responses: VecDeque<Value>) -> Self {
         Self {
             responses,
             notifications: Vec::new(),
@@ -2689,16 +2697,16 @@ impl McpTransportSession for MockMcpTransport {
     fn shutdown(&mut self) {}
 }
 
-struct StdioMcpTransport {
-    child: Child,
-    stdin: ChildStdin,
-    stdout: BufReader<std::process::ChildStdout>,
-    next_id: u64,
-    notifications: Vec<Value>,
+pub(super) struct StdioMcpTransport {
+    pub(super) child: Child,
+    pub(super) stdin: ChildStdin,
+    pub(super) stdout: BufReader<std::process::ChildStdout>,
+    pub(super) next_id: u64,
+    pub(super) notifications: Vec<Value>,
 }
 
 impl StdioMcpTransport {
-    fn spawn(config: &McpTransportConfig) -> Result<Self, RuntimeError> {
+    pub(super) fn spawn(config: &McpTransportConfig) -> Result<Self, RuntimeError> {
         let McpTransportConfig::Stdio {
             command,
             args,
@@ -2843,17 +2851,17 @@ impl McpTransportSession for StdioMcpTransport {
     }
 }
 
-struct StreamableHttpMcpTransport {
-    endpoint: String,
-    auth_header: String,
-    agent: ureq::Agent,
-    next_id: u64,
-    session: McpHttpSessionState,
-    notifications: Vec<Value>,
+pub(super) struct StreamableHttpMcpTransport {
+    pub(super) endpoint: String,
+    pub(super) auth_header: String,
+    pub(super) agent: ureq::Agent,
+    pub(super) next_id: u64,
+    pub(super) session: McpHttpSessionState,
+    pub(super) notifications: Vec<Value>,
 }
 
 impl StreamableHttpMcpTransport {
-    fn new(
+    pub(super) fn new(
         endpoint: String,
         auth_ref: Option<&str>,
         session: McpHttpSessionState,
@@ -3014,7 +3022,7 @@ impl McpTransportSession for StreamableHttpMcpTransport {
     fn shutdown(&mut self) {}
 }
 
-fn mcp_transport_should_initialize(
+pub(super) fn mcp_transport_should_initialize(
     server: &McpServerRef,
     http_sessions: &BTreeMap<McpServerId, McpHttpSessionState>,
 ) -> bool {
@@ -3025,14 +3033,14 @@ fn mcp_transport_should_initialize(
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum McpListChangedKind {
+pub(super) enum McpListChangedKind {
     Tools,
     Resources,
     Prompts,
 }
 
 impl McpListChangedKind {
-    fn label(self) -> &'static str {
+    pub(super) fn label(self) -> &'static str {
         match self {
             Self::Tools => "tools",
             Self::Resources => "resources",
@@ -3040,7 +3048,7 @@ impl McpListChangedKind {
         }
     }
 
-    fn code(self) -> &'static str {
+    pub(super) fn code(self) -> &'static str {
         match self {
             Self::Tools => "mcp_tools_list_changed",
             Self::Resources => "mcp_resources_list_changed",
@@ -3048,7 +3056,10 @@ impl McpListChangedKind {
         }
     }
 
-    fn refresh_hint_slot(self, hints: &mut McpListRefreshHints) -> &mut Option<McpListRefreshHint> {
+    pub(super) fn refresh_hint_slot(
+        self,
+        hints: &mut McpListRefreshHints,
+    ) -> &mut Option<McpListRefreshHint> {
         match self {
             Self::Tools => &mut hints.tools,
             Self::Resources => &mut hints.resources,
@@ -3057,7 +3068,7 @@ impl McpListChangedKind {
     }
 }
 
-fn mcp_list_changed_kind_from_transport_notification(
+pub(super) fn mcp_list_changed_kind_from_transport_notification(
     notification: &Value,
 ) -> Option<McpListChangedKind> {
     match mcp_transport_notification_method(notification)? {
@@ -3074,7 +3085,7 @@ fn mcp_list_changed_kind_from_transport_notification(
     }
 }
 
-fn mcp_resource_update_from_transport_notification(
+pub(super) fn mcp_resource_update_from_transport_notification(
     thread_id: &str,
     server_id: &str,
     notification: &Value,
@@ -3109,7 +3120,7 @@ fn mcp_initialize_payload(capability: &str) -> Value {
     })
 }
 
-fn initialize_mcp_transport(
+pub(super) fn initialize_mcp_transport(
     transport: &mut dyn McpTransportSession,
     capability: &str,
 ) -> Result<(), RuntimeError> {
@@ -3131,7 +3142,7 @@ fn mcp_capability_json(capabilities: &serde_json::Map<String, Value>, key: &str)
         .cloned()
 }
 
-fn mcp_server_capabilities_from_initialize(initialize: &Value) -> McpServerCapabilities {
+pub(super) fn mcp_server_capabilities_from_initialize(initialize: &Value) -> McpServerCapabilities {
     let Some(capabilities) = initialize.get("capabilities").and_then(Value::as_object) else {
         return McpServerCapabilities::default();
     };
@@ -3180,7 +3191,7 @@ fn mcp_server_has_notification_capabilities(capabilities: &McpServerCapabilities
             .unwrap_or(false)
 }
 
-fn sync_mcp_notification_listener_diagnostic(server: &mut McpServerRef) {
+pub(super) fn sync_mcp_notification_listener_diagnostic(server: &mut McpServerRef) {
     const CODE: &str = "mcp_notification_listener_deferred";
     server
         .diagnostics
@@ -3227,7 +3238,7 @@ fn mcp_tool_ref_from_value(server_id: &str, value: &Value) -> Option<McpToolRef>
     })
 }
 
-fn mcp_tool_refs_from_tools_list(
+pub(super) fn mcp_tool_refs_from_tools_list(
     server_id: &str,
     result: &Value,
 ) -> Result<Vec<McpToolRef>, RuntimeError> {
@@ -3273,7 +3284,7 @@ fn mcp_resource_ref_from_value(server_id: &str, value: &Value) -> Option<McpReso
     })
 }
 
-fn mcp_resource_refs_from_resources_list(
+pub(super) fn mcp_resource_refs_from_resources_list(
     server_id: &str,
     result: &Value,
 ) -> Result<(Vec<McpResourceRef>, Option<String>), RuntimeError> {
@@ -3323,7 +3334,7 @@ fn mcp_resource_template_ref_from_value(
     })
 }
 
-fn mcp_resource_template_refs_from_templates_list(
+pub(super) fn mcp_resource_template_refs_from_templates_list(
     server_id: &str,
     result: &Value,
 ) -> Result<(Vec<McpResourceTemplateRef>, Option<String>), RuntimeError> {
@@ -3384,7 +3395,7 @@ fn mcp_prompt_ref_from_value(server_id: &str, value: &Value) -> Option<McpPrompt
     })
 }
 
-fn mcp_prompt_refs_from_prompts_list(
+pub(super) fn mcp_prompt_refs_from_prompts_list(
     server_id: &str,
     result: &Value,
 ) -> Result<(Vec<McpPromptRef>, Option<String>), RuntimeError> {
@@ -3413,7 +3424,7 @@ fn mcp_prompt_refs_from_prompts_list(
     ))
 }
 
-fn mcp_prompt_messages_from_get_result(
+pub(super) fn mcp_prompt_messages_from_get_result(
     result: &Value,
 ) -> Result<(Option<String>, Vec<Value>), RuntimeError> {
     let messages = result
@@ -3439,7 +3450,7 @@ fn mcp_resource_content_from_value(value: &Value) -> Option<McpResourceContent> 
     })
 }
 
-fn mcp_resource_contents_from_read_result(
+pub(super) fn mcp_resource_contents_from_read_result(
     result: &Value,
 ) -> Result<Vec<McpResourceContent>, RuntimeError> {
     let contents = result
@@ -3497,7 +3508,7 @@ fn mcp_tool_annotations_to_tool_annotations(tool: &McpToolRef) -> BTreeMap<Strin
     annotations
 }
 
-fn mcp_tool_definition(tool: &McpToolRef) -> ToolDefinition {
+pub(super) fn mcp_tool_definition(tool: &McpToolRef) -> ToolDefinition {
     let read_only = tool.annotations.read_only_hint.unwrap_or(false);
     ToolDefinition {
         namespace: Some(format!(
@@ -3515,7 +3526,7 @@ fn mcp_tool_definition(tool: &McpToolRef) -> ToolDefinition {
     }
 }
 
-fn mcp_tool_uses_network(definition: &ToolDefinition) -> bool {
+pub(super) fn mcp_tool_uses_network(definition: &ToolDefinition) -> bool {
     definition
         .annotations
         .get("openWorldHint")
@@ -3524,13 +3535,16 @@ fn mcp_tool_uses_network(definition: &ToolDefinition) -> bool {
 }
 
 #[derive(Debug, Clone)]
-struct McpToolTarget {
-    server_id: String,
-    tool_name: String,
-    input_schema: Option<Value>,
+pub(super) struct McpToolTarget {
+    pub(super) server_id: String,
+    pub(super) tool_name: String,
+    pub(super) input_schema: Option<Value>,
 }
 
-fn mcp_tool_target(definition: &ToolDefinition, call: &ToolCall) -> Option<McpToolTarget> {
+pub(super) fn mcp_tool_target(
+    definition: &ToolDefinition,
+    call: &ToolCall,
+) -> Option<McpToolTarget> {
     if !definition
         .capabilities
         .iter()
@@ -3585,7 +3599,7 @@ fn plugin_runner_tool_ref_from_value(
     })
 }
 
-fn plugin_runner_tool_refs_from_tools_list(
+pub(super) fn plugin_runner_tool_refs_from_tools_list(
     plugin_id: &str,
     result: &Value,
 ) -> Result<Vec<PluginRunnerToolRef>, RuntimeError> {
@@ -3604,7 +3618,7 @@ fn plugin_runner_tool_refs_from_tools_list(
         .collect())
 }
 
-fn plugin_runner_tool_definition(tool: &PluginRunnerToolRef) -> ToolDefinition {
+pub(super) fn plugin_runner_tool_definition(tool: &PluginRunnerToolRef) -> ToolDefinition {
     let mut annotations = BTreeMap::from([
         ("pluginRunner.pluginId".to_string(), json!(tool.plugin_id)),
         ("pluginRunner.toolName".to_string(), json!(tool.name)),
@@ -3634,13 +3648,13 @@ fn plugin_runner_tool_definition(tool: &PluginRunnerToolRef) -> ToolDefinition {
 }
 
 #[derive(Debug, Clone)]
-struct PluginRunnerToolTarget {
-    plugin_id: String,
-    tool_name: String,
-    input_schema: Option<Value>,
+pub(super) struct PluginRunnerToolTarget {
+    pub(super) plugin_id: String,
+    pub(super) tool_name: String,
+    pub(super) input_schema: Option<Value>,
 }
 
-fn plugin_runner_tool_target(
+pub(super) fn plugin_runner_tool_target(
     definition: &ToolDefinition,
     call: &ToolCall,
 ) -> Option<PluginRunnerToolTarget> {
@@ -3676,7 +3690,7 @@ fn plugin_runner_tool_target(
     })
 }
 
-fn mcp_call_arguments(arguments: &Value) -> Value {
+pub(super) fn mcp_call_arguments(arguments: &Value) -> Value {
     let mut arguments = arguments.clone();
     if let Value::Object(map) = &mut arguments {
         map.remove("approvalGranted");
@@ -3688,7 +3702,10 @@ fn mcp_call_arguments(arguments: &Value) -> Value {
     arguments
 }
 
-fn validate_mcp_tool_arguments(schema: Option<&Value>, arguments: &Value) -> Result<(), String> {
+pub(super) fn validate_mcp_tool_arguments(
+    schema: Option<&Value>,
+    arguments: &Value,
+) -> Result<(), String> {
     let Some(schema) = schema else {
         return Ok(());
     };
@@ -3721,7 +3738,7 @@ fn validate_mcp_tool_arguments(schema: Option<&Value>, arguments: &Value) -> Res
     Ok(())
 }
 
-fn mcp_call_result_output(result: &Value) -> String {
+pub(super) fn mcp_call_result_output(result: &Value) -> String {
     let mut parts = Vec::new();
     if let Some(content) = result.get("content").and_then(Value::as_array) {
         for item in content {
@@ -3742,7 +3759,7 @@ fn mcp_call_result_output(result: &Value) -> String {
     }
 }
 
-fn mcp_call_tool_result_from_value(
+pub(super) fn mcp_call_tool_result_from_value(
     server_id: String,
     tool_name: String,
     result: Value,
@@ -3779,7 +3796,7 @@ fn mcp_call_tool_result_from_value(
     }
 }
 
-fn mcp_tool_argument_paths(cwd: &str, arguments: &Value) -> Vec<String> {
+pub(super) fn mcp_tool_argument_paths(cwd: &str, arguments: &Value) -> Vec<String> {
     let mut paths = Vec::new();
     if let Value::Object(map) = arguments {
         for key in ["path", "root", "cwd"] {
@@ -3803,7 +3820,7 @@ fn mcp_tool_argument_paths(cwd: &str, arguments: &Value) -> Vec<String> {
     paths
 }
 
-fn resolve_skill_candidates(
+pub(super) fn resolve_skill_candidates(
     candidates: Vec<SkillCandidate>,
 ) -> Vec<(SkillCandidate, Vec<SkillRef>)> {
     let mut by_name: BTreeMap<String, Vec<SkillCandidate>> = BTreeMap::new();
@@ -3835,7 +3852,7 @@ fn resolve_skill_candidates(
     resolved
 }
 
-fn resolve_prompt_template_candidates(
+pub(super) fn resolve_prompt_template_candidates(
     candidates: Vec<PromptTemplateCandidate>,
 ) -> Vec<(PromptTemplateCandidate, Vec<PromptTemplateRef>)> {
     let mut by_name: BTreeMap<String, Vec<PromptTemplateCandidate>> = BTreeMap::new();
@@ -3867,7 +3884,7 @@ fn resolve_prompt_template_candidates(
     resolved
 }
 
-fn canonical_builtin_theme_name(name: &str) -> String {
+pub(super) fn canonical_builtin_theme_name(name: &str) -> String {
     match name.trim().to_ascii_lowercase().as_str() {
         "oppi-cyan-dark" => "oppi-cyan".to_string(),
         other => other.to_string(),
@@ -4015,7 +4032,7 @@ fn builtin_theme_colors(name: &str) -> (Value, Option<Value>) {
     }
 }
 
-fn builtin_theme_candidates() -> Vec<ThemeCandidate> {
+pub(super) fn builtin_theme_candidates() -> Vec<ThemeCandidate> {
     [
         "oppi",
         "oppi-cyan",
@@ -4042,7 +4059,7 @@ fn builtin_theme_candidates() -> Vec<ThemeCandidate> {
     .collect()
 }
 
-fn resolve_theme_candidates(
+pub(super) fn resolve_theme_candidates(
     candidates: Vec<ThemeCandidate>,
 ) -> Vec<(ThemeCandidate, Vec<ThemeRef>)> {
     let mut by_name: BTreeMap<String, Vec<ThemeCandidate>> = BTreeMap::new();
@@ -4074,7 +4091,7 @@ fn resolve_theme_candidates(
     resolved
 }
 
-fn skill_relevant(skill: &SkillRef, input: &str, explicit_names: &[String]) -> bool {
+pub(super) fn skill_relevant(skill: &SkillRef, input: &str, explicit_names: &[String]) -> bool {
     let name = skill.name.to_ascii_lowercase();
     if explicit_names
         .iter()
@@ -4145,7 +4162,7 @@ fn skill_relevant(skill: &SkillRef, input: &str, explicit_names: &[String]) -> b
     }
 }
 
-fn skill_injection_section(skill: &SkillCandidate) -> String {
+pub(super) fn skill_injection_section(skill: &SkillCandidate) -> String {
     format!(
         "## Skill: {}\nSource: {:?}{}\nDescription: {}\n\n{}\n",
         skill.reference.name,
@@ -4161,7 +4178,7 @@ fn skill_injection_section(skill: &SkillCandidate) -> String {
     )
 }
 
-fn parse_skill_command_input(input: &str) -> Option<(&str, &str)> {
+pub(super) fn parse_skill_command_input(input: &str) -> Option<(&str, &str)> {
     let trimmed = input.trim_start();
     let rest = trimmed.strip_prefix("/skill:")?;
     let (name, args) = if let Some(index) = rest.find(char::is_whitespace) {
@@ -4219,7 +4236,7 @@ fn skill_base_dir(location: &str) -> String {
         .unwrap_or_else(|| ".".to_string())
 }
 
-fn expand_skill_command_text(skill: &SkillCandidate, args: &str) -> String {
+pub(super) fn expand_skill_command_text(skill: &SkillCandidate, args: &str) -> String {
     let location = skill_location(skill);
     let base_dir = skill_base_dir(&location);
     let body = strip_skill_frontmatter(&skill.content);
@@ -4236,4 +4253,3 @@ fn expand_skill_command_text(skill: &SkillCandidate, args: &str) -> String {
         format!("{skill_block}\n\n{args}")
     }
 }
-
