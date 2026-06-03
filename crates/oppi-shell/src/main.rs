@@ -13,11 +13,18 @@ use oppi_protocol::{
     ThreadItemLabelsResult, ThreadItemsResult, ThreadStatus, TodoClientAction,
     TodoClientActionResult, TodoListResult, TodoState, ToolCall, ToolResultStatus,
 };
+#[path = "shell_parts/interactive.rs"]
+mod interactive;
 mod ratatui_ui;
 mod tui;
 
 use crossterm::event::{self, Event as CrosstermEvent, KeyCode, KeyEventKind, KeyModifiers};
 use crossterm::terminal;
+use interactive::{
+    EditorAction, EditorInput, LineEditor, RawInputParser, interactive_loop,
+    maybe_offer_hoppi_install_on_startup, maybe_run_hoppi_exit_sync,
+    maybe_run_hoppi_lifecycle_sync, maybe_run_hoppi_startup_sync,
+};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::env;
@@ -397,7 +404,6 @@ fn should_print_startup_banner(json_output: bool, quiet_startup: bool) -> bool {
     !json_output && !quiet_startup
 }
 
-include!("shell_parts/interactive.rs");
 include!("shell_parts/session.rs");
 include!("shell_parts/commands.rs");
 

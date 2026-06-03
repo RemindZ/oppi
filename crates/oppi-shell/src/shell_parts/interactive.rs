@@ -1,4 +1,6 @@
-fn interactive_loop(
+use super::*;
+
+pub(super) fn interactive_loop(
     session: &mut ShellSession,
     provider: &mut ProviderConfig,
     json: bool,
@@ -14,7 +16,9 @@ fn interactive_loop(
     line_interactive_loop(session, provider, json)
 }
 
-fn maybe_offer_hoppi_install_on_startup(session: &mut ShellSession) -> Result<(), String> {
+pub(super) fn maybe_offer_hoppi_install_on_startup(
+    session: &mut ShellSession,
+) -> Result<(), String> {
     if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
         return Ok(());
     }
@@ -83,18 +87,21 @@ fn maybe_offer_hoppi_install_on_startup(session: &mut ShellSession) -> Result<()
     }
 }
 
-fn maybe_run_hoppi_startup_sync(
+pub(super) fn maybe_run_hoppi_startup_sync(
     session: &mut ShellSession,
     json_output: bool,
 ) -> Result<(), String> {
     maybe_run_hoppi_lifecycle_sync(session, HoppiSyncLifecycle::Startup, json_output)
 }
 
-fn maybe_run_hoppi_exit_sync(session: &mut ShellSession, json_output: bool) -> Result<(), String> {
+pub(super) fn maybe_run_hoppi_exit_sync(
+    session: &mut ShellSession,
+    json_output: bool,
+) -> Result<(), String> {
     maybe_run_hoppi_lifecycle_sync(session, HoppiSyncLifecycle::Exit, json_output)
 }
 
-fn maybe_run_hoppi_lifecycle_sync(
+pub(super) fn maybe_run_hoppi_lifecycle_sync(
     session: &mut ShellSession,
     lifecycle: HoppiSyncLifecycle,
     json_output: bool,
@@ -428,7 +435,7 @@ fn spawn_raw_input_thread(tx: mpsc::Sender<EditorInput>) {
 
 #[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum EditorInput {
+pub(super) enum EditorInput {
     Text(String),
     Enter,
     ShiftEnter,
@@ -456,7 +463,7 @@ enum EditorInput {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum EditorAction {
+pub(super) enum EditorAction {
     None,
     Submit(String),
     SubmitFollowUp(String),
@@ -472,7 +479,7 @@ enum EditorAction {
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
-struct LineEditor {
+pub(super) struct LineEditor {
     buffer: String,
     cursor: usize,
     history: Vec<String>,
@@ -489,12 +496,12 @@ enum EditorActionKind {
 }
 
 #[derive(Debug, Default)]
-struct RawInputParser {
+pub(super) struct RawInputParser {
     escape: Vec<u8>,
 }
 
 impl RawInputParser {
-    fn push(&mut self, byte: u8) -> Vec<EditorInput> {
+    pub(super) fn push(&mut self, byte: u8) -> Vec<EditorInput> {
         if !self.escape.is_empty() {
             self.escape.push(byte);
             if let Some(input) = parse_escape_sequence(&self.escape) {
@@ -529,7 +536,7 @@ impl RawInputParser {
         }
     }
 
-    fn finish(&mut self) -> Vec<EditorInput> {
+    pub(super) fn finish(&mut self) -> Vec<EditorInput> {
         if self.escape.is_empty() {
             Vec::new()
         } else {
@@ -615,7 +622,7 @@ fn escape_sequence_may_continue(bytes: &[u8]) -> bool {
 }
 
 impl LineEditor {
-    fn handle(&mut self, input: EditorInput) -> EditorAction {
+    pub(super) fn handle(&mut self, input: EditorInput) -> EditorAction {
         if !matches!(input, EditorInput::CtrlC) {
             self.ctrl_c_armed = false;
         }
@@ -712,7 +719,11 @@ impl LineEditor {
         }
     }
 
-    fn resolve_empty_escape(&mut self, action: DoubleEscapeAction, now: Instant) -> EditorAction {
+    pub(super) fn resolve_empty_escape(
+        &mut self,
+        action: DoubleEscapeAction,
+        now: Instant,
+    ) -> EditorAction {
         if action == DoubleEscapeAction::None {
             self.last_empty_escape_at = None;
             return EditorAction::None;
@@ -827,7 +838,7 @@ impl LineEditor {
         self.cursor = next_char_boundary(&self.buffer, self.cursor);
     }
 
-    fn move_start(&mut self) {
+    pub(super) fn move_start(&mut self) {
         self.cursor = self.buffer[..self.cursor.min(self.buffer.len())]
             .rfind('\n')
             .map(|index| index + 1)
@@ -887,25 +898,25 @@ impl LineEditor {
         self.ctrl_c_armed = false;
     }
 
-    fn arm_ctrl_c_exit(&mut self) {
+    pub(super) fn arm_ctrl_c_exit(&mut self) {
         self.ctrl_c_armed = true;
     }
 
-    fn ctrl_c_exit_armed(&self) -> bool {
+    pub(super) fn ctrl_c_exit_armed(&self) -> bool {
         self.ctrl_c_armed
     }
 
-    fn replace_buffer(&mut self, text: String) {
+    pub(super) fn replace_buffer(&mut self, text: String) {
         self.buffer = text;
         self.cursor = self.buffer.len();
         self.history_index = None;
     }
 
-    fn buffer_preview(&self) -> &str {
+    pub(super) fn buffer_preview(&self) -> &str {
         &self.buffer
     }
 
-    fn cursor(&self) -> usize {
+    pub(super) fn cursor(&self) -> usize {
         self.cursor.min(self.buffer.len())
     }
 }
@@ -933,4 +944,3 @@ fn next_char_boundary(text: &str, cursor: usize) -> usize {
         .map(|(offset, _)| cursor + offset)
         .unwrap_or(text.len())
 }
-
