@@ -1,5 +1,7 @@
+use super::*;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum PermissionCommandRoute {
+pub(super) enum PermissionCommandRoute {
     Status,
     History,
     ReviewContext,
@@ -27,7 +29,7 @@ fn permissions_usage() -> &'static str {
     "usage: /permissions [status|history|context|timeout <seconds>|reviewer-model <auto|provider/model>|sandbox validate|sandbox roots <here|default>|sandbox internet <on|off>|sandbox ssh <on|off>|sandbox project <paths|default>|sandbox project add|remove <paths>|sandbox read <paths|default>|sandbox read add|remove <paths>|sandbox write <paths|default>|sandbox write add|remove <paths>|sandbox protected <patterns|default>|clear-session|read-only|default|auto-review|full-access]"
 }
 
-fn permissions_command_route(args: &str) -> Result<PermissionCommandRoute, String> {
+pub(super) fn permissions_command_route(args: &str) -> Result<PermissionCommandRoute, String> {
     let parts = args.split_whitespace().collect::<Vec<_>>();
     match parts.as_slice() {
         [] | ["status"] => Ok(PermissionCommandRoute::Status),
@@ -131,14 +133,14 @@ fn permissions_command_route(args: &str) -> Result<PermissionCommandRoute, Strin
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum PermissionSandboxRootListKind {
+pub(super) enum PermissionSandboxRootListKind {
     Project,
     Readable,
     Writable,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum PermissionSandboxRootListEdit {
+pub(super) enum PermissionSandboxRootListEdit {
     Add,
     Remove,
 }
@@ -177,12 +179,12 @@ fn parse_sandbox_root_edit_paths(raw: &str) -> Result<Vec<String>, String> {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum PermissionSandboxRootPreset {
+pub(super) enum PermissionSandboxRootPreset {
     Here,
     Default,
 }
 
-fn apply_permission_sandbox_root_preset(
+pub(super) fn apply_permission_sandbox_root_preset(
     settings: &mut PermissionSandboxSettings,
     preset: PermissionSandboxRootPreset,
     cwd: &str,
@@ -202,7 +204,7 @@ fn apply_permission_sandbox_root_preset(
     }
 }
 
-fn apply_permission_sandbox_root_list_edit(
+pub(super) fn apply_permission_sandbox_root_list_edit(
     roots: &mut Vec<String>,
     edit: PermissionSandboxRootListEdit,
     requested: &[String],
@@ -226,7 +228,7 @@ fn apply_permission_sandbox_root_list_edit(
     changed
 }
 
-fn permission_sandbox_root_list_mut(
+pub(super) fn permission_sandbox_root_list_mut(
     settings: &mut PermissionSandboxSettings,
     kind: PermissionSandboxRootListKind,
 ) -> &mut Vec<String> {
@@ -237,7 +239,7 @@ fn permission_sandbox_root_list_mut(
     }
 }
 
-fn permission_sandbox_root_list_labels(
+pub(super) fn permission_sandbox_root_list_labels(
     kind: PermissionSandboxRootListKind,
 ) -> (&'static str, &'static str) {
     match kind {
@@ -279,7 +281,7 @@ fn parse_csv_or_whitespace_list(raw: &str) -> Result<Vec<String>, String> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum AskUserCommandRoute {
+pub(super) enum AskUserCommandRoute {
     Status,
     SetTimeoutMs(u64),
 }
@@ -288,13 +290,13 @@ fn ask_user_usage() -> &'static str {
     "usage: /ask-user [status|timeout <off|1|2|5|10>]"
 }
 
-fn ask_user_timeout_minutes_to_ms(minutes: u64) -> Option<u64> {
+pub(super) fn ask_user_timeout_minutes_to_ms(minutes: u64) -> Option<u64> {
     ASK_USER_ALLOWED_TIMEOUT_MINUTES
         .contains(&minutes)
         .then(|| minutes.saturating_mul(60_000))
 }
 
-fn ask_user_timeout_ms_to_minutes(timeout_ms: u64) -> Option<u64> {
+pub(super) fn ask_user_timeout_ms_to_minutes(timeout_ms: u64) -> Option<u64> {
     if timeout_ms == 0 {
         return Some(0);
     }
@@ -303,7 +305,7 @@ fn ask_user_timeout_ms_to_minutes(timeout_ms: u64) -> Option<u64> {
         .filter(|minutes| ASK_USER_ALLOWED_TIMEOUT_MINUTES.contains(minutes))
 }
 
-fn ask_user_command_route(args: &str) -> Result<AskUserCommandRoute, String> {
+pub(super) fn ask_user_command_route(args: &str) -> Result<AskUserCommandRoute, String> {
     let parts = args.split_whitespace().collect::<Vec<_>>();
     match parts.as_slice() {
         [] | ["status"] => Ok(AskUserCommandRoute::Status),
@@ -324,7 +326,7 @@ fn follow_up_usage() -> &'static str {
     "usage: /follow-up [status|mode <all|one-at-a-time>]"
 }
 
-fn parse_follow_up_mode(raw: &str) -> Option<FollowUpMode> {
+pub(super) fn parse_follow_up_mode(raw: &str) -> Option<FollowUpMode> {
     match raw.trim().to_ascii_lowercase().as_str() {
         "all" => Some(FollowUpMode::All),
         "one" | "one-at-a-time" | "one_at_a_time" | "one-at-time" => Some(FollowUpMode::OneAtATime),
@@ -332,7 +334,7 @@ fn parse_follow_up_mode(raw: &str) -> Option<FollowUpMode> {
     }
 }
 
-fn follow_up_command_route(args: &str) -> Result<FollowUpCommandRoute, String> {
+pub(super) fn follow_up_command_route(args: &str) -> Result<FollowUpCommandRoute, String> {
     let parts = args.split_whitespace().collect::<Vec<_>>();
     match parts.as_slice() {
         [] | ["status"] => Ok(FollowUpCommandRoute::Status),
@@ -346,22 +348,22 @@ fn follow_up_command_route(args: &str) -> Result<FollowUpCommandRoute, String> {
     }
 }
 
-fn format_follow_up_status(mode: FollowUpMode, queued: usize) -> String {
+pub(super) fn format_follow_up_status(mode: FollowUpMode, queued: usize) -> String {
     format!("follow-up: mode {}; queued {}", mode.as_str(), queued)
 }
 
-fn follow_up_mode_toggle_arg(mode: FollowUpMode) -> &'static str {
+pub(super) fn follow_up_mode_toggle_arg(mode: FollowUpMode) -> &'static str {
     match mode {
         FollowUpMode::All => "one-at-a-time",
         FollowUpMode::OneAtATime => "all",
     }
 }
 
-fn steer_usage() -> &'static str {
+pub(super) fn steer_usage() -> &'static str {
     "usage: /steer [status|mode <all|one-at-a-time>|<text>]"
 }
 
-fn parse_steering_mode(raw: &str) -> Option<SteeringMode> {
+pub(super) fn parse_steering_mode(raw: &str) -> Option<SteeringMode> {
     match raw.trim().to_ascii_lowercase().as_str() {
         "all" => Some(SteeringMode::All),
         "one" | "one-at-a-time" | "one_at_a_time" | "one-at-time" => Some(SteeringMode::OneAtATime),
@@ -369,7 +371,7 @@ fn parse_steering_mode(raw: &str) -> Option<SteeringMode> {
     }
 }
 
-fn steer_command_route(args: &str) -> Result<SteerCommandRoute, String> {
+pub(super) fn steer_command_route(args: &str) -> Result<SteerCommandRoute, String> {
     let trimmed = args.trim();
     let parts = trimmed.split_whitespace().collect::<Vec<_>>();
     match parts.as_slice() {
@@ -382,11 +384,11 @@ fn steer_command_route(args: &str) -> Result<SteerCommandRoute, String> {
     }
 }
 
-fn format_steering_status(mode: SteeringMode, queued: usize) -> String {
+pub(super) fn format_steering_status(mode: SteeringMode, queued: usize) -> String {
     format!("steer: mode {}; queued {}", mode.as_str(), queued)
 }
 
-fn steering_mode_toggle_arg(mode: SteeringMode) -> &'static str {
+pub(super) fn steering_mode_toggle_arg(mode: SteeringMode) -> &'static str {
     match mode {
         SteeringMode::All => "one-at-a-time",
         SteeringMode::OneAtATime => "all",
@@ -397,7 +399,7 @@ fn startup_usage() -> &'static str {
     "usage: /startup [status|quiet <on|off>]"
 }
 
-fn startup_command_route(args: &str) -> Result<StartupCommandRoute, String> {
+pub(super) fn startup_command_route(args: &str) -> Result<StartupCommandRoute, String> {
     let parts = args.split_whitespace().collect::<Vec<_>>();
     match parts.as_slice() {
         [] | ["status"] => Ok(StartupCommandRoute::Status),
@@ -408,11 +410,11 @@ fn startup_command_route(args: &str) -> Result<StartupCommandRoute, String> {
     }
 }
 
-fn format_startup_status(quiet_startup: bool) -> String {
+pub(super) fn format_startup_status(quiet_startup: bool) -> String {
     format!("startup: quiet {}", enabled_label(quiet_startup))
 }
 
-fn quiet_startup_toggle_arg(quiet_startup: bool) -> &'static str {
+pub(super) fn quiet_startup_toggle_arg(quiet_startup: bool) -> &'static str {
     if quiet_startup { "off" } else { "on" }
 }
 
@@ -420,7 +422,7 @@ fn cursor_usage() -> &'static str {
     "usage: /cursor [status|hardware <on|off>]"
 }
 
-fn cursor_command_route(args: &str) -> Result<CursorCommandRoute, String> {
+pub(super) fn cursor_command_route(args: &str) -> Result<CursorCommandRoute, String> {
     let parts = args.split_whitespace().collect::<Vec<_>>();
     match parts.as_slice() {
         [] | ["status"] | ["settings"] => Ok(CursorCommandRoute::Status),
@@ -433,15 +435,15 @@ fn cursor_command_route(args: &str) -> Result<CursorCommandRoute, String> {
     }
 }
 
-fn format_cursor_status(show_hardware_cursor: bool) -> String {
+pub(super) fn format_cursor_status(show_hardware_cursor: bool) -> String {
     format!("cursor: hardware {}", enabled_label(show_hardware_cursor))
 }
 
-fn hardware_cursor_toggle_arg(show_hardware_cursor: bool) -> &'static str {
+pub(super) fn hardware_cursor_toggle_arg(show_hardware_cursor: bool) -> &'static str {
     if show_hardware_cursor { "off" } else { "on" }
 }
 
-fn terminal_cursor_setup_sequence(show_hardware_cursor: bool) -> &'static str {
+pub(super) fn terminal_cursor_setup_sequence(show_hardware_cursor: bool) -> &'static str {
     if show_hardware_cursor {
         ""
     } else {
@@ -453,7 +455,7 @@ fn terminal_usage() -> &'static str {
     "usage: /terminal [status|progress <on|off>|clear-on-shrink <on|off>]"
 }
 
-fn terminal_command_route(args: &str) -> Result<TerminalCommandRoute, String> {
+pub(super) fn terminal_command_route(args: &str) -> Result<TerminalCommandRoute, String> {
     let parts = args.split_whitespace().collect::<Vec<_>>();
     match parts.as_slice() {
         [] | ["status"] | ["settings"] => Ok(TerminalCommandRoute::Status),
@@ -467,7 +469,10 @@ fn terminal_command_route(args: &str) -> Result<TerminalCommandRoute, String> {
     }
 }
 
-fn format_terminal_status(show_terminal_progress: bool, clear_on_shrink: bool) -> String {
+pub(super) fn format_terminal_status(
+    show_terminal_progress: bool,
+    clear_on_shrink: bool,
+) -> String {
     format!(
         "terminal: progress {}, clear-on-shrink {}",
         enabled_label(show_terminal_progress),
@@ -475,15 +480,15 @@ fn format_terminal_status(show_terminal_progress: bool, clear_on_shrink: bool) -
     )
 }
 
-fn terminal_progress_toggle_arg(show_terminal_progress: bool) -> &'static str {
+pub(super) fn terminal_progress_toggle_arg(show_terminal_progress: bool) -> &'static str {
     if show_terminal_progress { "off" } else { "on" }
 }
 
-fn terminal_clear_on_shrink_toggle_arg(clear_on_shrink: bool) -> &'static str {
+pub(super) fn terminal_clear_on_shrink_toggle_arg(clear_on_shrink: bool) -> &'static str {
     if clear_on_shrink { "off" } else { "on" }
 }
 
-fn terminal_progress_sequence(active: bool) -> &'static str {
+pub(super) fn terminal_progress_sequence(active: bool) -> &'static str {
     if active {
         "\x1b]9;4;3\x07"
     } else {
@@ -491,7 +496,7 @@ fn terminal_progress_sequence(active: bool) -> &'static str {
     }
 }
 
-fn terminal_progress_output(
+pub(super) fn terminal_progress_output(
     enabled: bool,
     active: bool,
     json_output: bool,
@@ -503,11 +508,11 @@ fn terminal_progress_output(
     }
 }
 
-fn editor_usage() -> &'static str {
+pub(super) fn editor_usage() -> &'static str {
     "usage: /editor [status|padding <0|1|2|3>|double-escape <tree|fork|none>]"
 }
 
-fn editor_command_route(args: &str) -> Result<EditorCommandRoute, String> {
+pub(super) fn editor_command_route(args: &str) -> Result<EditorCommandRoute, String> {
     let parts = args.split_whitespace().collect::<Vec<_>>();
     match parts.as_slice() {
         [] | ["status"] | ["settings"] => Ok(EditorCommandRoute::Status),
@@ -528,14 +533,14 @@ fn parse_editor_padding_x(raw: &str) -> Result<usize, String> {
         .ok_or_else(|| editor_usage().to_string())
 }
 
-fn normalize_editor_padding_x(value: usize) -> Option<usize> {
+pub(super) fn normalize_editor_padding_x(value: usize) -> Option<usize> {
     EDITOR_PADDING_X_VALUES
         .iter()
         .copied()
         .find(|allowed| *allowed == value)
 }
 
-fn parse_double_escape_action(raw: &str) -> Result<DoubleEscapeAction, String> {
+pub(super) fn parse_double_escape_action(raw: &str) -> Result<DoubleEscapeAction, String> {
     match raw.trim().to_ascii_lowercase().as_str() {
         "tree" => Ok(DoubleEscapeAction::Tree),
         "fork" | "branch" => Ok(DoubleEscapeAction::Fork),
@@ -544,14 +549,17 @@ fn parse_double_escape_action(raw: &str) -> Result<DoubleEscapeAction, String> {
     }
 }
 
-fn format_editor_status(padding_x: usize, double_escape_action: DoubleEscapeAction) -> String {
+pub(super) fn format_editor_status(
+    padding_x: usize,
+    double_escape_action: DoubleEscapeAction,
+) -> String {
     format!(
         "editor: padding {padding_x}, double-escape {}",
         double_escape_action.as_str()
     )
 }
 
-fn editor_padding_x_toggle_arg(current: usize) -> usize {
+pub(super) fn editor_padding_x_toggle_arg(current: usize) -> usize {
     EDITOR_PADDING_X_VALUES
         .iter()
         .copied()
@@ -559,7 +567,7 @@ fn editor_padding_x_toggle_arg(current: usize) -> usize {
         .unwrap_or(EDITOR_PADDING_X_VALUES[0])
 }
 
-fn double_escape_action_toggle_arg(current: DoubleEscapeAction) -> &'static str {
+pub(super) fn double_escape_action_toggle_arg(current: DoubleEscapeAction) -> &'static str {
     match current {
         DoubleEscapeAction::Tree => "fork",
         DoubleEscapeAction::Fork => "none",
@@ -567,14 +575,14 @@ fn double_escape_action_toggle_arg(current: DoubleEscapeAction) -> &'static str 
     }
 }
 
-const TREE_ENTRY_DEFAULT_LIMIT: usize = 5_000;
+pub(super) const TREE_ENTRY_DEFAULT_LIMIT: usize = 5_000;
 const TREE_ENTRY_MAX_LIMIT: usize = 5_000;
 
 fn tree_usage() -> &'static str {
     "usage: /tree [entries [after|--after <event-id>] [limit|--limit <1..5000>]|status|filter <default|no-tools|user-only|labeled-only|all>|fork <event-id> [title]|edit <event-id> <replacement>|resubmit <event-id> <replacement>|label <event-id> <label>[,<label>...]|unlabel <event-id>|fold <thread-id>|unfold <thread-id>|toggle <thread-id>|rename <thread-id> <title>|delete <thread-id>]"
 }
 
-fn parse_tree_filter_mode(raw: &str) -> Result<TreeFilterMode, String> {
+pub(super) fn parse_tree_filter_mode(raw: &str) -> Result<TreeFilterMode, String> {
     match raw.trim().to_ascii_lowercase().as_str() {
         "default" => Ok(TreeFilterMode::Default),
         "no-tools" | "notools" | "no_tools" => Ok(TreeFilterMode::NoTools),
@@ -587,7 +595,7 @@ fn parse_tree_filter_mode(raw: &str) -> Result<TreeFilterMode, String> {
     }
 }
 
-fn tree_filter_mode_toggle_arg(current: TreeFilterMode) -> &'static str {
+pub(super) fn tree_filter_mode_toggle_arg(current: TreeFilterMode) -> &'static str {
     let index = TREE_FILTER_MODES
         .iter()
         .position(|mode| *mode == current)
@@ -595,7 +603,7 @@ fn tree_filter_mode_toggle_arg(current: TreeFilterMode) -> &'static str {
     TREE_FILTER_MODES[(index + 1) % TREE_FILTER_MODES.len()].as_str()
 }
 
-fn tree_command_route_for_command(
+pub(super) fn tree_command_route_for_command(
     command: &str,
     args: &[&str],
 ) -> Result<TreeCommandRoute, String> {
@@ -613,7 +621,7 @@ fn tree_command_route_for_command(
     }
 }
 
-fn tree_command_route(args: &[&str]) -> Result<TreeCommandRoute, String> {
+pub(super) fn tree_command_route(args: &[&str]) -> Result<TreeCommandRoute, String> {
     match args {
         [] => Ok(TreeCommandRoute::Show),
         ["status"] | ["settings"] => Ok(TreeCommandRoute::Status),
@@ -733,7 +741,7 @@ fn parse_tree_labels(raw_labels: &[&str]) -> Result<Vec<String>, String> {
     }
 }
 
-fn format_tree_status(mode: TreeFilterMode) -> String {
+pub(super) fn format_tree_status(mode: TreeFilterMode) -> String {
     format!("tree: filter {}", mode.as_str())
 }
 
@@ -749,7 +757,7 @@ fn tree_item_visible(entry: &ThreadItemEntry, filter_mode: TreeFilterMode) -> bo
     }
 }
 
-fn tool_result_status_label(status: ToolResultStatus) -> &'static str {
+pub(super) fn tool_result_status_label(status: ToolResultStatus) -> &'static str {
     match status {
         ToolResultStatus::Ok => "ok",
         ToolResultStatus::Denied => "denied",
@@ -758,7 +766,7 @@ fn tool_result_status_label(status: ToolResultStatus) -> &'static str {
     }
 }
 
-fn tree_item_kind_name(kind: &ItemKind) -> &'static str {
+pub(super) fn tree_item_kind_name(kind: &ItemKind) -> &'static str {
     match kind {
         ItemKind::UserMessage { .. } => "user",
         ItemKind::AssistantMessage { .. } => "assistant",
@@ -774,7 +782,7 @@ fn tree_item_kind_name(kind: &ItemKind) -> &'static str {
     }
 }
 
-fn tree_item_label(kind: &ItemKind) -> String {
+pub(super) fn tree_item_label(kind: &ItemKind) -> String {
     match kind {
         ItemKind::UserMessage { .. } => "user".to_string(),
         ItemKind::AssistantMessage { .. } => "assistant".to_string(),
@@ -803,7 +811,7 @@ fn compact_tree_preview(raw: &str) -> String {
     preview
 }
 
-fn tree_item_preview(kind: &ItemKind) -> String {
+pub(super) fn tree_item_preview(kind: &ItemKind) -> String {
     match kind {
         ItemKind::UserMessage { text }
         | ItemKind::AssistantMessage { text }
@@ -830,7 +838,7 @@ fn tree_item_preview(kind: &ItemKind) -> String {
     }
 }
 
-fn thread_item_tree_json_from_entries(entries: &[ThreadItemEntry]) -> Vec<Value> {
+pub(super) fn thread_item_tree_json_from_entries(entries: &[ThreadItemEntry]) -> Vec<Value> {
     entries
         .iter()
         .map(|entry| {
@@ -851,14 +859,17 @@ fn thread_item_tree_json_from_entries(entries: &[ThreadItemEntry]) -> Vec<Value>
         .collect()
 }
 
-fn thread_item_tree_next_after(entries: &[ThreadItemEntry], total_count: u64) -> Option<u64> {
+pub(super) fn thread_item_tree_next_after(
+    entries: &[ThreadItemEntry],
+    total_count: u64,
+) -> Option<u64> {
     if entries.len() as u64 >= total_count {
         return None;
     }
     entries.last().map(|entry| entry.event_id)
 }
 
-fn format_thread_item_branch(branch: &ThreadItemBranch) -> String {
+pub(super) fn format_thread_item_branch(branch: &ThreadItemBranch) -> String {
     let mut parts = vec![format!(
         "branch: {} depth {}",
         branch.thread_id, branch.depth
@@ -878,7 +889,7 @@ fn format_thread_item_branch(branch: &ThreadItemBranch) -> String {
     parts.join(" ")
 }
 
-fn format_thread_item_labels_result(result: &ThreadItemLabelsResult) -> String {
+pub(super) fn format_thread_item_labels_result(result: &ThreadItemLabelsResult) -> String {
     if result.labels.is_empty() {
         format!("tree label: event {} cleared", result.event_id)
     } else {
@@ -890,7 +901,7 @@ fn format_thread_item_labels_result(result: &ThreadItemLabelsResult) -> String {
     }
 }
 
-fn format_thread_item_tree_from_entries(
+pub(super) fn format_thread_item_tree_from_entries(
     entries: &[ThreadItemEntry],
     branch: Option<&ThreadItemBranch>,
     filter_mode: TreeFilterMode,
@@ -989,11 +1000,11 @@ fn format_thread_item_tree_from_items(
     format_thread_item_tree_from_entries(&entries, None, filter_mode, 0, entries.len() as u64, None)
 }
 
-fn autocomplete_usage() -> &'static str {
+pub(super) fn autocomplete_usage() -> &'static str {
     "usage: /autocomplete [status|items <3..20>]"
 }
 
-fn autocomplete_command_route(args: &str) -> Result<AutocompleteCommandRoute, String> {
+pub(super) fn autocomplete_command_route(args: &str) -> Result<AutocompleteCommandRoute, String> {
     let parts = args.split_whitespace().collect::<Vec<_>>();
     match parts.as_slice() {
         [] | ["status"] | ["settings"] => Ok(AutocompleteCommandRoute::Status),
@@ -1017,17 +1028,17 @@ fn parse_autocomplete_max_visible(raw: &str) -> Result<usize, String> {
         .ok_or_else(|| autocomplete_usage().to_string())
 }
 
-fn normalize_autocomplete_max_visible(value: usize) -> Option<usize> {
+pub(super) fn normalize_autocomplete_max_visible(value: usize) -> Option<usize> {
     (MIN_AUTOCOMPLETE_MAX_VISIBLE..=MAX_AUTOCOMPLETE_MAX_VISIBLE)
         .contains(&value)
         .then_some(value)
 }
 
-fn format_autocomplete_status(max_visible: usize) -> String {
+pub(super) fn format_autocomplete_status(max_visible: usize) -> String {
     format!("autocomplete: visible items {max_visible}")
 }
 
-fn autocomplete_max_visible_toggle_arg(current: usize) -> usize {
+pub(super) fn autocomplete_max_visible_toggle_arg(current: usize) -> usize {
     AUTOCOMPLETE_VISIBLE_CYCLE_VALUES
         .iter()
         .copied()
@@ -1039,7 +1050,7 @@ fn skills_usage() -> &'static str {
     "usage: /skills [list|status|commands <on|off>]"
 }
 
-fn skills_command_route(args: &str) -> Result<SkillsCommandRoute, String> {
+pub(super) fn skills_command_route(args: &str) -> Result<SkillsCommandRoute, String> {
     let parts = args.split_whitespace().collect::<Vec<_>>();
     match parts.as_slice() {
         [] | ["list"] => Ok(SkillsCommandRoute::List),
@@ -1051,19 +1062,19 @@ fn skills_command_route(args: &str) -> Result<SkillsCommandRoute, String> {
     }
 }
 
-fn format_skills_status(enable_skill_commands: bool) -> String {
+pub(super) fn format_skills_status(enable_skill_commands: bool) -> String {
     format!(
         "skills: /skill:name commands {}",
         enabled_label(enable_skill_commands)
     )
 }
 
-fn skill_commands_toggle_arg(enable_skill_commands: bool) -> &'static str {
+pub(super) fn skill_commands_toggle_arg(enable_skill_commands: bool) -> &'static str {
     if enable_skill_commands { "off" } else { "on" }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum CompactionCommandRoute {
+pub(super) enum CompactionCommandRoute {
     Status,
     CompactNow,
     SetIdleEnabled(bool),
@@ -1081,7 +1092,7 @@ fn compaction_usage() -> String {
     )
 }
 
-fn compaction_command_route(args: &str) -> Result<CompactionCommandRoute, String> {
+pub(super) fn compaction_command_route(args: &str) -> Result<CompactionCommandRoute, String> {
     let parts = args.split_whitespace().collect::<Vec<_>>();
     match parts.as_slice() {
         [] | ["status"] | ["settings"] => Ok(CompactionCommandRoute::Status),
@@ -1134,7 +1145,7 @@ fn allowed_values_label(values: &[u64]) -> String {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum FooterSettingBool {
+pub(super) enum FooterSettingBool {
     ShowPath,
     ShowHelpBar,
     ShowModel,
@@ -1144,7 +1155,7 @@ enum FooterSettingBool {
 }
 
 impl FooterSettingBool {
-    fn label(self) -> &'static str {
+    pub(super) fn label(self) -> &'static str {
         match self {
             Self::ShowPath => "workspace path",
             Self::ShowHelpBar => "hotkey help",
@@ -1155,7 +1166,7 @@ impl FooterSettingBool {
         }
     }
 
-    fn apply(self, settings: &mut FooterSettings, shown: bool) {
+    pub(super) fn apply(self, settings: &mut FooterSettings, shown: bool) {
         match self {
             Self::ShowPath => settings.show_path = shown,
             Self::ShowHelpBar => settings.show_help_bar = shown,
@@ -1168,7 +1179,7 @@ impl FooterSettingBool {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum FooterCommandRoute {
+pub(super) enum FooterCommandRoute {
     Status,
     SetBool(FooterSettingBool, bool),
     SetUsageDisplay(FooterUsageDisplay),
@@ -1178,7 +1189,7 @@ fn footer_usage() -> &'static str {
     "usage: /footer [status|path <on|off>|help <on|off>|usage <session-weekly|session|weekly|off>|model <on|off>|permission <on|off>|memory <on|off>|context <on|off>]"
 }
 
-fn footer_command_route(args: &str) -> Result<FooterCommandRoute, String> {
+pub(super) fn footer_command_route(args: &str) -> Result<FooterCommandRoute, String> {
     let parts = args.split_whitespace().collect::<Vec<_>>();
     match parts.as_slice() {
         [] | ["status"] => Ok(FooterCommandRoute::Status),
@@ -1225,7 +1236,7 @@ fn parse_footer_bool(raw: &str) -> Result<bool, String> {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ImageSettingsCommandRoute {
+pub(super) enum ImageSettingsCommandRoute {
     Status,
     Capabilities,
     SetShowImages(bool),
@@ -1243,7 +1254,9 @@ fn image_settings_usage() -> String {
     )
 }
 
-fn image_settings_command_route(args: &str) -> Result<ImageSettingsCommandRoute, String> {
+pub(super) fn image_settings_command_route(
+    args: &str,
+) -> Result<ImageSettingsCommandRoute, String> {
     let parts = args.split_whitespace().collect::<Vec<_>>();
     match parts.as_slice() {
         [] | ["status"] | ["settings"] => Ok(ImageSettingsCommandRoute::Status),
@@ -1280,7 +1293,7 @@ fn parse_allowed_image_width(raw: &str) -> Result<u64, String> {
         .ok_or_else(image_settings_usage)
 }
 
-fn parse_image_preview_protocol_override(
+pub(super) fn parse_image_preview_protocol_override(
     raw: &str,
 ) -> Result<ImagePreviewProtocolOverride, String> {
     match raw.trim().to_ascii_lowercase().as_str() {
@@ -1295,7 +1308,7 @@ fn parse_image_preview_protocol_override(
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum MemorySettingsCommandRoute {
+pub(super) enum MemorySettingsCommandRoute {
     Status,
     SetEnabled(bool),
     SetStartupRecall(bool),
@@ -1322,11 +1335,11 @@ enum MemorySettingsCommandRoute {
     RunSync(HoppiSyncDirection),
 }
 
-fn memory_settings_usage() -> &'static str {
+pub(super) fn memory_settings_usage() -> &'static str {
     "usage: /memory [status|jobs|jobs all|jobs cancel <id>|on|off|startup-recall <on|off>|task-start-recall <on|off>|turn-summaries <on|off>|agent-model <auto|claude|gpt>|deep-model <auto|sonnet|gpt-5.5>|idle-dream <on|off>|install-offer <ask|dismissed>|install-hoppi [--yes]|sync <on|off>|sync now|sync pull|sync push|sync repo <path|none>|sync remote <url|none>|sync pull-startup <on|off>|sync push-exit <on|off>|sync background <off|15m|30m|60m>|sync encryption <none|env|file>|sync passphrase-env <ENV>|sync passphrase-file <path|none>|sync conflict <keep-both|keep-local|overwrite-local>|dashboard|list|forget <id> --yes|edit <id> content <text> --yes|edit <id> content=<text> tags=a,b confidence=verified supersededBy=<id> --yes|supersede <old-id> <new-id> --yes|pin <id> --yes|unpin <id> --yes|settings|compaction|maintenance [dry-run|apply]|compact [summary]]"
 }
 
-fn parse_memory_update_patch_args(args: &[&str]) -> Result<Value, String> {
+pub(super) fn parse_memory_update_patch_args(args: &[&str]) -> Result<Value, String> {
     if args.is_empty() {
         return Err(memory_settings_usage().to_string());
     }
@@ -1407,7 +1420,9 @@ fn parse_memory_update_bool(raw: &str) -> Result<bool, String> {
     }
 }
 
-fn memory_settings_command_route(args: &str) -> Result<MemorySettingsCommandRoute, String> {
+pub(super) fn memory_settings_command_route(
+    args: &str,
+) -> Result<MemorySettingsCommandRoute, String> {
     let parts = args.split_whitespace().collect::<Vec<_>>();
     match parts.as_slice() {
         [] | ["status"] => Ok(MemorySettingsCommandRoute::Status),
@@ -1493,11 +1508,11 @@ fn memory_settings_command_route(args: &str) -> Result<MemorySettingsCommandRout
     }
 }
 
-fn parse_memory_settings_bool(raw: &str) -> Result<bool, String> {
+pub(super) fn parse_memory_settings_bool(raw: &str) -> Result<bool, String> {
     parse_footer_bool(raw).map_err(|_| memory_settings_usage().to_string())
 }
 
-fn parse_memory_agent_model(raw: &str) -> Result<&'static str, String> {
+pub(super) fn parse_memory_agent_model(raw: &str) -> Result<&'static str, String> {
     let normalized = raw.trim().to_ascii_lowercase();
     VALID_MEMORY_AGENT_MODELS
         .iter()
@@ -1515,7 +1530,7 @@ fn memory_action_approved(flags: &[&str]) -> bool {
     })
 }
 
-fn parse_hoppi_install_offer(raw: &str) -> Result<&'static str, String> {
+pub(super) fn parse_hoppi_install_offer(raw: &str) -> Result<&'static str, String> {
     let normalized = raw.trim().to_ascii_lowercase();
     VALID_HOPPI_INSTALL_OFFERS
         .iter()
@@ -1524,7 +1539,7 @@ fn parse_hoppi_install_offer(raw: &str) -> Result<&'static str, String> {
         .ok_or_else(|| memory_settings_usage().to_string())
 }
 
-fn parse_memory_sync_optional_value(parts: &[&str]) -> Result<Option<String>, String> {
+pub(super) fn parse_memory_sync_optional_value(parts: &[&str]) -> Result<Option<String>, String> {
     let value = parts.join(" ");
     let value = value.trim();
     if value.is_empty() {
@@ -1540,7 +1555,7 @@ fn parse_memory_sync_optional_value(parts: &[&str]) -> Result<Option<String>, St
     }
 }
 
-fn parse_sync_background(raw: &str) -> Result<&'static str, String> {
+pub(super) fn parse_sync_background(raw: &str) -> Result<&'static str, String> {
     let normalized = raw.trim().to_ascii_lowercase();
     VALID_SYNC_BACKGROUND
         .iter()
@@ -1549,7 +1564,7 @@ fn parse_sync_background(raw: &str) -> Result<&'static str, String> {
         .ok_or_else(|| memory_settings_usage().to_string())
 }
 
-fn parse_sync_encryption(raw: &str) -> Result<(&'static str, &'static str), String> {
+pub(super) fn parse_sync_encryption(raw: &str) -> Result<(&'static str, &'static str), String> {
     match raw.trim().to_ascii_lowercase().as_str() {
         "none" | "off" => Ok(("none", "env")),
         "env" | "passphrase-env" => Ok(("passphrase", "env")),
@@ -1558,7 +1573,7 @@ fn parse_sync_encryption(raw: &str) -> Result<(&'static str, &'static str), Stri
     }
 }
 
-fn parse_sync_passphrase_env(raw: &str) -> Result<&str, String> {
+pub(super) fn parse_sync_passphrase_env(raw: &str) -> Result<&str, String> {
     let value = raw.trim();
     if value.is_empty()
         || !value
@@ -1572,7 +1587,7 @@ fn parse_sync_passphrase_env(raw: &str) -> Result<&str, String> {
     }
 }
 
-fn parse_sync_conflict_mode(raw: &str) -> Result<&'static str, String> {
+pub(super) fn parse_sync_conflict_mode(raw: &str) -> Result<&'static str, String> {
     let normalized = raw.trim().to_ascii_lowercase();
     VALID_SYNC_CONFLICT_MODES
         .iter()
@@ -1581,7 +1596,7 @@ fn parse_sync_conflict_mode(raw: &str) -> Result<&'static str, String> {
         .ok_or_else(|| memory_settings_usage().to_string())
 }
 
-fn parse_deep_memory_model(raw: &str) -> Result<&'static str, String> {
+pub(super) fn parse_deep_memory_model(raw: &str) -> Result<&'static str, String> {
     let normalized = raw.trim().to_ascii_lowercase();
     VALID_DEEP_MEMORY_MODELS
         .iter()
@@ -1590,7 +1605,7 @@ fn parse_deep_memory_model(raw: &str) -> Result<&'static str, String> {
         .ok_or_else(|| memory_settings_usage().to_string())
 }
 
-fn parse_footer_usage_display(raw: &str) -> Result<FooterUsageDisplay, String> {
+pub(super) fn parse_footer_usage_display(raw: &str) -> Result<FooterUsageDisplay, String> {
     match raw.trim().to_ascii_lowercase().as_str() {
         "session-weekly" | "session+weekly" | "session_weekly" | "both" | "all" => {
             Ok(FooterUsageDisplay::SessionWeekly)
@@ -1602,7 +1617,7 @@ fn parse_footer_usage_display(raw: &str) -> Result<FooterUsageDisplay, String> {
     }
 }
 
-fn format_ask_user_timeout_label(timeout_ms: u64) -> String {
+pub(super) fn format_ask_user_timeout_label(timeout_ms: u64) -> String {
     match ask_user_timeout_ms_to_minutes(timeout_ms) {
         Some(0) => "off".to_string(),
         Some(minutes) => format!("{minutes}m"),
@@ -1610,7 +1625,7 @@ fn format_ask_user_timeout_label(timeout_ms: u64) -> String {
     }
 }
 
-fn parse_permission_mode(raw: &str) -> Option<PermissionMode> {
+pub(super) fn parse_permission_mode(raw: &str) -> Option<PermissionMode> {
     match raw.trim().to_ascii_lowercase().as_str() {
         "read-only" | "readonly" | "ro" => Some(PermissionMode::ReadOnly),
         "default" => Some(PermissionMode::Default),
@@ -1620,7 +1635,7 @@ fn parse_permission_mode(raw: &str) -> Option<PermissionMode> {
     }
 }
 
-fn network_policy_label_for_settings(
+pub(super) fn network_policy_label_for_settings(
     mode: PermissionMode,
     settings: &PermissionSandboxSettings,
 ) -> &'static str {
@@ -1631,7 +1646,7 @@ fn network_policy_label_for_settings(
     }
 }
 
-fn filesystem_policy_for_mode(mode: PermissionMode) -> &'static str {
+pub(super) fn filesystem_policy_for_mode(mode: PermissionMode) -> &'static str {
     match mode {
         PermissionMode::ReadOnly => "readOnly",
         PermissionMode::FullAccess => "unrestricted",
@@ -1640,11 +1655,11 @@ fn filesystem_policy_for_mode(mode: PermissionMode) -> &'static str {
 }
 
 #[cfg(test)]
-fn sandbox_policy_json(mode: PermissionMode, cwd: &str) -> Value {
+pub(super) fn sandbox_policy_json(mode: PermissionMode, cwd: &str) -> Value {
     sandbox_policy_json_with_protected_patterns(mode, cwd, &[])
 }
 
-fn sandbox_policy_json_with_settings(
+pub(super) fn sandbox_policy_json_with_settings(
     mode: PermissionMode,
     cwd: &str,
     settings: &PermissionSandboxSettings,
@@ -1686,7 +1701,7 @@ fn protected_patterns_for_policy(additional: &[String]) -> Vec<String> {
     patterns
 }
 
-fn format_protected_patterns_label(patterns: &[String]) -> String {
+pub(super) fn format_protected_patterns_label(patterns: &[String]) -> String {
     let patterns = normalize_string_slice(patterns);
     if patterns.is_empty() {
         "default".to_string()
@@ -1695,7 +1710,7 @@ fn format_protected_patterns_label(patterns: &[String]) -> String {
     }
 }
 
-fn format_sandbox_roots_label(roots: &[String], fallback: &str) -> String {
+pub(super) fn format_sandbox_roots_label(roots: &[String], fallback: &str) -> String {
     let roots = normalize_string_slice(roots);
     if roots.is_empty() {
         fallback.to_string()
@@ -1704,11 +1719,11 @@ fn format_sandbox_roots_label(roots: &[String], fallback: &str) -> String {
     }
 }
 
-fn format_sandbox_flag_label(allowed: bool) -> &'static str {
+pub(super) fn format_sandbox_flag_label(allowed: bool) -> &'static str {
     if allowed { "allowed" } else { "blocked" }
 }
 
-fn permission_sandbox_settings_json(settings: &PermissionSandboxSettings) -> Value {
+pub(super) fn permission_sandbox_settings_json(settings: &PermissionSandboxSettings) -> Value {
     json!({
         "allowInternet": settings.allow_internet,
         "allowSsh": settings.allow_ssh,
@@ -1719,7 +1734,7 @@ fn permission_sandbox_settings_json(settings: &PermissionSandboxSettings) -> Val
     })
 }
 
-fn permission_sandbox_validation_value(
+pub(super) fn permission_sandbox_validation_value(
     mode: PermissionMode,
     cwd: &str,
     settings: &PermissionSandboxSettings,
@@ -1800,7 +1815,7 @@ fn sandbox_root_status(cwd: &str, root: &str) -> &'static str {
     }
 }
 
-fn format_permission_sandbox_validation(value: &Value) -> String {
+pub(super) fn format_permission_sandbox_validation(value: &Value) -> String {
     let issue_count = value.get("issueCount").and_then(Value::as_u64).unwrap_or(0);
     let issue_label = match issue_count {
         0 => "ok".to_string(),
@@ -1870,7 +1885,7 @@ fn format_sandbox_validation_roots(value: &Value, key: &str, label: &str) -> Vec
     lines
 }
 
-fn side_question_request_params(
+pub(super) fn side_question_request_params(
     thread_id: &str,
     question: &str,
     provider: &ProviderConfig,
@@ -1907,11 +1922,13 @@ fn side_question_request_params(
     params
 }
 
-fn memory_compact_summary_arg(rest: &[&str]) -> String {
+pub(super) fn memory_compact_summary_arg(rest: &[&str]) -> String {
     rest.join(" ")
 }
 
-fn parse_mcp_prompt_arguments(rest: &[&str]) -> Result<BTreeMap<String, String>, String> {
+pub(super) fn parse_mcp_prompt_arguments(
+    rest: &[&str],
+) -> Result<BTreeMap<String, String>, String> {
     let mut arguments = BTreeMap::new();
     for raw in rest {
         let Some((key, value)) = raw.split_once('=') else {
@@ -1929,7 +1946,10 @@ fn parse_mcp_prompt_arguments(rest: &[&str]) -> Result<BTreeMap<String, String>,
     Ok(arguments)
 }
 
-fn parse_mcp_list_cursor_arg(command: &str, rest: &[&str]) -> Result<Option<String>, String> {
+pub(super) fn parse_mcp_list_cursor_arg(
+    command: &str,
+    rest: &[&str],
+) -> Result<Option<String>, String> {
     let usage = || format!("usage: /mcp {command} <id> [cursor]");
     let cursor = match rest {
         [] => return Ok(None),
@@ -1944,7 +1964,11 @@ fn parse_mcp_list_cursor_arg(command: &str, rest: &[&str]) -> Result<Option<Stri
     Ok(Some(cursor.to_string()))
 }
 
-fn mcp_list_request_params_json(thread_id: &str, server_id: &str, cursor: Option<&str>) -> Value {
+pub(super) fn mcp_list_request_params_json(
+    thread_id: &str,
+    server_id: &str,
+    cursor: Option<&str>,
+) -> Value {
     let mut params = json!({
         "threadId": thread_id,
         "serverId": server_id,
@@ -1955,7 +1979,7 @@ fn mcp_list_request_params_json(thread_id: &str, server_id: &str, cursor: Option
     params
 }
 
-fn mcp_command_usage() -> &'static str {
+pub(super) fn mcp_command_usage() -> &'static str {
     "usage: /mcp [list|connect <id>|test <id>|reload <id>|auth <id>|resources <id> [cursor]|templates <id> [cursor]|read <id> <uri>|subscribe <id> <uri>|unsubscribe <id> <uri>|prompts <id> [cursor]|prompt <id> <name> [key=value...]|trust-plugin <plugin-id> <server-id>|disable-plugin <plugin-id> <server-id>]"
 }
 
@@ -2070,7 +2094,7 @@ fn mcp_status_summary_counts(value: &Value) -> (usize, usize, usize, usize) {
     (items.len(), enabled, tools, diagnostics)
 }
 
-fn format_mcp_status_summary(value: &Value) -> String {
+pub(super) fn format_mcp_status_summary(value: &Value) -> String {
     let (servers, enabled, tools, diagnostics) = mcp_status_summary_counts(value);
     if servers == 0 {
         return "none".to_string();
@@ -2089,7 +2113,7 @@ fn format_mcp_status_summary(value: &Value) -> String {
     parts.join(", ")
 }
 
-fn format_mcp_status_list(value: &Value) -> String {
+pub(super) fn format_mcp_status_list(value: &Value) -> String {
     let Some(items) = value.get("items").and_then(Value::as_array) else {
         return "mcp: status unavailable".to_string();
     };
@@ -2206,7 +2230,7 @@ fn mcp_list_refresh_hint_labels(item: &Value) -> Vec<String> {
         .collect()
 }
 
-fn format_mcp_resources_list(value: &Value) -> String {
+pub(super) fn format_mcp_resources_list(value: &Value) -> String {
     let server_id = value
         .get("serverId")
         .and_then(Value::as_str)
@@ -2274,7 +2298,7 @@ fn format_mcp_resources_list(value: &Value) -> String {
     lines.join("\n")
 }
 
-fn format_mcp_resource_templates_list(value: &Value) -> String {
+pub(super) fn format_mcp_resource_templates_list(value: &Value) -> String {
     let server_id = value
         .get("serverId")
         .and_then(Value::as_str)
@@ -2342,7 +2366,7 @@ fn format_mcp_resource_templates_list(value: &Value) -> String {
     lines.join("\n")
 }
 
-fn format_mcp_prompts_list(value: &Value) -> String {
+pub(super) fn format_mcp_prompts_list(value: &Value) -> String {
     let server_id = value
         .get("serverId")
         .and_then(Value::as_str)
@@ -2475,7 +2499,7 @@ fn mcp_prompt_content_summary(content: &Value) -> Vec<String> {
     }
 }
 
-fn format_mcp_prompt_get_result(value: &Value) -> String {
+pub(super) fn format_mcp_prompt_get_result(value: &Value) -> String {
     let server_id = value
         .get("serverId")
         .and_then(Value::as_str)
@@ -2528,7 +2552,7 @@ fn format_mcp_prompt_get_result(value: &Value) -> String {
     lines.join("\n")
 }
 
-fn format_mcp_resource_read_result(value: &Value) -> String {
+pub(super) fn format_mcp_resource_read_result(value: &Value) -> String {
     let server_id = value
         .get("serverId")
         .and_then(Value::as_str)
@@ -2595,7 +2619,7 @@ fn format_mcp_resource_read_result(value: &Value) -> String {
     lines.join("\n")
 }
 
-fn format_mcp_resource_subscription_result(action: &str, value: &Value) -> String {
+pub(super) fn format_mcp_resource_subscription_result(action: &str, value: &Value) -> String {
     let server_id = value
         .get("serverId")
         .and_then(Value::as_str)
@@ -2630,7 +2654,7 @@ fn format_mcp_resource_subscription_result(action: &str, value: &Value) -> Strin
     )
 }
 
-fn format_mcp_action_result(action: &str, server_id: &str, value: &Value) -> String {
+pub(super) fn format_mcp_action_result(action: &str, server_id: &str, value: &Value) -> String {
     let mut headline_status = "ok".to_string();
     let mut detail_lines = Vec::new();
     if let Some(events) = value.get("events").and_then(Value::as_array) {
@@ -2670,7 +2694,7 @@ fn format_mcp_action_result(action: &str, server_id: &str, value: &Value) -> Str
     lines.join("\n")
 }
 
-fn format_permission_review_history(value: &Value) -> String {
+pub(super) fn format_permission_review_history(value: &Value) -> String {
     let Some(records) = value.get("records").and_then(Value::as_array) else {
         return "permissions history: unavailable".to_string();
     };
@@ -2733,7 +2757,7 @@ fn value_string_array(value: &Value, key: &str) -> Vec<String> {
         .collect()
 }
 
-fn format_permission_review_context(value: &Value) -> String {
+pub(super) fn format_permission_review_context(value: &Value) -> String {
     let settings = value.get("settings").cloned().unwrap_or_else(|| json!({}));
     let timeout_seconds = settings
         .get("timeoutMs")
@@ -2779,7 +2803,7 @@ fn format_permission_review_context(value: &Value) -> String {
     lines.join("\n")
 }
 
-fn mock_model_steps_for_prompt(prompt: &str, cwd: &str) -> Value {
+pub(super) fn mock_model_steps_for_prompt(prompt: &str, cwd: &str) -> Value {
     let lower = prompt.to_ascii_lowercase();
     if lower.contains("oppi-dogfood-repo-edit") {
         return json!([{
@@ -2908,7 +2932,7 @@ fn mock_model_steps_for_prompt(prompt: &str, cwd: &str) -> Value {
     }])
 }
 
-fn mock_tool_definitions_for_prompt(prompt: &str) -> Option<Value> {
+pub(super) fn mock_tool_definitions_for_prompt(prompt: &str) -> Option<Value> {
     let lower = prompt.to_ascii_lowercase();
     if lower.contains("oppi-dogfood-missing-image") {
         return Some(json!([{
@@ -2923,7 +2947,7 @@ fn mock_tool_definitions_for_prompt(prompt: &str) -> Option<Value> {
     None
 }
 
-fn mock_model_steps_after_approval(call: Option<&ToolCall>) -> Value {
+pub(super) fn mock_model_steps_after_approval(call: Option<&ToolCall>) -> Value {
     if let Some(call) = call {
         return json!([
             {
@@ -2943,14 +2967,14 @@ fn mock_model_steps_after_approval(call: Option<&ToolCall>) -> Value {
     }])
 }
 
-fn mock_model_steps_after_answer() -> Value {
+pub(super) fn mock_model_steps_after_answer() -> Value {
     json!([{
         "assistantDeltas": ["Answered dogfood question and continuing."],
         "finalResponse": true
     }])
 }
 
-fn dogfood_background_command() -> String {
+pub(super) fn dogfood_background_command() -> String {
     if cfg!(windows) {
         "echo oppi-background-dogfood & ping -n 20 127.0.0.1 > nul".to_string()
     } else {
@@ -2958,7 +2982,7 @@ fn dogfood_background_command() -> String {
     }
 }
 
-fn redact_debug_text(value: &str) -> String {
+pub(super) fn redact_debug_text(value: &str) -> String {
     let mut text = value.replace('\n', " ");
     for marker in ["sk-", "ghp_", "xoxb-"] {
         if let Some(index) = text.find(marker) {
@@ -2973,7 +2997,7 @@ fn redact_debug_text(value: &str) -> String {
     text
 }
 
-fn active_todos(state: &TodoState) -> Vec<String> {
+pub(super) fn active_todos(state: &TodoState) -> Vec<String> {
     state
         .todos
         .iter()
@@ -2987,7 +3011,7 @@ fn active_todos(state: &TodoState) -> Vec<String> {
         .collect()
 }
 
-fn format_todos(state: &TodoState) -> String {
+pub(super) fn format_todos(state: &TodoState) -> String {
     let active = active_todos(state);
     if active.is_empty() {
         "todos: none".to_string()
@@ -2998,7 +3022,7 @@ fn format_todos(state: &TodoState) -> String {
     }
 }
 
-fn format_todos_with_summary(state: &TodoState) -> String {
+pub(super) fn format_todos_with_summary(state: &TodoState) -> String {
     let mut rendered = format_todos(state);
     if state.todos.is_empty() && !state.summary.trim().is_empty() {
         rendered.push_str(&format!("\nsummary: {}", state.summary));
@@ -3007,7 +3031,7 @@ fn format_todos_with_summary(state: &TodoState) -> String {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum TodoCommand {
+pub(super) enum TodoCommand {
     List,
     ClientAction {
         action: TodoClientAction,
@@ -3015,7 +3039,7 @@ enum TodoCommand {
     },
 }
 
-fn parse_todos_command_args(args: &[&str]) -> Result<TodoCommand, String> {
+pub(super) fn parse_todos_command_args(args: &[&str]) -> Result<TodoCommand, String> {
     match args {
         [] | ["list"] | ["show"] => Ok(TodoCommand::List),
         ["clear"] | ["reset"] => Ok(TodoCommand::ClientAction {
@@ -3038,41 +3062,44 @@ fn parse_todos_command_args(args: &[&str]) -> Result<TodoCommand, String> {
     }
 }
 
-fn todo_client_action_name(action: TodoClientAction) -> &'static str {
+pub(super) fn todo_client_action_name(action: TodoClientAction) -> &'static str {
     match action {
         TodoClientAction::Clear => "clear",
         TodoClientAction::Done => "done",
     }
 }
 
-fn parse_agent_markdown(text: &str, source: AgentSource) -> Result<AgentDefinition, String> {
+pub(super) fn parse_agent_markdown(
+    text: &str,
+    source: AgentSource,
+) -> Result<AgentDefinition, String> {
     oppi_agents::parse_agent_markdown(text, source, None, None, false)
 }
 
-fn format_agent_markdown(agent: &AgentDefinition) -> String {
+pub(super) fn format_agent_markdown(agent: &AgentDefinition) -> String {
     oppi_agents::format_agent_markdown(agent)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum AgentMarkdownTarget {
+pub(super) enum AgentMarkdownTarget {
     Project,
     User,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct AgentImportRoute {
-    source: AgentSource,
-    path: PathBuf,
+pub(super) struct AgentImportRoute {
+    pub(super) source: AgentSource,
+    pub(super) path: PathBuf,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct AgentExportRoute {
-    agent_name: String,
-    path: PathBuf,
+pub(super) struct AgentExportRoute {
+    pub(super) agent_name: String,
+    pub(super) path: PathBuf,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum AgentsRoute {
+pub(super) enum AgentsRoute {
     List,
     Show {
         name: String,
@@ -3109,12 +3136,12 @@ enum AgentsRoute {
 }
 
 #[cfg(test)]
-fn parse_agents_route(input: &str) -> Result<AgentsRoute, String> {
+pub(super) fn parse_agents_route(input: &str) -> Result<AgentsRoute, String> {
     let parts = input.split_whitespace().collect::<Vec<_>>();
     parse_agents_route_parts(&parts, Path::new("."), Path::new("."))
 }
 
-fn parse_agents_route_parts(
+pub(super) fn parse_agents_route_parts(
     args: &[&str],
     cwd: &Path,
     agent_dir: &Path,
@@ -3172,7 +3199,10 @@ fn parse_agents_route_parts(
     }
 }
 
-fn parse_agent_import_route(args: &[&str], cwd: &Path) -> Result<AgentImportRoute, String> {
+pub(super) fn parse_agent_import_route(
+    args: &[&str],
+    cwd: &Path,
+) -> Result<AgentImportRoute, String> {
     let (source, path) = match args {
         ["project", path] => (AgentSource::Project, *path),
         ["user", path] => (AgentSource::User, *path),
@@ -3185,7 +3215,7 @@ fn parse_agent_import_route(args: &[&str], cwd: &Path) -> Result<AgentImportRout
     })
 }
 
-fn parse_agent_export_route(
+pub(super) fn parse_agent_export_route(
     args: &[&str],
     cwd: &Path,
     agent_dir: &Path,
@@ -3212,7 +3242,10 @@ fn parse_agent_export_route(
     })
 }
 
-fn active_agent_from_list(value: Value, agent_name: &str) -> Result<AgentDefinition, String> {
+pub(super) fn active_agent_from_list(
+    value: Value,
+    agent_name: &str,
+) -> Result<AgentDefinition, String> {
     let result: AgentListResult =
         serde_json::from_value(value).map_err(|error| format!("decode agents/list: {error}"))?;
     let names = result
@@ -3246,7 +3279,7 @@ fn hoppi_module_path_for_pin() -> Result<PathBuf, String> {
         })
 }
 
-fn format_agents_list(value: &Value) -> Result<String, String> {
+pub(super) fn format_agents_list(value: &Value) -> Result<String, String> {
     let result: AgentListResult = serde_json::from_value(value.clone())
         .map_err(|error| format!("decode agents/list: {error}"))?;
     if result.items.is_empty() && result.failed.is_empty() {
@@ -3301,7 +3334,7 @@ fn format_agents_list(value: &Value) -> Result<String, String> {
     Ok(rendered)
 }
 
-fn format_agent_show(resolved: &ResolvedAgent) -> String {
+pub(super) fn format_agent_show(resolved: &ResolvedAgent) -> String {
     let mut rendered = format_agent_definition_detail(&resolved.active);
     if !resolved.shadowed.is_empty() {
         rendered.push_str("\n\nShadowed:");
@@ -3384,7 +3417,7 @@ fn format_agent_definition_detail(agent: &AgentDefinition) -> String {
     rendered
 }
 
-fn agent_source_label(source: Option<AgentSource>) -> &'static str {
+pub(super) fn agent_source_label(source: Option<AgentSource>) -> &'static str {
     match source {
         Some(AgentSource::BuiltIn) => "built-in",
         Some(AgentSource::ClaudeUser) => "claude-user",
@@ -3398,11 +3431,11 @@ fn agent_source_label(source: Option<AgentSource>) -> &'static str {
     }
 }
 
-fn agent_source_is_writable(source: Option<AgentSource>) -> bool {
+pub(super) fn agent_source_is_writable(source: Option<AgentSource>) -> bool {
     matches!(source, Some(AgentSource::Project | AgentSource::User))
 }
 
-fn configured_agent_editor() -> Option<String> {
+pub(super) fn configured_agent_editor() -> Option<String> {
     env::var("OPPI_EDITOR")
         .or_else(|_| env::var("EDITOR"))
         .ok()
@@ -3410,7 +3443,7 @@ fn configured_agent_editor() -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
-fn launch_agent_editor(editor: &str, path: &Path) -> Result<(), String> {
+pub(super) fn launch_agent_editor(editor: &str, path: &Path) -> Result<(), String> {
     let mut parts = editor.split_whitespace();
     let Some(command) = parts.next() else {
         return Err("editor command is empty".to_string());
@@ -3436,7 +3469,7 @@ fn resolve_agent_markdown_path(cwd: &Path, path: &str) -> PathBuf {
     }
 }
 
-fn default_agent_markdown_path(
+pub(super) fn default_agent_markdown_path(
     cwd: &Path,
     agent_dir: &Path,
     target: AgentMarkdownTarget,
@@ -3472,7 +3505,7 @@ fn agent_markdown_file_stem(agent_name: &str) -> Result<String, String> {
     }
 }
 
-fn goal_command_route(args: &str) -> Result<GoalCommandRoute, String> {
+pub(super) fn goal_command_route(args: &str) -> Result<GoalCommandRoute, String> {
     let args = args.trim();
     if args.is_empty() {
         return Ok(GoalCommandRoute::Get);
@@ -3537,7 +3570,7 @@ fn goal_command_route(args: &str) -> Result<GoalCommandRoute, String> {
     }
 }
 
-fn goal_set_params(
+pub(super) fn goal_set_params(
     thread_id: &str,
     objective: Option<String>,
     status: Option<ThreadGoalStatus>,
@@ -3567,7 +3600,7 @@ fn thread_goal_status_rpc_label(status: ThreadGoalStatus) -> &'static str {
     }
 }
 
-fn decode_goal_from_response(value: &Value) -> Result<Option<ThreadGoal>, String> {
+pub(super) fn decode_goal_from_response(value: &Value) -> Result<Option<ThreadGoal>, String> {
     let Some(goal) = value.get("goal") else {
         return Ok(None);
     };
@@ -3579,7 +3612,7 @@ fn decode_goal_from_response(value: &Value) -> Result<Option<ThreadGoal>, String
         .map_err(|error| format!("decode thread goal: {error}"))
 }
 
-fn format_goal_response(value: &Value) -> String {
+pub(super) fn format_goal_response(value: &Value) -> String {
     let Ok(Some(goal)) = decode_goal_from_response(value) else {
         return "goal: none\nusage: /goal <objective>".to_string();
     };
@@ -3606,7 +3639,7 @@ fn thread_goal_status_label(status: ThreadGoalStatus) -> &'static str {
     }
 }
 
-fn format_goal_status_label(goal: Option<&ThreadGoal>) -> String {
+pub(super) fn format_goal_status_label(goal: Option<&ThreadGoal>) -> String {
     let Some(goal) = goal else {
         return "none".to_string();
     };
@@ -3666,11 +3699,11 @@ fn format_compact_i64(value: i64) -> String {
     }
 }
 
-fn format_compact_tokens(value: i64) -> String {
+pub(super) fn format_compact_tokens(value: i64) -> String {
     format_compact_i64(value).to_ascii_lowercase()
 }
 
-fn format_reset_epoch(epoch_seconds: u64) -> String {
+pub(super) fn format_reset_epoch(epoch_seconds: u64) -> String {
     let now = current_time_ms().unwrap_or_default() / 1000;
     if epoch_seconds <= now {
         return "now".to_string();
@@ -3682,7 +3715,7 @@ fn trim_compact_suffix(value: String) -> String {
     value.replace(".0K", "K").replace(".0M", "M")
 }
 
-fn format_memory_status_summary(value: &Value) -> String {
+pub(super) fn format_memory_status_summary(value: &Value) -> String {
     let enabled = value
         .get("enabled")
         .and_then(Value::as_bool)
@@ -3724,7 +3757,7 @@ fn format_memory_status_summary(value: &Value) -> String {
     format!("memory runtime: {}", parts.join(" · "))
 }
 
-fn format_memory_control(value: &Value) -> String {
+pub(super) fn format_memory_control(value: &Value) -> String {
     let title = value
         .get("title")
         .and_then(Value::as_str)
@@ -3832,7 +3865,7 @@ fn format_memory_control(value: &Value) -> String {
     lines.join("\n")
 }
 
-fn format_memory_dashboard(value: &Value) -> String {
+pub(super) fn format_memory_dashboard(value: &Value) -> String {
     let available = value
         .get("available")
         .and_then(Value::as_bool)
@@ -3887,7 +3920,7 @@ fn format_memory_dashboard(value: &Value) -> String {
     lines.join("\n")
 }
 
-fn format_memory_list(value: &Value) -> String {
+pub(super) fn format_memory_list(value: &Value) -> String {
     let available = value
         .get("available")
         .and_then(Value::as_bool)
@@ -3969,7 +4002,7 @@ fn format_memory_list(value: &Value) -> String {
     lines.join("\n")
 }
 
-fn format_memory_forget(value: &Value) -> String {
+pub(super) fn format_memory_forget(value: &Value) -> String {
     let id = value.get("id").and_then(Value::as_str).unwrap_or("memory");
     let backend_applied = value
         .get("backendApplied")
@@ -4013,7 +4046,7 @@ fn format_memory_forget(value: &Value) -> String {
     lines.join("\n")
 }
 
-fn format_memory_pin(value: &Value) -> String {
+pub(super) fn format_memory_pin(value: &Value) -> String {
     let id = value.get("id").and_then(Value::as_str).unwrap_or("memory");
     let action = value.get("action").and_then(Value::as_str).unwrap_or("pin");
     let backend_applied = value
@@ -4063,7 +4096,7 @@ fn format_memory_pin(value: &Value) -> String {
     lines.join("\n")
 }
 
-fn format_memory_update(value: &Value) -> String {
+pub(super) fn format_memory_update(value: &Value) -> String {
     let id = value.get("id").and_then(Value::as_str).unwrap_or("memory");
     let backend_applied = value
         .get("backendApplied")
@@ -4107,7 +4140,7 @@ fn format_memory_update(value: &Value) -> String {
     lines.join("\n")
 }
 
-fn format_memory_supersede(value: &Value) -> String {
+pub(super) fn format_memory_supersede(value: &Value) -> String {
     let id = value.get("id").and_then(Value::as_str).unwrap_or("memory");
     let superseded_by = value
         .get("record")
@@ -4157,7 +4190,7 @@ fn format_memory_supersede(value: &Value) -> String {
     lines.join("\n")
 }
 
-fn format_memory_consolidate(value: &Value) -> String {
+pub(super) fn format_memory_consolidate(value: &Value) -> String {
     let dry_run = value
         .get("dryRun")
         .and_then(Value::as_bool)
@@ -4257,7 +4290,7 @@ fn format_memory_consolidate(value: &Value) -> String {
     lines.join("\n")
 }
 
-fn memory_jobs_active_count(value: &Value) -> u64 {
+pub(super) fn memory_jobs_active_count(value: &Value) -> u64 {
     value
         .get("queueDepth")
         .and_then(Value::as_u64)
@@ -4301,7 +4334,7 @@ fn memory_active_job_labels(value: &Value) -> Vec<String> {
         .collect()
 }
 
-fn format_memory_drain_timeout(value: &Value, timeout: Duration) -> String {
+pub(super) fn format_memory_drain_timeout(value: &Value, timeout: Duration) -> String {
     let active = memory_jobs_active_count(value);
     let label = if active == 1 { "job" } else { "jobs" };
     let mut message = format!(
@@ -4315,7 +4348,7 @@ fn format_memory_drain_timeout(value: &Value, timeout: Duration) -> String {
     message
 }
 
-fn format_memory_jobs(value: &Value) -> String {
+pub(super) fn format_memory_jobs(value: &Value) -> String {
     let queue_depth = value.get("queueDepth").and_then(Value::as_u64).unwrap_or(0);
     let total = value.get("totalCount").and_then(Value::as_u64).unwrap_or(0);
     let message = value
@@ -4381,7 +4414,7 @@ fn format_memory_jobs(value: &Value) -> String {
     lines.join("\n")
 }
 
-fn format_prompt_templates(value: &Value) -> String {
+pub(super) fn format_prompt_templates(value: &Value) -> String {
     let items = value
         .get("items")
         .and_then(Value::as_array)
@@ -4435,7 +4468,7 @@ fn format_prompt_templates(value: &Value) -> String {
     rendered
 }
 
-fn format_theme_status(
+pub(super) fn format_theme_status(
     current: &str,
     loaded: Option<&LoadedShellTheme>,
     list: Option<&Value>,
@@ -4476,13 +4509,13 @@ fn format_theme_status(
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct ThemeListEntry {
-    name: String,
-    source: String,
-    path: Option<String>,
+pub(super) struct ThemeListEntry {
+    pub(super) name: String,
+    pub(super) source: String,
+    pub(super) path: Option<String>,
 }
 
-fn active_theme_entries_from_theme_list(list: &Value) -> Vec<ThemeListEntry> {
+pub(super) fn active_theme_entries_from_theme_list(list: &Value) -> Vec<ThemeListEntry> {
     list.get("items")
         .and_then(Value::as_array)
         .into_iter()
@@ -4535,12 +4568,12 @@ fn theme_preview_entries(list: Option<&Value>) -> Vec<ThemeListEntry> {
     }
 }
 
-fn theme_preview_index_arg(raw: &str) -> bool {
+pub(super) fn theme_preview_index_arg(raw: &str) -> bool {
     let raw = raw.trim();
     !raw.is_empty() && raw.chars().all(|ch| ch.is_ascii_digit())
 }
 
-fn theme_preview_index_selection(list: Option<&Value>, raw: &str) -> Option<String> {
+pub(super) fn theme_preview_index_selection(list: Option<&Value>, raw: &str) -> Option<String> {
     let index = raw.trim().parse::<usize>().ok()?;
     if index == 0 {
         return None;
@@ -4550,7 +4583,7 @@ fn theme_preview_index_selection(list: Option<&Value>, raw: &str) -> Option<Stri
         .map(|entry| entry.name.clone())
 }
 
-fn format_theme_preview_index(current: &str, list: Option<&Value>) -> String {
+pub(super) fn format_theme_preview_index(current: &str, list: Option<&Value>) -> String {
     let mut rendered = format!("theme preview picker\ncurrent: {current}\n\navailable themes:");
     for (index, entry) in theme_preview_entries(list).into_iter().enumerate() {
         let number = index + 1;
@@ -4571,7 +4604,7 @@ fn format_theme_preview_index(current: &str, list: Option<&Value>) -> String {
     rendered
 }
 
-fn format_theme_preview_detail(name: &str, source: &str, tokens: ThemeTokens) -> String {
+pub(super) fn format_theme_preview_detail(name: &str, source: &str, tokens: ThemeTokens) -> String {
     [
         format!("theme preview: {name} [{source}]"),
         theme_preview_sample(tokens),
@@ -4596,7 +4629,7 @@ fn theme_preview_sample(tokens: ThemeTokens) -> String {
     )
 }
 
-fn terminal_width() -> usize {
+pub(super) fn terminal_width() -> usize {
     env::var("COLUMNS")
         .ok()
         .and_then(|value| value.parse::<usize>().ok())
@@ -4604,7 +4637,7 @@ fn terminal_width() -> usize {
         .unwrap_or(100)
 }
 
-fn terminal_capability_summary(raw_requested: bool) -> &'static str {
+pub(super) fn terminal_capability_summary(raw_requested: bool) -> &'static str {
     if raw_requested {
         if cfg!(windows) {
             "terminal: raw byte parser enabled; Windows consoles may degrade Ctrl/Alt combos unless the terminal emits ANSI key sequences; line-mode fallback remains available."
@@ -4618,7 +4651,7 @@ fn terminal_capability_summary(raw_requested: bool) -> &'static str {
     }
 }
 
-fn width_safe_line(line: &str, width: usize) -> String {
+pub(super) fn width_safe_line(line: &str, width: usize) -> String {
     let width = width.max(1);
     let mut chars = line.chars();
     let mut output = String::new();
@@ -4641,11 +4674,11 @@ fn width_safe_line(line: &str, width: usize) -> String {
     }
 }
 
-fn login_usage() -> &'static str {
+pub(super) fn login_usage() -> &'static str {
     "usage: /login, /login subscription, /login subscription codex [--force], /login subscription copilot [--force] [--enterprise <domain>], /login api, /login subscription claude [status|install --yes|start|use|stop], /login api openai env <ENV>. Model choice stays in /model or future /settings; raw keys are never accepted."
 }
 
-fn normalize_login_choice(input: &str) -> String {
+pub(super) fn normalize_login_choice(input: &str) -> String {
     input
         .trim()
         .trim_start_matches('/')
@@ -4653,7 +4686,7 @@ fn normalize_login_choice(input: &str) -> String {
         .replace('_', "-")
 }
 
-fn login_action_approved(flags: &[&str]) -> bool {
+pub(super) fn login_action_approved(flags: &[&str]) -> bool {
     flags.iter().any(|flag| {
         matches!(
             flag.trim().to_ascii_lowercase().as_str(),
@@ -4662,7 +4695,7 @@ fn login_action_approved(flags: &[&str]) -> bool {
     })
 }
 
-fn login_root_picker_panel(provider: &ProviderConfig) -> String {
+pub(super) fn login_root_picker_panel(provider: &ProviderConfig) -> String {
     format!(
         "login: native provider setup\ncurrent: {}\n\nChoose auth type:\n  1. Subscription\n  2. API\n\nType 1/2, or run `/login subscription` / `/login api`.\npolicy: credentials stay in Pi/OPPi auth store, env references, or a managed provider bridge; raw secrets are not stored or sent over JSON-RPC.\n{}",
         provider.label(),
@@ -4670,40 +4703,40 @@ fn login_root_picker_panel(provider: &ProviderConfig) -> String {
     )
 }
 
-fn login_subscription_picker_panel() -> String {
+pub(super) fn login_subscription_picker_panel() -> String {
     "login subscription providers\n  1. Codex (ChatGPT) — native browser OAuth; saves redacted Pi/OPPi auth-store token\n  2. Claude (Anthropic via Meridian) — explicit managed loopback bridge; install asks approval\n  3. Copilot (Microsoft/GitHub) — Pi-compatible device-code OAuth; saves redacted auth-store token\n\nType 1/2/3, or run `/login subscription codex`, `/login subscription copilot`, or `/login subscription claude`.".to_string()
 }
 
-fn login_api_picker_panel() -> String {
+pub(super) fn login_api_picker_panel() -> String {
     "login API providers\n  1. OpenAI-compatible API via env reference\n\nSet OPPI_OPENAI_API_KEY/OPENAI_API_KEY in your shell, then run `/login api openai env OPPI_OPENAI_API_KEY`. Raw keys are rejected. Use `/model <id>` for model selection.".to_string()
 }
 
-fn login_openai_instructions() -> &'static str {
+pub(super) fn login_openai_instructions() -> &'static str {
     "login API/OpenAI-compatible: set OPPI_OPENAI_API_KEY or OPENAI_API_KEY in your shell, then run `/login api openai env OPPI_OPENAI_API_KEY`. Use `/model <id>` or `/model role <role> <id>` for model selection. Raw API keys are rejected."
 }
 
-fn login_claude_picker_panel() -> String {
+pub(super) fn login_claude_picker_panel() -> String {
     format!(
         "login Claude (Anthropic via Meridian)\n  1. Status\n  2. Run explicit Claude Code login (`claude login`)\n  3. Install managed Meridian bridge (asks approval; package {MERIDIAN_PACKAGE_NAME})\n  4. Start visible loopback bridge and configure provider\n  5. Use already-running bridge\n  6. Stop bridge started by this shell\n\nMeridian authenticates through the Claude Code SDK and refreshes tokens there; OPPi does not extract or store Claude tokens. Model selection stays in `/model` or `/model role ...`; `/login` never picks the model. No hidden npx/proxy/credential-helper spawning is used. Managed install target: {}",
         format_path_for_display(&managed_packages_dir())
     )
 }
 
-fn login_meridian_install_approval_panel() -> String {
+pub(super) fn login_meridian_install_approval_panel() -> String {
     format!(
         "Approval required: install managed Meridian bridge package {MERIDIAN_PACKAGE_NAME} into {}. This may use npm/network and can modify OPPi's managed packages directory. Type `yes` to approve, `no` to cancel, or run `/login subscription claude install --yes`.",
         format_path_for_display(&managed_packages_dir())
     )
 }
 
-fn hoppi_install_approval_panel() -> String {
+pub(super) fn hoppi_install_approval_panel() -> String {
     format!(
         "Approval required: install/update Hoppi backend package {HOPPI_PACKAGE_NAME} into {}. This may use npm/network and can modify OPPi's managed packages directory. Type `yes` to approve, `no` to cancel, or run `/memory install-hoppi --yes`. OPPi performs no hidden install.",
         format_path_for_display(&managed_packages_dir())
     )
 }
 
-fn login_delegated_provider_text(provider: &str) -> &'static str {
+pub(super) fn login_delegated_provider_text(provider: &str) -> &'static str {
     match provider {
         "chatgpt" | "codex" => {
             "login chatgpt/codex: native OAuth is available through `/login subscription codex`; it opens the browser, saves tokens in the protected Pi/OPPi auth store, and never prints raw tokens."
@@ -4724,19 +4757,19 @@ fn login_delegated_provider_text(provider: &str) -> &'static str {
 }
 
 #[derive(Debug, Clone)]
-struct GraphifyStatus {
-    cli_path: Option<PathBuf>,
-    graph_root: Option<PathBuf>,
-    legacy_root: Option<PathBuf>,
-    report_path: Option<PathBuf>,
-    wiki_index_path: Option<PathBuf>,
-    graph_json_path: Option<PathBuf>,
-    needs_update: bool,
-    config_path: Option<PathBuf>,
+pub(super) struct GraphifyStatus {
+    pub(super) cli_path: Option<PathBuf>,
+    pub(super) graph_root: Option<PathBuf>,
+    pub(super) legacy_root: Option<PathBuf>,
+    pub(super) report_path: Option<PathBuf>,
+    pub(super) wiki_index_path: Option<PathBuf>,
+    pub(super) graph_json_path: Option<PathBuf>,
+    pub(super) needs_update: bool,
+    pub(super) config_path: Option<PathBuf>,
 }
 
 impl GraphifyStatus {
-    fn configured(&self) -> bool {
+    pub(super) fn configured(&self) -> bool {
         self.graph_root.is_some() || self.legacy_root.is_some() || self.config_path.is_some()
     }
 }
@@ -4771,7 +4804,7 @@ fn find_executable_on_path(name: &str) -> Option<PathBuf> {
     None
 }
 
-fn graphify_status(cwd: &str) -> GraphifyStatus {
+pub(super) fn graphify_status(cwd: &str) -> GraphifyStatus {
     let cwd = PathBuf::from(cwd);
     let graph_root = cwd.join(".graphify");
     let legacy_root = cwd.join("graphify-out");
@@ -4808,7 +4841,7 @@ fn graphify_status(cwd: &str) -> GraphifyStatus {
     }
 }
 
-fn graphify_status_json(status: &GraphifyStatus) -> Value {
+pub(super) fn graphify_status_json(status: &GraphifyStatus) -> Value {
     json!({
         "cliPath": status.cli_path.as_ref().map(|path| path.display().to_string()),
         "configured": status.configured(),
@@ -4829,7 +4862,7 @@ fn graphify_path(path: &Option<PathBuf>) -> String {
         .unwrap_or_else(|| "missing".to_string())
 }
 
-fn format_graphify_status(status: &GraphifyStatus) -> String {
+pub(super) fn format_graphify_status(status: &GraphifyStatus) -> String {
     let mut lines = vec![
         "Graphify codebase graph".to_string(),
         format!("cli: {}", graphify_path(&status.cli_path)),
@@ -4851,10 +4884,10 @@ fn format_graphify_status(status: &GraphifyStatus) -> String {
     lines.join("\n")
 }
 
-fn graphify_install_guidance() -> &'static str {
+pub(super) fn graphify_install_guidance() -> &'static str {
     "Graphify install is user-approved only. Suggested commands after approval:\n  npm install -g graphifyy\n  graphify install\n  graphify scope inspect . --scope auto\n  graphify detect .\nThe install command prints a mutation preview before writing assistant instructions, hooks, MCP, or plugin config. OPPi will not run it silently."
 }
 
-fn graphify_command_guidance() -> &'static str {
+pub(super) fn graphify_command_guidance() -> &'static str {
     "Graphify commands:\n  graphify scope inspect . --scope auto\n  graphify detect .\n  graphify update .\n  graphify query \"show the auth flow\"\n  graphify path \"Frontend\" \"Database\"\n  graphify explain \"DigestAuth\"\n  graphify review-analysis\n  graphify portable-check .graphify\nUse --all only for intentional full recursive knowledge/document scans."
 }

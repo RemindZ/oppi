@@ -15,6 +15,8 @@ use oppi_protocol::{
 };
 #[path = "shell_parts/auth_settings.rs"]
 mod auth_settings;
+#[path = "shell_parts/commands.rs"]
+mod commands;
 #[path = "shell_parts/interactive.rs"]
 mod interactive;
 #[path = "shell_parts/provider_ui.rs"]
@@ -27,6 +29,7 @@ mod slash_palette;
 mod tui;
 
 use auth_settings::*;
+use commands::*;
 use crossterm::event::{self, Event as CrosstermEvent, KeyCode, KeyEventKind, KeyModifiers};
 use crossterm::terminal;
 #[cfg(test)]
@@ -417,7 +420,6 @@ fn should_print_startup_banner(json_output: bool, quiet_startup: bool) -> bool {
 }
 
 include!("shell_parts/session.rs");
-include!("shell_parts/commands.rs");
 
 include!("shell_parts/models_and_memory.rs");
 
