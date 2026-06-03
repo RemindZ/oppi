@@ -74,7 +74,7 @@ Memory backend status:
 
 - `OPPI_MEMORY_BACKEND=auto` or unset keeps the bounded Node/TypeScript Hoppi adapter as the default when available.
 - `OPPI_MEMORY_BACKEND=node` forces that Node/TypeScript adapter.
-- `OPPI_MEMORY_BACKEND=embedded` forces the Rust embedded JSON/lexical adapter. Embedded currently supports status, remember, recall, list, forget, pin/unpin, update, and supersede, but dashboard UI, embeddings, remote sync, richer search, and deeper model maintenance remain follow-up work.
+- `OPPI_MEMORY_BACKEND=embedded` forces the Rust embedded JSON/lexical adapter. Embedded currently supports status, remember, recall, list, forget, pin/unpin, update, and supersede. Dashboard UI, embeddings, remote sync, richer search, Rust-owned Stage 2/3 model maintenance, and embedded-as-default are deferred from the RC; Node/TypeScript Hoppi remains the default backend.
 - Completed native direct-provider turns now call runtime `memory/distill-turn` when Memory and turn summaries are enabled, using the provider that ran or resumed the turn. The route returns a visible `jobId`, honors `memory/jobs/cancel` for late terminal updates, and treats resume as retrying the same bounded turn text as a new job. Mock/no-model turns keep the bounded `memory/backend/remember` summary fallback.
 
 Manual equivalent:
