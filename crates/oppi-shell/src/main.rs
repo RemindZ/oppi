@@ -15,16 +15,20 @@ use oppi_protocol::{
 };
 #[path = "shell_parts/interactive.rs"]
 mod interactive;
+#[path = "shell_parts/provider_ui.rs"]
+mod provider_ui;
 mod ratatui_ui;
 mod tui;
 
 use crossterm::event::{self, Event as CrosstermEvent, KeyCode, KeyEventKind, KeyModifiers};
 use crossterm::terminal;
+#[cfg(test)]
+use interactive::RawInputParser;
 use interactive::{
-    EditorAction, EditorInput, LineEditor, RawInputParser, interactive_loop,
-    maybe_offer_hoppi_install_on_startup, maybe_run_hoppi_exit_sync,
-    maybe_run_hoppi_lifecycle_sync, maybe_run_hoppi_startup_sync,
+    EditorAction, EditorInput, LineEditor, interactive_loop, maybe_offer_hoppi_install_on_startup,
+    maybe_run_hoppi_exit_sync, maybe_run_hoppi_lifecycle_sync, maybe_run_hoppi_startup_sync,
 };
+use provider_ui::*;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::env;
@@ -409,7 +413,6 @@ include!("shell_parts/commands.rs");
 
 include!("shell_parts/models_and_memory.rs");
 
-include!("shell_parts/provider_ui.rs");
 include!("shell_parts/auth_settings.rs");
 
 include!("shell_parts/rendering.rs");

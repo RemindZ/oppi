@@ -1,3 +1,5 @@
+use super::*;
+
 fn meridian_host_port() -> Option<(String, u16)> {
     base_url_host_port(&meridian_base_url())
 }
@@ -25,13 +27,13 @@ fn tcp_reachable(host: &str, port: u16, timeout: Duration) -> bool {
     false
 }
 
-fn meridian_reachable() -> bool {
+pub(super) fn meridian_reachable() -> bool {
     meridian_host_port()
         .map(|(host, port)| tcp_reachable(&host, port, Duration::from_millis(300)))
         .unwrap_or(false)
 }
 
-fn wait_for_meridian(timeout: Duration) -> bool {
+pub(super) fn wait_for_meridian(timeout: Duration) -> bool {
     let started = Instant::now();
     while started.elapsed() < timeout {
         if meridian_reachable() {
@@ -42,7 +44,7 @@ fn wait_for_meridian(timeout: Duration) -> bool {
     false
 }
 
-fn meridian_start_candidates() -> Vec<PathBuf> {
+pub(super) fn meridian_start_candidates() -> Vec<PathBuf> {
     let mut candidates = Vec::new();
     if let Some(command) = env::var_os("OPPI_MERIDIAN_COMMAND")
         .filter(|value| !value.is_empty())
@@ -62,7 +64,7 @@ fn meridian_start_candidates() -> Vec<PathBuf> {
     candidates
 }
 
-fn spawn_meridian_command(command: &Path) -> Result<Child, String> {
+pub(super) fn spawn_meridian_command(command: &Path) -> Result<Child, String> {
     let (host, port) = meridian_host_port().unwrap_or_else(|| ("127.0.0.1".to_string(), 3456));
     let mut cmd = Command::new(command);
     cmd.env(
@@ -117,7 +119,7 @@ fn claude_auth_status_summary() -> String {
     }
 }
 
-fn meridian_status_panel() -> String {
+pub(super) fn meridian_status_panel() -> String {
     let reachable = meridian_reachable();
     format!(
         "Meridian Claude bridge\nbaseUrl: {}\nloopbackOnly: {}\nreachable: {}\nclaudeCodeAuth: {}\nmanagedBin: {} ({})\nlocalBin: {} ({})\nmanagedModule: {} ({})\npolicy: no hidden npx/proxy/credential-helper spawning; install requires explicit approval through /login subscription claude install --yes or the picker; Claude tokens remain owned by Claude Code/Meridian\nnext: `/login subscription claude login` if needed, choose a model with `/model`, then `/login subscription claude start` or `/login subscription claude use`.",
@@ -146,7 +148,7 @@ fn meridian_status_panel() -> String {
     )
 }
 
-fn meridian_provider_config(model: Option<&str>) -> OpenAiCompatibleConfig {
+pub(super) fn meridian_provider_config(model: Option<&str>) -> OpenAiCompatibleConfig {
     with_default_reasoning_effort(OpenAiCompatibleConfig {
         flavor: DirectProviderFlavor::OpenAiCompatible,
         provider_id: None,
@@ -165,7 +167,7 @@ fn meridian_provider_config(model: Option<&str>) -> OpenAiCompatibleConfig {
     })
 }
 
-fn provider_uses_meridian_placeholder(config: &OpenAiCompatibleConfig) -> bool {
+pub(super) fn provider_uses_meridian_placeholder(config: &OpenAiCompatibleConfig) -> bool {
     config.api_key_env.as_deref() == Some(MERIDIAN_API_KEY_ENV)
         && config
             .base_url
@@ -174,7 +176,7 @@ fn provider_uses_meridian_placeholder(config: &OpenAiCompatibleConfig) -> bool {
             .is_some_and(|(host, _)| is_loopback_host(&host))
 }
 
-fn redacted_base_url_label(raw: &str) -> String {
+pub(super) fn redacted_base_url_label(raw: &str) -> String {
     let value = raw.trim();
     if value.is_empty() {
         return "default OpenAI-compatible endpoint".to_string();
@@ -193,7 +195,7 @@ fn redacted_base_url_label(raw: &str) -> String {
     format!("{scheme}{host}")
 }
 
-fn provider_status_panel(
+pub(super) fn provider_status_panel(
     provider: &ProviderConfig,
     models: &[ModelRef],
     session: &ShellSession,
@@ -280,7 +282,7 @@ fn provider_status_panel(
     }
 }
 
-fn provider_validation_panel(provider: &ProviderConfig) -> String {
+pub(super) fn provider_validation_panel(provider: &ProviderConfig) -> String {
     match provider {
         ProviderConfig::Mock => {
             "provider validation: mock provider ready; no credentials, network, or live calls used"
@@ -330,7 +332,7 @@ fn provider_validation_panel(provider: &ProviderConfig) -> String {
     }
 }
 
-fn provider_local_validation_ready(provider: &ProviderConfig) -> bool {
+pub(super) fn provider_local_validation_ready(provider: &ProviderConfig) -> bool {
     match provider {
         ProviderConfig::Mock => true,
         ProviderConfig::OpenAiCompatible(config) => {
@@ -339,7 +341,7 @@ fn provider_local_validation_ready(provider: &ProviderConfig) -> bool {
     }
 }
 
-fn provider_for_role_config(
+pub(super) fn provider_for_role_config(
     provider: &ProviderConfig,
     role_models: &BTreeMap<String, String>,
     role: Option<&str>,
@@ -347,7 +349,7 @@ fn provider_for_role_config(
     provider_for_role_config_with_complexity(provider, role_models, role, false)
 }
 
-fn provider_for_role_config_with_complexity(
+pub(super) fn provider_for_role_config_with_complexity(
     provider: &ProviderConfig,
     role_models: &BTreeMap<String, String>,
     role: Option<&str>,
@@ -377,7 +379,7 @@ fn provider_for_role_config_with_complexity(
     }
 }
 
-fn default_model_for_role(
+pub(super) fn default_model_for_role(
     provider: &ProviderConfig,
     role: &str,
     promote_complex_subagent: bool,
@@ -454,7 +456,7 @@ fn provider_with_model(provider: &ProviderConfig, model: &str) -> Option<Provide
     }
 }
 
-fn complex_subagent_task(task: &str) -> bool {
+pub(super) fn complex_subagent_task(task: &str) -> bool {
     let lower = task.to_ascii_lowercase();
     let word_count = lower.split_whitespace().count();
     word_count >= 48
@@ -476,15 +478,15 @@ fn complex_subagent_task(task: &str) -> bool {
         .any(|needle| lower.contains(needle))
 }
 
-fn provider_policy_text() -> &'static str {
+pub(super) fn provider_policy_text() -> &'static str {
     "provider policy: native shell owns mock, OpenAI-compatible direct API, ChatGPT/Codex OAuth, and GitHub Copilot device-code OAuth today, with /login as the primary setup UX. /login is a picker for Subscription vs API; model choice belongs to /model or future /settings. Status/validate are local and redacted; /provider smoke is the only provider command that makes a live model call. Codex and Copilot OAuth open the browser after explicit selection and store tokens only in the protected auth store. Anthropic/Claude subscription support uses an explicit user-selected managed Meridian bridge over the Claude Code SDK. OPPi must not spawn Meridian, npx, subscription proxies, external brokers, or credential helper processes implicitly; /login subscription claude install requires explicit user approval and /login subscription claude login is the explicit Claude Code auth step."
 }
 
-fn anthropic_provider_evaluation() -> &'static str {
+pub(super) fn anthropic_provider_evaluation() -> &'static str {
     "anthropic evaluation: native /login exposes the subscription-auth path through an explicit managed Meridian bridge over the Claude Code SDK. Meridian runs on loopback with visible install/login/start/stop/use lifecycle, forces client-owned passthrough tools for OPPi, avoids implicit npx or hidden proxy spawning, and asks before managed install. Claude OAuth tokens stay in Claude Code/Meridian; OPPi does not extract or store them. Model selection stays in /model or future /settings."
 }
 
-fn normalize_role(raw: &str) -> Option<&'static str> {
+pub(super) fn normalize_role(raw: &str) -> Option<&'static str> {
     match raw.trim().to_ascii_lowercase().as_str() {
         "planner" | "plan" | "planning" => Some("planner"),
         "thinking" | "thinker" | "think" => Some("thinking"),
@@ -496,11 +498,11 @@ fn normalize_role(raw: &str) -> Option<&'static str> {
     }
 }
 
-fn role_usage() -> &'static str {
+pub(super) fn role_usage() -> &'static str {
     "usage: /model role <planner|thinking|reviewer|orchestrator|executor|subagent> <model-id|inherit>"
 }
 
-fn role_for_command(command: &str) -> &'static str {
+pub(super) fn role_for_command(command: &str) -> &'static str {
     match command {
         "/review" | "/audit" => "reviewer",
         "/init" => "planner",
@@ -510,7 +512,7 @@ fn role_for_command(command: &str) -> &'static str {
     }
 }
 
-fn format_suggestion_summary(suggestion: &SuggestedNextMessage) -> String {
+pub(super) fn format_suggestion_summary(suggestion: &SuggestedNextMessage) -> String {
     format!(
         "suggest-next: {}\nconfidence: {}%\nuse: Tab in suggestion dock, or /suggest-next clear",
         suggestion.message,
@@ -518,7 +520,7 @@ fn format_suggestion_summary(suggestion: &SuggestedNextMessage) -> String {
     )
 }
 
-fn format_suggestion_debug(suggestion: &SuggestedNextMessage) -> String {
+pub(super) fn format_suggestion_debug(suggestion: &SuggestedNextMessage) -> String {
     let reason = suggestion
         .reason
         .as_deref()
@@ -530,11 +532,11 @@ fn format_suggestion_debug(suggestion: &SuggestedNextMessage) -> String {
     )
 }
 
-fn native_usage_status_note() -> &'static str {
+pub(super) fn native_usage_status_note() -> &'static str {
     "provider-neutral/local only; do not claim subscription remaining limits; native shell turns do not automatically inject recalled memory yet"
 }
 
-fn format_usage_panel(session: &ShellSession, provider: &ProviderConfig) -> String {
+pub(super) fn format_usage_panel(session: &ShellSession, provider: &ProviderConfig) -> String {
     let model = session
         .session_model(provider)
         .map(display_model_id)
@@ -606,7 +608,7 @@ fn format_usage_panel(session: &ShellSession, provider: &ProviderConfig) -> Stri
     )
 }
 
-fn format_role_profiles(
+pub(super) fn format_role_profiles(
     role_models: &BTreeMap<String, String>,
     session_model: Option<&str>,
 ) -> String {
@@ -628,7 +630,7 @@ fn format_role_profiles(
     lines.join("\n")
 }
 
-fn parse_models_command_args(args: &str) -> (bool, String) {
+pub(super) fn parse_models_command_args(args: &str) -> (bool, String) {
     let mut show_all = false;
     let mut filter = Vec::<&str>::new();
     for part in args.split_whitespace() {
@@ -640,7 +642,7 @@ fn parse_models_command_args(args: &str) -> (bool, String) {
     (show_all, filter.join(" "))
 }
 
-fn filter_models(models: &[ModelRef], filter: &str) -> Vec<ModelRef> {
+pub(super) fn filter_models(models: &[ModelRef], filter: &str) -> Vec<ModelRef> {
     let needle = filter.trim().to_ascii_lowercase();
     models
         .iter()
@@ -661,7 +663,7 @@ fn filter_models(models: &[ModelRef], filter: &str) -> Vec<ModelRef> {
 }
 
 #[cfg(test)]
-fn format_model_list(
+pub(super) fn format_model_list(
     models: &[ModelRef],
     selected: Option<&str>,
     filter: &str,
@@ -670,7 +672,7 @@ fn format_model_list(
     format_model_list_with_diagnostics(models, selected, filter, role_models, &[])
 }
 
-fn format_model_list_with_diagnostics(
+pub(super) fn format_model_list_with_diagnostics(
     models: &[ModelRef],
     selected: Option<&str>,
     filter: &str,
@@ -744,7 +746,7 @@ fn format_scoped_models(session: &ShellSession, provider: &ProviderConfig) -> St
     lines.join("\n")
 }
 
-fn format_scoped_models_from_registry(
+pub(super) fn format_scoped_models_from_registry(
     provider: &ProviderConfig,
     registry: &ModelRegistryListResult,
 ) -> String {
@@ -816,11 +818,11 @@ fn format_model_ref_for_scoped_registry(model: &ModelRef) -> String {
 }
 
 #[cfg(test)]
-fn format_thread_tree(threads: &[Thread], active_thread_id: &str) -> String {
+pub(super) fn format_thread_tree(threads: &[Thread], active_thread_id: &str) -> String {
     format_thread_tree_with_folded(threads, active_thread_id, &BTreeSet::new())
 }
 
-fn format_thread_tree_with_filter(
+pub(super) fn format_thread_tree_with_filter(
     threads: &[Thread],
     active_thread_id: &str,
     folded_threads: &BTreeSet<String>,
@@ -839,7 +841,7 @@ fn format_thread_tree_with_filter(
     )
 }
 
-fn tree_thread_visible(
+pub(super) fn tree_thread_visible(
     thread: &Thread,
     active_thread_id: &str,
     filter_mode: TreeFilterMode,
@@ -859,7 +861,7 @@ fn tree_thread_visible(
     }
 }
 
-fn format_thread_tree_with_folded(
+pub(super) fn format_thread_tree_with_folded(
     threads: &[Thread],
     active_thread_id: &str,
     folded_threads: &BTreeSet<String>,
@@ -985,11 +987,11 @@ fn format_thread_tree_with_folded(
     lines.join("\n")
 }
 
-fn exit_resume_command(thread_id: &str) -> String {
+pub(super) fn exit_resume_command(thread_id: &str) -> String {
     format!("oppi resume {thread_id}")
 }
 
-fn same_project_cwd(left: &str, right: &str) -> bool {
+pub(super) fn same_project_cwd(left: &str, right: &str) -> bool {
     let normalize = |value: &str| value.trim().replace('\\', "/");
     let left = normalize(left);
     let right = normalize(right);
@@ -1000,7 +1002,7 @@ fn same_project_cwd(left: &str, right: &str) -> bool {
     }
 }
 
-fn format_resume_session_list(
+pub(super) fn format_resume_session_list(
     threads: &[Thread],
     active_thread_id: &str,
     cwd: &str,
@@ -1021,7 +1023,7 @@ fn format_resume_session_list(
     format!("{current_thread}\n{tree}\nnote: use /resume <thread-id> or oppi resume <thread-id>")
 }
 
-fn normalize_theme_name(raw: &str) -> Option<String> {
+pub(super) fn normalize_theme_name(raw: &str) -> Option<String> {
     match raw.trim().to_ascii_lowercase().as_str() {
         "oppi-cyan-dark" => Some("oppi-cyan".to_string()),
         "oppi" | "oppi-cyan" | "oppi-cyan-light" | "dark" | "light" | "plain" => {
@@ -1031,7 +1033,7 @@ fn normalize_theme_name(raw: &str) -> Option<String> {
     }
 }
 
-fn load_theme_file() -> Result<Option<String>, String> {
+pub(super) fn load_theme_file() -> Result<Option<String>, String> {
     let path = env::current_dir()
         .unwrap_or_else(|_| PathBuf::from("."))
         .join(".oppi")
@@ -1048,7 +1050,7 @@ fn load_theme_file() -> Result<Option<String>, String> {
     Ok(Some(theme.to_string()))
 }
 
-fn loaded_shell_theme_from_load_result(
+pub(super) fn loaded_shell_theme_from_load_result(
     value: &Value,
     requested_name: &str,
 ) -> Result<LoadedShellTheme, String> {
@@ -1083,7 +1085,7 @@ fn loaded_shell_theme_from_load_result(
     })
 }
 
-fn normalize_prompt_variant(raw: &str) -> Option<String> {
+pub(super) fn normalize_prompt_variant(raw: &str) -> Option<String> {
     match raw.trim().to_ascii_lowercase().as_str() {
         "off" | "none" => Some("off".to_string()),
         "a" | "promptname_a" | "prompt-name-a" => Some("a".to_string()),
@@ -1093,7 +1095,7 @@ fn normalize_prompt_variant(raw: &str) -> Option<String> {
     }
 }
 
-fn prompt_variant_append(variant: &str) -> Option<String> {
+pub(super) fn prompt_variant_append(variant: &str) -> Option<String> {
     match variant {
         "a" => Some("Prompt variant A: be concise, autonomy-forward, and explicit about OPPi safety surfaces.".to_string()),
         "b" => Some("Prompt variant B: use a more deliberate planning cadence and preserve visible task state.".to_string()),
@@ -1102,7 +1104,7 @@ fn prompt_variant_append(variant: &str) -> Option<String> {
     }
 }
 
-fn command_prepare_params_json(
+pub(super) fn command_prepare_params_json(
     thread_id: &str,
     command: &str,
     args: &str,
@@ -1124,11 +1126,11 @@ fn command_prepare_params_json(
     })
 }
 
-fn is_command_prepare_unknown_error(error: &str) -> bool {
+pub(super) fn is_command_prepare_unknown_error(error: &str) -> bool {
     error.contains("command_prepare_unknown") || error.contains("prompt_template_not_found")
 }
 
-fn theme_load_params_json(thread_id: &str, name: &str) -> Value {
+pub(super) fn theme_load_params_json(thread_id: &str, name: &str) -> Value {
     json!({
         "threadId": thread_id,
         "name": name.trim(),
@@ -1143,7 +1145,7 @@ fn prompt_variant_feature_routing_append(variant: &str) -> Option<&'static str> 
     }
 }
 
-fn apply_feature_routing_to_provider(provider: &mut Value, variant: &str) {
+pub(super) fn apply_feature_routing_to_provider(provider: &mut Value, variant: &str) {
     append_system_prompt_to_provider_once(
         provider,
         "OPPi feature routing",
@@ -1154,14 +1156,14 @@ fn apply_feature_routing_to_provider(provider: &mut Value, variant: &str) {
     }
 }
 
-fn apply_prompt_variant_to_provider(provider: &mut Value, variant: &str) {
+pub(super) fn apply_prompt_variant_to_provider(provider: &mut Value, variant: &str) {
     let Some(append) = prompt_variant_append(variant) else {
         return;
     };
     append_system_prompt_to_provider(provider, "OPPi prompt variant", append.as_str());
 }
 
-fn append_hoppi_memory_context_to_provider(provider: &mut Value, context: &str) {
+pub(super) fn append_hoppi_memory_context_to_provider(provider: &mut Value, context: &str) {
     append_system_prompt_to_provider_once(provider, HOPPI_MEMORY_SYSTEM_HEADING, context);
 }
 
@@ -1176,7 +1178,7 @@ fn append_system_prompt_to_provider_once(provider: &mut Value, heading: &str, ap
     append_system_prompt_to_provider(provider, heading, append);
 }
 
-fn append_system_prompt_to_provider(provider: &mut Value, heading: &str, append: &str) {
+pub(super) fn append_system_prompt_to_provider(provider: &mut Value, heading: &str, append: &str) {
     let append = append.trim();
     if append.is_empty() {
         return;
@@ -1191,7 +1193,7 @@ fn append_system_prompt_to_provider(provider: &mut Value, heading: &str, append:
     provider["systemPrompt"] = json!(system);
 }
 
-fn openai_provider_json(config: &OpenAiCompatibleConfig) -> Value {
+pub(super) fn openai_provider_json(config: &OpenAiCompatibleConfig) -> Value {
     let kind = match config.flavor {
         DirectProviderFlavor::OpenAiCompatible => "openai-compatible",
         DirectProviderFlavor::OpenAiCodex => "openai-codex",
@@ -1223,7 +1225,7 @@ fn openai_provider_json(config: &OpenAiCompatibleConfig) -> Value {
     value
 }
 
-fn parse_args(args: Vec<String>) -> Result<ShellCommand, String> {
+pub(super) fn parse_args(args: Vec<String>) -> Result<ShellCommand, String> {
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
         print_help();
         std::process::exit(0);
@@ -1523,7 +1525,7 @@ fn default_ratatui_enabled() -> bool {
     true
 }
 
-fn default_model_from_env() -> Option<String> {
+pub(super) fn default_model_from_env() -> Option<String> {
     [
         "OPPI_RUNTIME_WORKER_MODEL",
         "OPPI_OPENAI_MODEL",
@@ -1546,4 +1548,3 @@ fn print_help() {
          Experimental native shell for oppi-server --stdio. In an interactive terminal it opens the Ratatui Rust UI by default: structured layout bands, semantic transcript rows, dock trays, editor, slash palette, settings overlay, and adaptive narrow/tiny breakpoints. Use --no-ratatui for the retained ANSI fallback and --no-tui/--line for plain line mode. Provider/model commands include /login, /provider, /models, /model, /roles, and explicit /provider smoke. Real provider mode uses OpenAI-compatible API env refs or native ChatGPT/Codex OAuth; /login anthropic uses an explicit managed Meridian loopback bridge."
     );
 }
-
