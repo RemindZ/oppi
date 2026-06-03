@@ -1,5 +1,7 @@
+use super::*;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum LoginPicker {
+pub(super) enum LoginPicker {
     Root,
     Subscription,
     Api,
@@ -8,41 +10,41 @@ enum LoginPicker {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct SlashCommandSpec {
-    command: &'static str,
-    usage: &'static str,
-    description: &'static str,
-    aliases: &'static [&'static str],
+pub(super) struct SlashCommandSpec {
+    pub(super) command: &'static str,
+    pub(super) usage: &'static str,
+    pub(super) description: &'static str,
+    pub(super) aliases: &'static [&'static str],
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum SlashPaletteMode {
+pub(super) enum SlashPaletteMode {
     Commands,
     Arguments,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct SlashPaletteItem {
-    label: String,
-    insert: String,
-    detail: String,
+pub(super) struct SlashPaletteItem {
+    pub(super) label: String,
+    pub(super) insert: String,
+    pub(super) detail: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum SlashPaletteAccept {
+pub(super) enum SlashPaletteAccept {
     Insert(String),
     Submit(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum GoalBudgetRoute {
+pub(super) enum GoalBudgetRoute {
     Unchanged,
     Set(i64),
     Clear,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum GoalCommandRoute {
+pub(super) enum GoalCommandRoute {
     Get,
     Clear,
     Set {
@@ -54,46 +56,46 @@ enum GoalCommandRoute {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum FollowUpCommandRoute {
+pub(super) enum FollowUpCommandRoute {
     Status,
     SetMode(FollowUpMode),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum SteerCommandRoute {
+pub(super) enum SteerCommandRoute {
     Status,
     SetMode(SteeringMode),
     Send(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum StartupCommandRoute {
+pub(super) enum StartupCommandRoute {
     Status,
     SetQuietStartup(bool),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum CursorCommandRoute {
+pub(super) enum CursorCommandRoute {
     Status,
     SetHardwareCursor(bool),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum TerminalCommandRoute {
+pub(super) enum TerminalCommandRoute {
     Status,
     SetProgress(bool),
     SetClearOnShrink(bool),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum EditorCommandRoute {
+pub(super) enum EditorCommandRoute {
     Status,
     SetPaddingX(usize),
     SetDoubleEscapeAction(DoubleEscapeAction),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum TreeCommandRoute {
+pub(super) enum TreeCommandRoute {
     Show,
     Entries {
         after: u64,
@@ -124,26 +126,26 @@ enum TreeCommandRoute {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum SkillsCommandRoute {
+pub(super) enum SkillsCommandRoute {
     List,
     Status,
     SetCommands(bool),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum AutocompleteCommandRoute {
+pub(super) enum AutocompleteCommandRoute {
     Status,
     SetMaxVisible(usize),
 }
 
-const DEFAULT_AUTOCOMPLETE_MAX_VISIBLE: usize = 5;
-const MIN_AUTOCOMPLETE_MAX_VISIBLE: usize = 3;
-const MAX_AUTOCOMPLETE_MAX_VISIBLE: usize = 20;
-const AUTOCOMPLETE_VISIBLE_CYCLE_VALUES: [usize; 6] = [3, 5, 7, 10, 15, 20];
-const DEFAULT_EDITOR_PADDING_X: usize = 0;
-const EDITOR_PADDING_X_VALUES: [usize; 4] = [0, 1, 2, 3];
-const DOUBLE_ESCAPE_WINDOW: Duration = Duration::from_millis(500);
-const TREE_FILTER_MODES: [TreeFilterMode; 5] = [
+pub(super) const DEFAULT_AUTOCOMPLETE_MAX_VISIBLE: usize = 5;
+pub(super) const MIN_AUTOCOMPLETE_MAX_VISIBLE: usize = 3;
+pub(super) const MAX_AUTOCOMPLETE_MAX_VISIBLE: usize = 20;
+pub(super) const AUTOCOMPLETE_VISIBLE_CYCLE_VALUES: [usize; 6] = [3, 5, 7, 10, 15, 20];
+pub(super) const DEFAULT_EDITOR_PADDING_X: usize = 0;
+pub(super) const EDITOR_PADDING_X_VALUES: [usize; 4] = [0, 1, 2, 3];
+pub(super) const DOUBLE_ESCAPE_WINDOW: Duration = Duration::from_millis(500);
+pub(super) const TREE_FILTER_MODES: [TreeFilterMode; 5] = [
     TreeFilterMode::Default,
     TreeFilterMode::NoTools,
     TreeFilterMode::UserOnly,
@@ -152,14 +154,14 @@ const TREE_FILTER_MODES: [TreeFilterMode; 5] = [
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum DoubleEscapeAction {
+pub(super) enum DoubleEscapeAction {
     Tree,
     Fork,
     None,
 }
 
 impl DoubleEscapeAction {
-    fn as_str(self) -> &'static str {
+    pub(super) fn as_str(self) -> &'static str {
         match self {
             Self::Tree => "tree",
             Self::Fork => "fork",
@@ -169,7 +171,7 @@ impl DoubleEscapeAction {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum TreeFilterMode {
+pub(super) enum TreeFilterMode {
     Default,
     NoTools,
     UserOnly,
@@ -178,7 +180,7 @@ enum TreeFilterMode {
 }
 
 impl TreeFilterMode {
-    fn as_str(self) -> &'static str {
+    pub(super) fn as_str(self) -> &'static str {
         match self {
             Self::Default => "default",
             Self::NoTools => "no-tools",
@@ -190,13 +192,13 @@ impl TreeFilterMode {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct SlashPalette {
-    mode: SlashPaletteMode,
-    query: String,
-    title: String,
-    hint: String,
-    items: Vec<SlashPaletteItem>,
-    selected: usize,
+pub(super) struct SlashPalette {
+    pub(super) mode: SlashPaletteMode,
+    pub(super) query: String,
+    pub(super) title: String,
+    pub(super) hint: String,
+    pub(super) items: Vec<SlashPaletteItem>,
+    pub(super) selected: usize,
 }
 
 const SLASH_COMMAND_SPECS: &[SlashCommandSpec] = &[
@@ -571,7 +573,7 @@ fn parse_slash_buffer(buffer: &str) -> Option<ParsedSlashBuffer<'_>> {
     }
 }
 
-fn find_slash_command_spec(command: &str) -> Option<&'static SlashCommandSpec> {
+pub(super) fn find_slash_command_spec(command: &str) -> Option<&'static SlashCommandSpec> {
     let command = command.trim();
     SLASH_COMMAND_SPECS.iter().find(|spec| {
         spec.command.eq_ignore_ascii_case(command)
@@ -582,7 +584,10 @@ fn find_slash_command_spec(command: &str) -> Option<&'static SlashCommandSpec> {
     })
 }
 
-fn effective_project_roots(settings: &PermissionSandboxSettings, cwd: &str) -> Vec<String> {
+pub(super) fn effective_project_roots(
+    settings: &PermissionSandboxSettings,
+    cwd: &str,
+) -> Vec<String> {
     let project_roots = normalize_string_slice(&settings.project_roots);
     if project_roots.is_empty() {
         vec![cwd.to_string()]
@@ -591,7 +596,7 @@ fn effective_project_roots(settings: &PermissionSandboxSettings, cwd: &str) -> V
     }
 }
 
-fn effective_readable_roots(
+pub(super) fn effective_readable_roots(
     settings: &PermissionSandboxSettings,
     project_roots: &[String],
 ) -> Vec<String> {
@@ -603,7 +608,7 @@ fn effective_readable_roots(
     }
 }
 
-fn effective_writable_roots(
+pub(super) fn effective_writable_roots(
     settings: &PermissionSandboxSettings,
     project_roots: &[String],
 ) -> Vec<String> {
@@ -616,7 +621,7 @@ fn effective_writable_roots(
 }
 
 #[cfg(test)]
-fn sandbox_policy_json_with_protected_patterns(
+pub(super) fn sandbox_policy_json_with_protected_patterns(
     mode: PermissionMode,
     cwd: &str,
     protected_patterns: &[String],
@@ -695,7 +700,7 @@ fn command_spec_match_score(spec: &SlashCommandSpec, query: &str) -> Option<u8> 
     None
 }
 
-fn visible_slash_command_specs() -> Vec<&'static SlashCommandSpec> {
+pub(super) fn visible_slash_command_specs() -> Vec<&'static SlashCommandSpec> {
     SLASH_COMMAND_SPECS
         .iter()
         .filter(|spec| slash_command_visible_in_palette(spec.command))
@@ -796,7 +801,7 @@ fn slash_command_palette_items_with_skills(
     items
 }
 
-fn skill_slash_command_items(
+pub(super) fn skill_slash_command_items(
     skills: &[ResolvedSkill],
     enable_skill_commands: bool,
     query: &str,
@@ -856,7 +861,7 @@ fn skill_slash_command_items(
         .collect()
 }
 
-fn skill_source_label(source: SkillSource) -> &'static str {
+pub(super) fn skill_source_label(source: SkillSource) -> &'static str {
     match source {
         SkillSource::BuiltIn => "built-in",
         SkillSource::User => "user",
@@ -1371,7 +1376,7 @@ fn settings_section_alias(section: &str) -> Option<&'static str> {
     }
 }
 
-fn format_settings_command_panel(args: &str) -> Result<String, String> {
+pub(super) fn format_settings_command_panel(args: &str) -> Result<String, String> {
     let trimmed = args.trim();
     if trimmed.is_empty()
         || matches!(
@@ -1508,7 +1513,7 @@ fn format_settings_info_entries(entries: &[&SettingsInfoEntry]) -> String {
         .join("\n")
 }
 
-fn slash_arg_suggestions(command: &str, args: &str) -> Vec<SlashPaletteItem> {
+pub(super) fn slash_arg_suggestions(command: &str, args: &str) -> Vec<SlashPaletteItem> {
     let mut items = match command {
         "/settings" | "/prefs" | "/preferences" | "/settings:oppi" | "/oppi-settings" => vec![
             arg_item(
@@ -2612,7 +2617,10 @@ fn slash_arg_suggestions(command: &str, args: &str) -> Vec<SlashPaletteItem> {
     items
 }
 
-fn effort_arg_suggestions(provider: &ProviderConfig, args: &str) -> Vec<SlashPaletteItem> {
+pub(super) fn effort_arg_suggestions(
+    provider: &ProviderConfig,
+    args: &str,
+) -> Vec<SlashPaletteItem> {
     let recommended = recommended_effort_level_for_provider(provider);
     let current = current_effort_level_for_provider(provider);
     let mut items = vec![arg_item(
@@ -2653,11 +2661,11 @@ fn effort_arg_suggestions(provider: &ProviderConfig, args: &str) -> Vec<SlashPal
     items
 }
 
-fn slash_palette_for_buffer(buffer: &str, selected: usize) -> Option<SlashPalette> {
+pub(super) fn slash_palette_for_buffer(buffer: &str, selected: usize) -> Option<SlashPalette> {
     slash_palette_for_buffer_with_skills(buffer, selected, &[], false)
 }
 
-fn slash_palette_for_buffer_with_skills(
+pub(super) fn slash_palette_for_buffer_with_skills(
     buffer: &str,
     selected: usize,
     skills: &[ResolvedSkill],
@@ -2730,7 +2738,7 @@ fn slash_palette_for_buffer_with_skills(
 }
 
 #[cfg(test)]
-fn slash_palette_accept(
+pub(super) fn slash_palette_accept(
     buffer: &str,
     selected: usize,
     navigated: bool,
@@ -2740,7 +2748,7 @@ fn slash_palette_accept(
     slash_palette_accept_from_palette(buffer, &palette, navigated, submit_allowed)
 }
 
-fn slash_palette_accept_from_palette(
+pub(super) fn slash_palette_accept_from_palette(
     buffer: &str,
     palette: &SlashPalette,
     navigated: bool,
@@ -2772,7 +2780,7 @@ fn slash_palette_accept_from_palette(
     }
 }
 
-fn slash_palette_for_buffer_with_session(
+pub(super) fn slash_palette_for_buffer_with_session(
     buffer: &str,
     selected: usize,
     session: &ShellSession,
@@ -2892,7 +2900,7 @@ fn slash_palette_item_can_submit(item: &SlashPaletteItem) -> bool {
         && !item.label.starts_with('[')
 }
 
-fn slash_command_help_text() -> String {
+pub(super) fn slash_command_help_text() -> String {
     let mut lines = vec![
         "slash commands:".to_string(),
         "TUI: type `/` for the OPPi command palette; five rows show at a time; ↑↓/PgUp/PgDn selects; Tab completes; Enter chooses/runs when complete. Type after a command to see argument hints.".to_string(),
@@ -2910,4 +2918,3 @@ fn slash_command_help_text() -> String {
     }
     lines.join("\n")
 }
-

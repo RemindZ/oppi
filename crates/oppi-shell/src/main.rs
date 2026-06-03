@@ -20,6 +20,8 @@ mod provider_ui;
 mod ratatui_ui;
 #[path = "shell_parts/rendering.rs"]
 mod rendering;
+#[path = "shell_parts/slash_palette.rs"]
+mod slash_palette;
 mod tui;
 
 use crossterm::event::{self, Event as CrosstermEvent, KeyCode, KeyEventKind, KeyModifiers};
@@ -33,6 +35,7 @@ use interactive::{
 use provider_ui::*;
 use rendering::*;
 use serde_json::{Value, json};
+use slash_palette::*;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::env;
 use std::fs;
@@ -335,7 +338,6 @@ const ROLE_NAMES: [&str; 6] = [
     "subagent",
 ];
 
-include!("shell_parts/slash_palette.rs");
 fn main() {
     if let Err(error) = run(env::args().skip(1).collect()) {
         eprintln!("oppi-shell: {error}");
