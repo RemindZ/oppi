@@ -1,11 +1,13 @@
-fn default_runtime_store_dir() -> PathBuf {
+use super::*;
+
+pub(super) fn default_runtime_store_dir() -> PathBuf {
     env::current_dir()
         .unwrap_or_else(|_| PathBuf::from("."))
         .join(".oppi")
         .join("runtime-store")
 }
 
-fn home_dir() -> Option<PathBuf> {
+pub(super) fn home_dir() -> Option<PathBuf> {
     env::var_os("USERPROFILE")
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)
@@ -16,7 +18,7 @@ fn home_dir() -> Option<PathBuf> {
         })
 }
 
-fn default_agent_dir() -> PathBuf {
+pub(super) fn default_agent_dir() -> PathBuf {
     env::var_os("OPPI_AGENT_DIR")
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)
@@ -33,14 +35,14 @@ fn default_agent_dir() -> PathBuf {
         })
 }
 
-fn auth_store_path() -> PathBuf {
+pub(super) fn auth_store_path() -> PathBuf {
     env::var_os("OPPI_OPENAI_CODEX_AUTH_PATH")
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)
         .unwrap_or_else(|| default_agent_dir().join("auth.json"))
 }
 
-fn auth_lock_path(path: &Path) -> PathBuf {
+pub(super) fn auth_lock_path(path: &Path) -> PathBuf {
     let mut lock_path = path.as_os_str().to_os_string();
     lock_path.push(".lock");
     PathBuf::from(lock_path)
@@ -112,14 +114,14 @@ fn remove_auth_lock_path(path: &Path) -> std::io::Result<()> {
     })
 }
 
-fn role_profile_settings_path() -> PathBuf {
+pub(super) fn role_profile_settings_path() -> PathBuf {
     env::var_os("OPPI_ROLE_PROFILES_PATH")
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)
         .unwrap_or_else(|| default_agent_dir().join("settings.json"))
 }
 
-fn read_json_or_empty(path: &Path) -> Result<Value, String> {
+pub(super) fn read_json_or_empty(path: &Path) -> Result<Value, String> {
     match fs::read_to_string(path) {
         Ok(raw) => serde_json::from_str(&raw)
             .map_err(|error| format!("read {}: invalid JSON: {error}", path.display())),
@@ -208,7 +210,7 @@ fn codex_token_form(params: &[(&str, &str)]) -> String {
         .join("&")
 }
 
-fn codex_auth_present_at(path: &Path) -> bool {
+pub(super) fn codex_auth_present_at(path: &Path) -> bool {
     read_json_or_empty(path).ok().is_some_and(|data| {
         let Some(credential) = data.get(OPENAI_CODEX_PROVIDER_ID) else {
             return false;
@@ -334,7 +336,9 @@ fn read_or_refresh_codex_usage_auth(agent: &ureq::Agent) -> Result<CodexUsageAut
     read_codex_usage_auth_at(&path)
 }
 
-fn codex_usage_provider_config(provider: &ProviderConfig) -> Option<&OpenAiCompatibleConfig> {
+pub(super) fn codex_usage_provider_config(
+    provider: &ProviderConfig,
+) -> Option<&OpenAiCompatibleConfig> {
     match provider {
         ProviderConfig::OpenAiCompatible(config)
             if config.flavor == DirectProviderFlavor::OpenAiCodex =>
@@ -356,7 +360,7 @@ fn normalize_codex_usage_base_url(config: &OpenAiCompatibleConfig) -> String {
         .to_string()
 }
 
-fn fetch_openai_codex_live_usage(
+pub(super) fn fetch_openai_codex_live_usage(
     config: &OpenAiCompatibleConfig,
 ) -> Result<NativeLiveUsage, String> {
     let agent = ureq::AgentBuilder::new()
@@ -521,7 +525,7 @@ fn normalize_usage_search(value: &str) -> String {
         .collect()
 }
 
-fn compact_usage_error(raw: &str) -> String {
+pub(super) fn compact_usage_error(raw: &str) -> String {
     let compact = raw
         .replace(['\r', '\n', '\t'], " ")
         .split_whitespace()
@@ -535,30 +539,30 @@ fn compact_usage_error(raw: &str) -> String {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct GitHubCopilotStoredAuth {
-    access_token: String,
-    refresh_token: String,
-    expires: i64,
-    enterprise_domain: Option<String>,
+pub(super) struct GitHubCopilotStoredAuth {
+    pub(super) access_token: String,
+    pub(super) refresh_token: String,
+    pub(super) expires: i64,
+    pub(super) enterprise_domain: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct GitHubCopilotDeviceFlow {
-    device_code: String,
-    user_code: String,
-    verification_uri: String,
-    interval_seconds: u64,
-    expires_in_seconds: u64,
+pub(super) struct GitHubCopilotDeviceFlow {
+    pub(super) device_code: String,
+    pub(super) user_code: String,
+    pub(super) verification_uri: String,
+    pub(super) interval_seconds: u64,
+    pub(super) expires_in_seconds: u64,
 }
 
-fn github_copilot_auth_store_path() -> PathBuf {
+pub(super) fn github_copilot_auth_store_path() -> PathBuf {
     env::var_os("OPPI_GITHUB_COPILOT_AUTH_PATH")
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)
         .unwrap_or_else(auth_store_path)
 }
 
-fn read_github_copilot_auth_at(path: &Path) -> Result<GitHubCopilotStoredAuth, String> {
+pub(super) fn read_github_copilot_auth_at(path: &Path) -> Result<GitHubCopilotStoredAuth, String> {
     let data = read_json_or_empty(path)?;
     let credential = data.get(GITHUB_COPILOT_PROVIDER_ID).ok_or_else(|| {
         format!(
@@ -599,7 +603,7 @@ fn read_github_copilot_auth_at(path: &Path) -> Result<GitHubCopilotStoredAuth, S
     })
 }
 
-fn github_copilot_auth_present_at(path: &Path) -> bool {
+pub(super) fn github_copilot_auth_present_at(path: &Path) -> bool {
     read_github_copilot_auth_at(path).is_ok()
 }
 
@@ -614,7 +618,7 @@ fn github_copilot_base_url_from_token(token: &str) -> Option<String> {
     })
 }
 
-fn github_copilot_base_url(auth: &GitHubCopilotStoredAuth) -> String {
+pub(super) fn github_copilot_base_url(auth: &GitHubCopilotStoredAuth) -> String {
     github_copilot_base_url_from_token(&auth.access_token)
         .or_else(|| {
             auth.enterprise_domain
@@ -624,7 +628,7 @@ fn github_copilot_base_url(auth: &GitHubCopilotStoredAuth) -> String {
         .unwrap_or_else(|| GITHUB_COPILOT_DEFAULT_BASE_URL.to_string())
 }
 
-fn normalize_github_enterprise_domain(input: &str) -> Option<String> {
+pub(super) fn normalize_github_enterprise_domain(input: &str) -> Option<String> {
     let trimmed = input.trim();
     if trimmed.is_empty() {
         return None;
@@ -649,7 +653,9 @@ fn normalize_github_enterprise_domain(input: &str) -> Option<String> {
     Some(host.to_ascii_lowercase())
 }
 
-fn github_copilot_enterprise_domain_from_flags(flags: &[&str]) -> Result<Option<String>, String> {
+pub(super) fn github_copilot_enterprise_domain_from_flags(
+    flags: &[&str],
+) -> Result<Option<String>, String> {
     let mut index = 0;
     while index < flags.len() {
         let flag = flags[index].trim();
@@ -682,7 +688,9 @@ fn github_copilot_urls(domain: &str) -> (String, String, String) {
     )
 }
 
-fn start_github_copilot_device_flow(domain: &str) -> Result<GitHubCopilotDeviceFlow, String> {
+pub(super) fn start_github_copilot_device_flow(
+    domain: &str,
+) -> Result<GitHubCopilotDeviceFlow, String> {
     let (device_url, _, _) = github_copilot_urls(domain);
     let body = codex_token_form(&[
         ("client_id", GITHUB_COPILOT_CLIENT_ID),
@@ -729,7 +737,7 @@ fn start_github_copilot_device_flow(domain: &str) -> Result<GitHubCopilotDeviceF
     })
 }
 
-fn poll_github_copilot_device_flow(
+pub(super) fn poll_github_copilot_device_flow(
     domain: &str,
     device: &GitHubCopilotDeviceFlow,
 ) -> Result<String, String> {
@@ -806,7 +814,7 @@ fn poll_github_copilot_device_flow(
     }
 }
 
-fn refresh_github_copilot_token(
+pub(super) fn refresh_github_copilot_token(
     github_access_token: &str,
     enterprise_domain: Option<&str>,
 ) -> Result<Value, String> {
@@ -825,7 +833,7 @@ fn refresh_github_copilot_token(
         .map_err(|error| format!("GitHub Copilot token refresh returned invalid JSON: {error}"))
 }
 
-fn persist_github_copilot_oauth(
+pub(super) fn persist_github_copilot_oauth(
     path: &Path,
     github_access_token: &str,
     enterprise_domain: Option<&str>,
@@ -869,7 +877,7 @@ fn oauth_random_bytes<const N: usize>() -> Result<[u8; N], String> {
     Ok(bytes)
 }
 
-fn create_codex_oauth_flow() -> Result<(String, String, String), String> {
+pub(super) fn create_codex_oauth_flow() -> Result<(String, String, String), String> {
     let verifier = URL_SAFE_NO_PAD.encode(oauth_random_bytes::<32>()?);
     let digest = ring::digest::digest(&ring::digest::SHA256, verifier.as_bytes());
     let challenge = URL_SAFE_NO_PAD.encode(digest.as_ref());
@@ -901,7 +909,7 @@ fn create_codex_oauth_flow() -> Result<(String, String, String), String> {
     ))
 }
 
-fn open_browser(url: &str) -> Result<(), String> {
+pub(super) fn open_browser(url: &str) -> Result<(), String> {
     let mut command = if cfg!(windows) {
         let mut command = Command::new("cmd");
         command.args(["/C", "start", "", url]);
@@ -956,13 +964,13 @@ fn write_oauth_http_response(stream: &mut TcpStream, status: &str, message: &str
     let _ = stream.flush();
 }
 
-struct CodexOAuthListener {
-    listener: TcpListener,
-    host: String,
+pub(super) struct CodexOAuthListener {
+    pub(super) listener: TcpListener,
+    pub(super) host: String,
 }
 
 impl CodexOAuthListener {
-    fn bind() -> Result<Self, String> {
+    pub(super) fn bind() -> Result<Self, String> {
         let host = env::var("PI_OAUTH_CALLBACK_HOST")
             .ok()
             .filter(|value| !value.trim().is_empty())
@@ -975,7 +983,7 @@ impl CodexOAuthListener {
         Ok(Self { listener, host })
     }
 
-    fn wait_for_code(&self, state: &str, timeout: Duration) -> Result<String, String> {
+    pub(super) fn wait_for_code(&self, state: &str, timeout: Duration) -> Result<String, String> {
         let started = Instant::now();
         while started.elapsed() < timeout {
             match self.listener.accept() {
@@ -1053,7 +1061,7 @@ fn codex_account_id(access_token: &str) -> Result<String, String> {
         .ok_or_else(|| "OAuth access token did not include a ChatGPT account id".to_string())
 }
 
-fn exchange_codex_oauth_code(code: &str, verifier: &str) -> Result<Value, String> {
+pub(super) fn exchange_codex_oauth_code(code: &str, verifier: &str) -> Result<Value, String> {
     let body = [
         ("grant_type", "authorization_code"),
         ("client_id", OPENAI_CODEX_CLIENT_ID),
@@ -1079,7 +1087,7 @@ fn exchange_codex_oauth_code(code: &str, verifier: &str) -> Result<Value, String
         .map_err(|error| format!("Codex OAuth token exchange returned invalid JSON: {error}"))
 }
 
-fn persist_codex_oauth(path: &Path, token: Value) -> Result<(), String> {
+pub(super) fn persist_codex_oauth(path: &Path, token: Value) -> Result<(), String> {
     let access = token
         .get("access_token")
         .and_then(Value::as_str)
@@ -1126,7 +1134,7 @@ fn read_settings_json(path: &Path) -> Result<Value, String> {
     }
 }
 
-fn load_role_profiles(path: &Path) -> BTreeMap<String, String> {
+pub(super) fn load_role_profiles(path: &Path) -> BTreeMap<String, String> {
     let Ok(data) = read_settings_json(path) else {
         return BTreeMap::new();
     };
@@ -1146,7 +1154,10 @@ fn load_role_profiles(path: &Path) -> BTreeMap<String, String> {
         .collect()
 }
 
-fn save_role_profiles(path: &Path, role_models: &BTreeMap<String, String>) -> Result<(), String> {
+pub(super) fn save_role_profiles(
+    path: &Path,
+    role_models: &BTreeMap<String, String>,
+) -> Result<(), String> {
     let mut data = read_settings_json(path)?;
     if !data.is_object() {
         data = json!({});
@@ -1158,7 +1169,7 @@ fn save_role_profiles(path: &Path, role_models: &BTreeMap<String, String>) -> Re
     write_settings_json(path, &data)
 }
 
-fn load_permission_mode_setting(path: &Path) -> (PermissionMode, String) {
+pub(super) fn load_permission_mode_setting(path: &Path) -> (PermissionMode, String) {
     if let Some(mode) = permission_mode_from_env() {
         return (mode, "env:OPPI_RUNTIME_WORKER_PERMISSION_MODE".to_string());
     }
@@ -1173,7 +1184,10 @@ fn load_permission_mode_setting(path: &Path) -> (PermissionMode, String) {
     (PermissionMode::AutoReview, "default".to_string())
 }
 
-fn save_permission_mode_setting(path: &Path, mode: PermissionMode) -> Result<(), String> {
+pub(super) fn save_permission_mode_setting(
+    path: &Path,
+    mode: PermissionMode,
+) -> Result<(), String> {
     let mut data = read_settings_json(path)?;
     if !data.is_object() {
         data = json!({});
@@ -1185,7 +1199,7 @@ fn save_permission_mode_setting(path: &Path, mode: PermissionMode) -> Result<(),
     write_settings_json(path, &data)
 }
 
-fn load_permission_review_settings(path: &Path) -> GuardianReviewSettings {
+pub(super) fn load_permission_review_settings(path: &Path) -> GuardianReviewSettings {
     let default = GuardianReviewSettings {
         timeout_ms: DEFAULT_PERMISSION_REVIEW_TIMEOUT_MS,
         reviewer_model: None,
@@ -1217,7 +1231,7 @@ fn load_permission_review_settings(path: &Path) -> GuardianReviewSettings {
     }
 }
 
-fn save_permission_review_settings(
+pub(super) fn save_permission_review_settings(
     path: &Path,
     settings: &GuardianReviewSettings,
 ) -> Result<(), String> {
@@ -1240,7 +1254,7 @@ fn save_permission_review_settings(
     write_settings_json(path, &data)
 }
 
-fn load_permission_sandbox_settings(path: &Path) -> PermissionSandboxSettings {
+pub(super) fn load_permission_sandbox_settings(path: &Path) -> PermissionSandboxSettings {
     let Ok(data) = read_settings_json(path) else {
         return PermissionSandboxSettings::default();
     };
@@ -1297,7 +1311,7 @@ fn load_permission_sandbox_settings(path: &Path) -> PermissionSandboxSettings {
     }
 }
 
-fn save_permission_sandbox_settings(
+pub(super) fn save_permission_sandbox_settings(
     path: &Path,
     settings: &PermissionSandboxSettings,
 ) -> Result<(), String> {
@@ -1333,7 +1347,7 @@ fn save_permission_sandbox_settings(
     write_settings_json(path, &data)
 }
 
-fn load_oppi_compact_settings(path: &Path) -> OppiCompactSettings {
+pub(super) fn load_oppi_compact_settings(path: &Path) -> OppiCompactSettings {
     let default = OppiCompactSettings::default();
     let Ok(data) = read_settings_json(path) else {
         return default;
@@ -1366,7 +1380,10 @@ fn load_oppi_compact_settings(path: &Path) -> OppiCompactSettings {
     }
 }
 
-fn save_oppi_compact_settings(path: &Path, settings: &OppiCompactSettings) -> Result<(), String> {
+pub(super) fn save_oppi_compact_settings(
+    path: &Path,
+    settings: &OppiCompactSettings,
+) -> Result<(), String> {
     let mut data = read_settings_json(path)?;
     if !data.is_object() {
         data = json!({});
@@ -1385,7 +1402,7 @@ fn save_oppi_compact_settings(path: &Path, settings: &OppiCompactSettings) -> Re
     write_settings_json(path, &data)
 }
 
-fn oppi_compact_settings_json(settings: &OppiCompactSettings) -> Value {
+pub(super) fn oppi_compact_settings_json(settings: &OppiCompactSettings) -> Value {
     json!({
         "idleCompact": {
             "enabled": settings.idle_enabled,
@@ -1398,30 +1415,30 @@ fn oppi_compact_settings_json(settings: &OppiCompactSettings) -> Value {
     })
 }
 
-fn compaction_enabled_label(enabled: bool) -> &'static str {
+pub(super) fn compaction_enabled_label(enabled: bool) -> &'static str {
     if enabled { "enabled" } else { "disabled" }
 }
 
-fn compaction_toggle_arg(enabled: bool) -> &'static str {
+pub(super) fn compaction_toggle_arg(enabled: bool) -> &'static str {
     if enabled { "off" } else { "on" }
 }
 
-fn format_compaction_minutes_label(minutes: u64) -> String {
+pub(super) fn format_compaction_minutes_label(minutes: u64) -> String {
     format!("{minutes}m")
 }
 
-fn format_compaction_threshold_label(percent: u64) -> String {
+pub(super) fn format_compaction_threshold_label(percent: u64) -> String {
     format!("{percent}%")
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct CompactionTriggerTelemetry {
-    context_tokens: Option<i64>,
-    context_window: Option<u64>,
-    context_percent: Option<u64>,
-    idle_state: String,
-    smart_state: String,
-    active_todos: usize,
+pub(super) struct CompactionTriggerTelemetry {
+    pub(super) context_tokens: Option<i64>,
+    pub(super) context_window: Option<u64>,
+    pub(super) context_percent: Option<u64>,
+    pub(super) idle_state: String,
+    pub(super) smart_state: String,
+    pub(super) active_todos: usize,
 }
 
 fn compaction_context_percent(
@@ -1448,7 +1465,7 @@ fn compaction_context_meets_threshold(
         >= (threshold_percent as u128).saturating_mul(window as u128)
 }
 
-fn compaction_trigger_telemetry(
+pub(super) fn compaction_trigger_telemetry(
     settings: &OppiCompactSettings,
     context_tokens: Option<i64>,
     context_window: Option<u64>,
@@ -1529,7 +1546,9 @@ fn format_compaction_context_label(telemetry: &CompactionTriggerTelemetry) -> St
     }
 }
 
-fn format_compaction_trigger_telemetry(telemetry: &CompactionTriggerTelemetry) -> String {
+pub(super) fn format_compaction_trigger_telemetry(
+    telemetry: &CompactionTriggerTelemetry,
+) -> String {
     format!(
         "trigger: {}; {}; {}",
         format_compaction_context_label(telemetry),
@@ -1548,7 +1567,7 @@ fn compaction_trigger_state_kind(state: &str) -> &'static str {
     }
 }
 
-fn compaction_trigger_telemetry_json(telemetry: &CompactionTriggerTelemetry) -> Value {
+pub(super) fn compaction_trigger_telemetry_json(telemetry: &CompactionTriggerTelemetry) -> Value {
     json!({
         "contextTokens": telemetry.context_tokens,
         "contextWindow": telemetry.context_window,
@@ -1566,16 +1585,16 @@ fn compaction_trigger_telemetry_json(telemetry: &CompactionTriggerTelemetry) -> 
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum CompactionOfferKind {
+pub(super) enum CompactionOfferKind {
     Smart,
     Idle,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct CompactionOffer {
-    kind: CompactionOfferKind,
-    key: String,
-    message: String,
+pub(super) struct CompactionOffer {
+    pub(super) kind: CompactionOfferKind,
+    pub(super) key: String,
+    pub(super) message: String,
 }
 
 fn compaction_offer_key(
@@ -1599,7 +1618,7 @@ fn compaction_offer_key(
     )
 }
 
-fn compaction_offer_plan(
+pub(super) fn compaction_offer_plan(
     settings: &OppiCompactSettings,
     telemetry: &CompactionTriggerTelemetry,
     idle_elapsed: Option<Duration>,
@@ -1645,7 +1664,7 @@ fn compaction_offer_plan(
     None
 }
 
-fn format_oppi_compact_settings_status(
+pub(super) fn format_oppi_compact_settings_status(
     settings: &OppiCompactSettings,
     telemetry: Option<&CompactionTriggerTelemetry>,
 ) -> String {
@@ -1663,7 +1682,7 @@ fn format_oppi_compact_settings_status(
     status
 }
 
-fn load_footer_settings(path: &Path) -> FooterSettings {
+pub(super) fn load_footer_settings(path: &Path) -> FooterSettings {
     let default = FooterSettings::default();
     let Ok(data) = read_settings_json(path) else {
         return default;
@@ -1694,7 +1713,7 @@ fn footer_bool_setting(value: Option<&Value>, default: bool) -> bool {
     value.and_then(Value::as_bool).unwrap_or(default)
 }
 
-fn save_footer_settings(path: &Path, settings: &FooterSettings) -> Result<(), String> {
+pub(super) fn save_footer_settings(path: &Path, settings: &FooterSettings) -> Result<(), String> {
     let mut data = read_settings_json(path)?;
     if !data.is_object() {
         data = json!({});
@@ -1715,7 +1734,7 @@ fn save_footer_settings(path: &Path, settings: &FooterSettings) -> Result<(), St
     write_settings_json(path, &data)
 }
 
-fn footer_settings_json(settings: &FooterSettings) -> Value {
+pub(super) fn footer_settings_json(settings: &FooterSettings) -> Value {
     json!({
         "showPath": settings.show_path,
         "showHelpBar": settings.show_help_bar,
@@ -1727,15 +1746,15 @@ fn footer_settings_json(settings: &FooterSettings) -> Value {
     })
 }
 
-fn footer_visibility_label(shown: bool) -> &'static str {
+pub(super) fn footer_visibility_label(shown: bool) -> &'static str {
     if shown { "shown" } else { "hidden" }
 }
 
-fn footer_toggle_arg(shown: bool) -> &'static str {
+pub(super) fn footer_toggle_arg(shown: bool) -> &'static str {
     if shown { "off" } else { "on" }
 }
 
-fn format_footer_settings_status(settings: &FooterSettings) -> String {
+pub(super) fn format_footer_settings_status(settings: &FooterSettings) -> String {
     format!(
         "footer: path {}; help {}; usage {}; model {}; permission {}; memory {}; context {}",
         footer_visibility_label(settings.show_path),
@@ -1748,7 +1767,7 @@ fn format_footer_settings_status(settings: &FooterSettings) -> String {
     )
 }
 
-fn load_image_settings(path: &Path) -> ImageSettings {
+pub(super) fn load_image_settings(path: &Path) -> ImageSettings {
     let default = ImageSettings::default();
     let Ok(data) = read_settings_json(path) else {
         return default;
@@ -1783,7 +1802,7 @@ fn load_image_settings(path: &Path) -> ImageSettings {
     }
 }
 
-fn save_image_settings(path: &Path, settings: &ImageSettings) -> Result<(), String> {
+pub(super) fn save_image_settings(path: &Path, settings: &ImageSettings) -> Result<(), String> {
     let mut data = read_settings_json(path)?;
     if !data.is_object() {
         data = json!({});
@@ -1802,7 +1821,7 @@ fn save_image_settings(path: &Path, settings: &ImageSettings) -> Result<(), Stri
     write_settings_json(path, &data)
 }
 
-fn image_settings_json(settings: &ImageSettings) -> Value {
+pub(super) fn image_settings_json(settings: &ImageSettings) -> Value {
     json!({
         "showImages": settings.show_images,
         "imageWidthCells": settings.image_width_cells,
@@ -1812,31 +1831,31 @@ fn image_settings_json(settings: &ImageSettings) -> Value {
     })
 }
 
-fn image_visibility_label(shown: bool) -> &'static str {
+pub(super) fn image_visibility_label(shown: bool) -> &'static str {
     if shown { "shown" } else { "hidden" }
 }
 
-fn enabled_label(enabled: bool) -> &'static str {
+pub(super) fn enabled_label(enabled: bool) -> &'static str {
     if enabled { "enabled" } else { "disabled" }
 }
 
-fn image_block_label(blocked: bool) -> &'static str {
+pub(super) fn image_block_label(blocked: bool) -> &'static str {
     if blocked { "blocked" } else { "allowed" }
 }
 
-fn image_show_toggle_arg(shown: bool) -> &'static str {
+pub(super) fn image_show_toggle_arg(shown: bool) -> &'static str {
     if shown { "off" } else { "on" }
 }
 
-fn image_enabled_toggle_arg(enabled: bool) -> &'static str {
+pub(super) fn image_enabled_toggle_arg(enabled: bool) -> &'static str {
     if enabled { "off" } else { "on" }
 }
 
-fn image_block_toggle_arg(blocked: bool) -> &'static str {
+pub(super) fn image_block_toggle_arg(blocked: bool) -> &'static str {
     if blocked { "off" } else { "on" }
 }
 
-fn format_image_settings_status(settings: &ImageSettings) -> String {
+pub(super) fn format_image_settings_status(settings: &ImageSettings) -> String {
     format!(
         "images: previews {}; width {}; auto-resize {}; provider image sending {}; preview protocol {}",
         image_visibility_label(settings.show_images),
@@ -1847,7 +1866,7 @@ fn format_image_settings_status(settings: &ImageSettings) -> String {
     )
 }
 
-fn load_memory_settings(path: &Path) -> MemorySettings {
+pub(super) fn load_memory_settings(path: &Path) -> MemorySettings {
     let default = MemorySettings::default();
     let Ok(data) = read_settings_json(path) else {
         return default;
@@ -1987,7 +2006,7 @@ fn set_optional_json_string(target: &mut Value, key: &str, value: Option<&str>) 
     }
 }
 
-fn save_memory_settings(path: &Path, settings: &MemorySettings) -> Result<(), String> {
+pub(super) fn save_memory_settings(path: &Path, settings: &MemorySettings) -> Result<(), String> {
     let mut data = read_settings_json(path)?;
     if !data.is_object() {
         data = json!({});
@@ -2036,7 +2055,7 @@ fn save_memory_settings(path: &Path, settings: &MemorySettings) -> Result<(), St
     write_settings_json(path, &data)
 }
 
-fn memory_settings_json(settings: &MemorySettings) -> Value {
+pub(super) fn memory_settings_json(settings: &MemorySettings) -> Value {
     json!({
         "enabled": settings.enabled,
         "agentModel": settings.agent_model,
@@ -2064,15 +2083,15 @@ fn memory_settings_json(settings: &MemorySettings) -> Value {
     })
 }
 
-fn optional_memory_setting_label(value: Option<&str>) -> String {
+pub(super) fn optional_memory_setting_label(value: Option<&str>) -> String {
     value.unwrap_or("not configured").to_string()
 }
 
-fn memory_setting_toggle_arg(enabled: bool) -> &'static str {
+pub(super) fn memory_setting_toggle_arg(enabled: bool) -> &'static str {
     if enabled { "off" } else { "on" }
 }
 
-fn hoppi_install_offer_toggle_arg(value: &str) -> &'static str {
+pub(super) fn hoppi_install_offer_toggle_arg(value: &str) -> &'static str {
     if value == "dismissed" {
         "ask"
     } else {
@@ -2080,7 +2099,7 @@ fn hoppi_install_offer_toggle_arg(value: &str) -> &'static str {
     }
 }
 
-fn format_memory_settings_status(settings: &MemorySettings) -> String {
+pub(super) fn format_memory_settings_status(settings: &MemorySettings) -> String {
     let repo = optional_memory_setting_label(settings.sync_repo_path.as_deref());
     let remote = optional_memory_setting_label(settings.sync_repo_url.as_deref());
     let passphrase = if settings.sync_encryption == "passphrase" {
@@ -2119,24 +2138,24 @@ fn format_memory_settings_status(settings: &MemorySettings) -> String {
     )
 }
 
-struct FooterStatusParts<'a> {
-    settings: &'a FooterSettings,
-    cwd: &'a str,
-    model: &'a str,
-    permission: &'a str,
-    usage: &'a str,
-    weekly: Option<&'a str>,
-    context: &'a str,
-    memory: &'a str,
-    todos: usize,
-    queued: usize,
-    goal: &'a str,
-    variant: &'a str,
-    theme: &'a str,
-    thread: &'a str,
+pub(super) struct FooterStatusParts<'a> {
+    pub(super) settings: &'a FooterSettings,
+    pub(super) cwd: &'a str,
+    pub(super) model: &'a str,
+    pub(super) permission: &'a str,
+    pub(super) usage: &'a str,
+    pub(super) weekly: Option<&'a str>,
+    pub(super) context: &'a str,
+    pub(super) memory: &'a str,
+    pub(super) todos: usize,
+    pub(super) queued: usize,
+    pub(super) goal: &'a str,
+    pub(super) variant: &'a str,
+    pub(super) theme: &'a str,
+    pub(super) thread: &'a str,
 }
 
-fn format_footer_status_line(parts: FooterStatusParts<'_>) -> String {
+pub(super) fn format_footer_status_line(parts: FooterStatusParts<'_>) -> String {
     let mut segments = vec!["status: role=executor".to_string()];
     if parts.settings.show_path {
         segments.push(format!("workspace={}", parts.cwd));
@@ -2164,7 +2183,7 @@ fn format_footer_status_line(parts: FooterStatusParts<'_>) -> String {
     segments.join(" ")
 }
 
-fn format_usage_footer_line(
+pub(super) fn format_usage_footer_line(
     settings: &FooterSettings,
     usage: &str,
     weekly: Option<&str>,
@@ -2211,7 +2230,7 @@ fn normalize_string_array(value: &Value) -> Vec<String> {
         .unwrap_or_default()
 }
 
-fn normalize_string_slice(values: &[String]) -> Vec<String> {
+pub(super) fn normalize_string_slice(values: &[String]) -> Vec<String> {
     let mut normalized = Vec::new();
     for value in values {
         let value = value.trim();
@@ -2226,7 +2245,7 @@ fn normalize_string_slice(values: &[String]) -> Vec<String> {
     normalized
 }
 
-fn load_ask_user_settings(path: &Path) -> AskUserSettings {
+pub(super) fn load_ask_user_settings(path: &Path) -> AskUserSettings {
     let default = AskUserSettings {
         timeout_ms: DEFAULT_ASK_USER_TIMEOUT_MS,
     };
@@ -2254,7 +2273,10 @@ fn load_ask_user_settings(path: &Path) -> AskUserSettings {
     AskUserSettings { timeout_ms }
 }
 
-fn save_ask_user_settings(path: &Path, settings: &AskUserSettings) -> Result<(), String> {
+pub(super) fn save_ask_user_settings(
+    path: &Path,
+    settings: &AskUserSettings,
+) -> Result<(), String> {
     let timeout_minutes = ask_user_timeout_ms_to_minutes(settings.timeout_ms)
         .ok_or_else(|| "ask_user timeout must be off, 1, 2, 5, or 10 minutes".to_string())?;
     let mut data = read_settings_json(path)?;
@@ -2271,7 +2293,7 @@ fn save_ask_user_settings(path: &Path, settings: &AskUserSettings) -> Result<(),
     write_settings_json(path, &data)
 }
 
-fn load_follow_up_mode_setting(path: &Path) -> FollowUpMode {
+pub(super) fn load_follow_up_mode_setting(path: &Path) -> FollowUpMode {
     read_settings_json(path)
         .ok()
         .and_then(|data| {
@@ -2282,7 +2304,7 @@ fn load_follow_up_mode_setting(path: &Path) -> FollowUpMode {
         .unwrap_or_default()
 }
 
-fn save_follow_up_mode_setting(path: &Path, mode: FollowUpMode) -> Result<(), String> {
+pub(super) fn save_follow_up_mode_setting(path: &Path, mode: FollowUpMode) -> Result<(), String> {
     let mut data = read_settings_json(path)?;
     if !data.is_object() {
         data = json!({});
@@ -2291,7 +2313,7 @@ fn save_follow_up_mode_setting(path: &Path, mode: FollowUpMode) -> Result<(), St
     write_settings_json(path, &data)
 }
 
-fn load_steering_mode_setting(path: &Path) -> SteeringMode {
+pub(super) fn load_steering_mode_setting(path: &Path) -> SteeringMode {
     read_settings_json(path)
         .ok()
         .and_then(|data| {
@@ -2307,7 +2329,7 @@ fn load_steering_mode_setting(path: &Path) -> SteeringMode {
         .unwrap_or_default()
 }
 
-fn save_steering_mode_setting(path: &Path, mode: SteeringMode) -> Result<(), String> {
+pub(super) fn save_steering_mode_setting(path: &Path, mode: SteeringMode) -> Result<(), String> {
     let mut data = read_settings_json(path)?;
     if !data.is_object() {
         data = json!({});
@@ -2316,14 +2338,14 @@ fn save_steering_mode_setting(path: &Path, mode: SteeringMode) -> Result<(), Str
     write_settings_json(path, &data)
 }
 
-fn load_quiet_startup_setting(path: &Path) -> bool {
+pub(super) fn load_quiet_startup_setting(path: &Path) -> bool {
     read_settings_json(path)
         .ok()
         .and_then(|data| data.get("quietStartup").and_then(Value::as_bool))
         .unwrap_or(false)
 }
 
-fn save_quiet_startup_setting(path: &Path, quiet_startup: bool) -> Result<(), String> {
+pub(super) fn save_quiet_startup_setting(path: &Path, quiet_startup: bool) -> Result<(), String> {
     let mut data = read_settings_json(path)?;
     if !data.is_object() {
         data = json!({});
@@ -2332,14 +2354,14 @@ fn save_quiet_startup_setting(path: &Path, quiet_startup: bool) -> Result<(), St
     write_settings_json(path, &data)
 }
 
-fn load_show_hardware_cursor_setting(path: &Path) -> bool {
+pub(super) fn load_show_hardware_cursor_setting(path: &Path) -> bool {
     read_settings_json(path)
         .ok()
         .and_then(|data| data.get("showHardwareCursor").and_then(Value::as_bool))
         .unwrap_or_else(default_show_hardware_cursor)
 }
 
-fn save_show_hardware_cursor_setting(path: &Path, enabled: bool) -> Result<(), String> {
+pub(super) fn save_show_hardware_cursor_setting(path: &Path, enabled: bool) -> Result<(), String> {
     let mut data = read_settings_json(path)?;
     if !data.is_object() {
         data = json!({});
@@ -2354,7 +2376,7 @@ fn default_show_hardware_cursor() -> bool {
         .is_some_and(|value| value.trim() == "1")
 }
 
-fn load_editor_padding_x_setting(path: &Path) -> usize {
+pub(super) fn load_editor_padding_x_setting(path: &Path) -> usize {
     read_settings_json(path)
         .ok()
         .and_then(|data| {
@@ -2366,7 +2388,7 @@ fn load_editor_padding_x_setting(path: &Path) -> usize {
         .unwrap_or(DEFAULT_EDITOR_PADDING_X)
 }
 
-fn save_editor_padding_x_setting(path: &Path, padding_x: usize) -> Result<(), String> {
+pub(super) fn save_editor_padding_x_setting(path: &Path, padding_x: usize) -> Result<(), String> {
     let padding_x =
         normalize_editor_padding_x(padding_x).ok_or_else(|| editor_usage().to_string())?;
     let mut data = read_settings_json(path)?;
@@ -2377,7 +2399,7 @@ fn save_editor_padding_x_setting(path: &Path, padding_x: usize) -> Result<(), St
     write_settings_json(path, &data)
 }
 
-fn load_double_escape_action_setting(path: &Path) -> DoubleEscapeAction {
+pub(super) fn load_double_escape_action_setting(path: &Path) -> DoubleEscapeAction {
     read_settings_json(path)
         .ok()
         .and_then(|data| {
@@ -2388,7 +2410,7 @@ fn load_double_escape_action_setting(path: &Path) -> DoubleEscapeAction {
         .unwrap_or(DoubleEscapeAction::Tree)
 }
 
-fn save_double_escape_action_setting(
+pub(super) fn save_double_escape_action_setting(
     path: &Path,
     action: DoubleEscapeAction,
 ) -> Result<(), String> {
@@ -2400,7 +2422,7 @@ fn save_double_escape_action_setting(
     write_settings_json(path, &data)
 }
 
-fn load_tree_filter_mode_setting(path: &Path) -> TreeFilterMode {
+pub(super) fn load_tree_filter_mode_setting(path: &Path) -> TreeFilterMode {
     read_settings_json(path)
         .ok()
         .and_then(|data| {
@@ -2411,7 +2433,10 @@ fn load_tree_filter_mode_setting(path: &Path) -> TreeFilterMode {
         .unwrap_or(TreeFilterMode::Default)
 }
 
-fn save_tree_filter_mode_setting(path: &Path, mode: TreeFilterMode) -> Result<(), String> {
+pub(super) fn save_tree_filter_mode_setting(
+    path: &Path,
+    mode: TreeFilterMode,
+) -> Result<(), String> {
     let mut data = read_settings_json(path)?;
     if !data.is_object() {
         data = json!({});
@@ -2420,14 +2445,17 @@ fn save_tree_filter_mode_setting(path: &Path, mode: TreeFilterMode) -> Result<()
     write_settings_json(path, &data)
 }
 
-fn load_show_terminal_progress_setting(path: &Path) -> bool {
+pub(super) fn load_show_terminal_progress_setting(path: &Path) -> bool {
     read_settings_json(path)
         .ok()
         .and_then(|data| data.get("showTerminalProgress").and_then(Value::as_bool))
         .unwrap_or(true)
 }
 
-fn save_show_terminal_progress_setting(path: &Path, enabled: bool) -> Result<(), String> {
+pub(super) fn save_show_terminal_progress_setting(
+    path: &Path,
+    enabled: bool,
+) -> Result<(), String> {
     let mut data = read_settings_json(path)?;
     if !data.is_object() {
         data = json!({});
@@ -2436,14 +2464,17 @@ fn save_show_terminal_progress_setting(path: &Path, enabled: bool) -> Result<(),
     write_settings_json(path, &data)
 }
 
-fn load_terminal_clear_on_shrink_setting(path: &Path) -> bool {
+pub(super) fn load_terminal_clear_on_shrink_setting(path: &Path) -> bool {
     read_settings_json(path)
         .ok()
         .and_then(|data| data.get("terminalClearOnShrink").and_then(Value::as_bool))
         .unwrap_or(true)
 }
 
-fn save_terminal_clear_on_shrink_setting(path: &Path, enabled: bool) -> Result<(), String> {
+pub(super) fn save_terminal_clear_on_shrink_setting(
+    path: &Path,
+    enabled: bool,
+) -> Result<(), String> {
     let mut data = read_settings_json(path)?;
     if !data.is_object() {
         data = json!({});
@@ -2452,14 +2483,14 @@ fn save_terminal_clear_on_shrink_setting(path: &Path, enabled: bool) -> Result<(
     write_settings_json(path, &data)
 }
 
-fn load_skill_commands_setting(path: &Path) -> bool {
+pub(super) fn load_skill_commands_setting(path: &Path) -> bool {
     read_settings_json(path)
         .ok()
         .and_then(|data| data.get("enableSkillCommands").and_then(Value::as_bool))
         .unwrap_or(true)
 }
 
-fn save_skill_commands_setting(path: &Path, enabled: bool) -> Result<(), String> {
+pub(super) fn save_skill_commands_setting(path: &Path, enabled: bool) -> Result<(), String> {
     let mut data = read_settings_json(path)?;
     if !data.is_object() {
         data = json!({});
@@ -2468,7 +2499,7 @@ fn save_skill_commands_setting(path: &Path, enabled: bool) -> Result<(), String>
     write_settings_json(path, &data)
 }
 
-fn load_autocomplete_max_visible_setting(path: &Path) -> usize {
+pub(super) fn load_autocomplete_max_visible_setting(path: &Path) -> usize {
     read_settings_json(path)
         .ok()
         .and_then(|data| {
@@ -2480,7 +2511,10 @@ fn load_autocomplete_max_visible_setting(path: &Path) -> usize {
         .unwrap_or(DEFAULT_AUTOCOMPLETE_MAX_VISIBLE)
 }
 
-fn save_autocomplete_max_visible_setting(path: &Path, max_visible: usize) -> Result<(), String> {
+pub(super) fn save_autocomplete_max_visible_setting(
+    path: &Path,
+    max_visible: usize,
+) -> Result<(), String> {
     let max_visible = normalize_autocomplete_max_visible(max_visible)
         .ok_or_else(|| autocomplete_usage().to_string())?;
     let mut data = read_settings_json(path)?;
@@ -2491,7 +2525,7 @@ fn save_autocomplete_max_visible_setting(path: &Path, max_visible: usize) -> Res
     write_settings_json(path, &data)
 }
 
-fn load_reasoning_effort_setting(path: &Path) -> Option<ThinkingLevel> {
+pub(super) fn load_reasoning_effort_setting(path: &Path) -> Option<ThinkingLevel> {
     read_settings_json(path).ok().and_then(|data| {
         data.get("defaultThinkingLevel")
             .and_then(Value::as_str)
@@ -2505,7 +2539,10 @@ fn load_reasoning_effort_setting(path: &Path) -> Option<ThinkingLevel> {
     })
 }
 
-fn save_reasoning_effort_setting(path: &Path, level: ThinkingLevel) -> Result<(), String> {
+pub(super) fn save_reasoning_effort_setting(
+    path: &Path,
+    level: ThinkingLevel,
+) -> Result<(), String> {
     let mut data = read_settings_json(path)?;
     if !data.is_object() {
         data = json!({});
@@ -2518,7 +2555,7 @@ fn save_reasoning_effort_setting(path: &Path, level: ThinkingLevel) -> Result<()
     write_settings_json(path, &data)
 }
 
-fn load_prompt_variant_setting(path: &Path) -> String {
+pub(super) fn load_prompt_variant_setting(path: &Path) -> String {
     read_settings_json(path)
         .ok()
         .and_then(|data| {
@@ -2530,7 +2567,7 @@ fn load_prompt_variant_setting(path: &Path) -> String {
         .unwrap_or_else(|| "off".to_string())
 }
 
-fn save_prompt_variant_setting(path: &Path, variant: &str) -> Result<(), String> {
+pub(super) fn save_prompt_variant_setting(path: &Path, variant: &str) -> Result<(), String> {
     let normalized = normalize_prompt_variant(variant)
         .ok_or_else(|| "usage: /prompt-variant [off|a|b|caveman]".to_string())?;
     let mut data = read_settings_json(path)?;
@@ -2544,7 +2581,7 @@ fn save_prompt_variant_setting(path: &Path, variant: &str) -> Result<(), String>
     write_settings_json(path, &data)
 }
 
-fn load_enabled_model_scope(path: &Path) -> Vec<String> {
+pub(super) fn load_enabled_model_scope(path: &Path) -> Vec<String> {
     let Ok(data) = read_settings_json(path) else {
         return Vec::new();
     };
@@ -2562,7 +2599,10 @@ fn load_enabled_model_scope(path: &Path) -> Vec<String> {
         .unwrap_or_default()
 }
 
-fn save_enabled_model_scope(path: &Path, models: Option<&[String]>) -> Result<(), String> {
+pub(super) fn save_enabled_model_scope(
+    path: &Path,
+    models: Option<&[String]>,
+) -> Result<(), String> {
     let mut data = read_settings_json(path)?;
     if !data.is_object() {
         data = json!({});
@@ -2586,7 +2626,7 @@ fn write_settings_json(path: &Path, data: &Value) -> Result<(), String> {
         .map_err(|error| format!("write settings {}: {error}", path.display()))
 }
 
-fn default_server_path() -> PathBuf {
+pub(super) fn default_server_path() -> PathBuf {
     if let Ok(path) = env::var("OPPI_SERVER_BIN") {
         let path = path.trim();
         if !path.is_empty() {

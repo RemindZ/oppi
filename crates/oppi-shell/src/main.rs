@@ -13,6 +13,8 @@ use oppi_protocol::{
     ThreadItemLabelsResult, ThreadItemsResult, ThreadStatus, TodoClientAction,
     TodoClientActionResult, TodoListResult, TodoState, ToolCall, ToolResultStatus,
 };
+#[path = "shell_parts/auth_settings.rs"]
+mod auth_settings;
 #[path = "shell_parts/interactive.rs"]
 mod interactive;
 #[path = "shell_parts/provider_ui.rs"]
@@ -24,6 +26,7 @@ mod rendering;
 mod slash_palette;
 mod tui;
 
+use auth_settings::*;
 use crossterm::event::{self, Event as CrosstermEvent, KeyCode, KeyEventKind, KeyModifiers};
 use crossterm::terminal;
 #[cfg(test)]
@@ -417,7 +420,5 @@ include!("shell_parts/session.rs");
 include!("shell_parts/commands.rs");
 
 include!("shell_parts/models_and_memory.rs");
-
-include!("shell_parts/auth_settings.rs");
 
 include!("shell_parts/tests.rs");
