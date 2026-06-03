@@ -9,6 +9,8 @@ pub mod event_store;
 mod goals;
 #[path = "core_parts/memory_helpers.rs"]
 mod memory_helpers;
+#[path = "core_parts/tools_guardian_registry.rs"]
+mod tools_guardian_registry;
 
 use base64::{
     Engine as _,
@@ -39,6 +41,7 @@ use std::path::{Component, Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use tools_guardian_registry::*;
 
 const MAX_CONTINUATIONS: u32 = 8;
 const DEFAULT_EVENTS_LIST_LIMIT: usize = 1_000;
@@ -903,7 +906,6 @@ fn subagent_system_prompt(
 }
 
 include!("core_parts/plugins_mcp.rs");
-include!("core_parts/tools_guardian_registry.rs");
 
 include!("core_parts/runtime_impl.rs");
 

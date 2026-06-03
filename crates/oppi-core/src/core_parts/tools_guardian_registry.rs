@@ -1,4 +1,8 @@
-fn image_api_key_env_candidates(explicit: Option<&str>) -> Result<Vec<String>, RuntimeError> {
+use super::*;
+
+pub(super) fn image_api_key_env_candidates(
+    explicit: Option<&str>,
+) -> Result<Vec<String>, RuntimeError> {
     if let Some(name) = explicit {
         if provider_api_key_env_allowed(name) {
             return Ok(vec![name.to_string()]);
@@ -29,7 +33,7 @@ fn image_api_base_url(call: &ToolCall) -> String {
     base.trim_end_matches('/').to_string()
 }
 
-fn image_api_endpoint(call: &ToolCall, path: &str) -> String {
+pub(super) fn image_api_endpoint(call: &ToolCall, path: &str) -> String {
     let base = image_api_base_url(call);
     let base = if base.ends_with("/images/generations") || base.ends_with("/images/edits") {
         base.rsplit_once("/images/")
@@ -41,11 +45,11 @@ fn image_api_endpoint(call: &ToolCall, path: &str) -> String {
     format!("{base}/{path}")
 }
 
-fn image_generation_endpoint(call: &ToolCall) -> String {
+pub(super) fn image_generation_endpoint(call: &ToolCall) -> String {
     image_api_endpoint(call, "images/generations")
 }
 
-fn image_generation_request_body(
+pub(super) fn image_generation_request_body(
     call: &ToolCall,
     model: &str,
     prompt: &str,
@@ -85,7 +89,7 @@ fn image_generation_request_body(
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ImageGenBackend {
+pub(super) enum ImageGenBackend {
     CodexNative,
     ImageApi,
 }
@@ -131,7 +135,7 @@ fn image_has_low_level_api_controls(call: &ToolCall, n: usize, has_mask: bool) -
         .any(|key| call.arguments.get(*key).is_some())
 }
 
-fn selected_image_backend(
+pub(super) fn selected_image_backend(
     call: &ToolCall,
     parent_provider_config: Option<&DirectModelProviderConfig>,
     n: usize,
@@ -150,7 +154,7 @@ fn selected_image_backend(
     }
 }
 
-fn image_output_format(call: &ToolCall) -> Result<String, (ToolResultStatus, String)> {
+pub(super) fn image_output_format(call: &ToolCall) -> Result<String, (ToolResultStatus, String)> {
     let value = call
         .arguments
         .get("outputFormat")
@@ -216,7 +220,7 @@ fn image_validate_enum(
     Ok(())
 }
 
-fn validate_image_api_options(
+pub(super) fn validate_image_api_options(
     call: &ToolCall,
     model: &str,
     output_format: &str,
@@ -303,7 +307,7 @@ fn validate_image_api_options(
     Ok(())
 }
 
-fn validate_codex_native_image_options(
+pub(super) fn validate_codex_native_image_options(
     n: usize,
     mask: Option<&str>,
 ) -> Result<(), (ToolResultStatus, String)> {
@@ -320,7 +324,9 @@ fn validate_codex_native_image_options(
     Ok(())
 }
 
-fn openai_codex_responses_endpoint(config: Option<&DirectModelProviderConfig>) -> String {
+pub(super) fn openai_codex_responses_endpoint(
+    config: Option<&DirectModelProviderConfig>,
+) -> String {
     let base = config
         .and_then(|config| config.base_url.clone())
         .or_else(|| std::env::var("OPPI_OPENAI_CODEX_BASE_URL").ok())
@@ -336,7 +342,7 @@ fn openai_codex_responses_endpoint(config: Option<&DirectModelProviderConfig>) -
     }
 }
 
-fn codex_native_image_model(config: Option<&DirectModelProviderConfig>) -> String {
+pub(super) fn codex_native_image_model(config: Option<&DirectModelProviderConfig>) -> String {
     config
         .filter(|config| config.kind == DirectModelProviderKind::OpenAiCodex)
         .map(|config| config.model.clone())
@@ -344,7 +350,7 @@ fn codex_native_image_model(config: Option<&DirectModelProviderConfig>) -> Strin
         .unwrap_or_else(|| DEFAULT_CODEX_IMAGE_MODEL.to_string())
 }
 
-fn codex_native_image_request_body(
+pub(super) fn codex_native_image_request_body(
     model: &str,
     prompt: &str,
     output_format: &str,
@@ -381,7 +387,7 @@ fn codex_native_image_request_body(
     })
 }
 
-fn parse_codex_image_generation_stream<R: BufRead>(
+pub(super) fn parse_codex_image_generation_stream<R: BufRead>(
     reader: R,
 ) -> Result<Vec<Value>, (ToolResultStatus, String)> {
     let mut images = Vec::new();
@@ -475,7 +481,7 @@ fn parse_codex_image_generation_stream<R: BufRead>(
     Ok(images)
 }
 
-fn image_source_arguments(call: &ToolCall) -> Vec<String> {
+pub(super) fn image_source_arguments(call: &ToolCall) -> Vec<String> {
     for key in ["images", "sourceImages", "source_images"] {
         if let Some(items) = call.arguments.get(key).and_then(Value::as_array) {
             return items
@@ -499,7 +505,7 @@ fn image_source_arguments(call: &ToolCall) -> Vec<String> {
     Vec::new()
 }
 
-fn image_mask_argument(call: &ToolCall) -> Option<String> {
+pub(super) fn image_mask_argument(call: &ToolCall) -> Option<String> {
     call.arguments
         .get("mask")
         .or_else(|| call.arguments.get("maskPath"))
@@ -510,12 +516,15 @@ fn image_mask_argument(call: &ToolCall) -> Option<String> {
         .map(str::to_string)
 }
 
-fn image_input_path(cwd: &str, raw: &str) -> Result<PathBuf, (ToolResultStatus, String)> {
+pub(super) fn image_input_path(
+    cwd: &str,
+    raw: &str,
+) -> Result<PathBuf, (ToolResultStatus, String)> {
     let raw = raw.trim().trim_start_matches('@');
     resolve_project_path(cwd, raw)
 }
 
-fn image_mime_type_for_path(path: &Path) -> &'static str {
+pub(super) fn image_mime_type_for_path(path: &Path) -> &'static str {
     match path
         .extension()
         .and_then(|value| value.to_str())
@@ -530,7 +539,7 @@ fn image_mime_type_for_path(path: &Path) -> &'static str {
     }
 }
 
-fn multipart_push_text(body: &mut Vec<u8>, boundary: &str, name: &str, value: &str) {
+pub(super) fn multipart_push_text(body: &mut Vec<u8>, boundary: &str, name: &str, value: &str) {
     body.extend_from_slice(format!("--{boundary}\r\n").as_bytes());
     body.extend_from_slice(
         format!("Content-Disposition: form-data; name=\"{name}\"\r\n\r\n").as_bytes(),
@@ -539,7 +548,7 @@ fn multipart_push_text(body: &mut Vec<u8>, boundary: &str, name: &str, value: &s
     body.extend_from_slice(b"\r\n");
 }
 
-fn multipart_push_file(
+pub(super) fn multipart_push_file(
     body: &mut Vec<u8>,
     boundary: &str,
     name: &str,
@@ -557,7 +566,7 @@ fn multipart_push_file(
     body.extend_from_slice(b"\r\n");
 }
 
-fn image_optional_string_arg<'a>(call: &'a ToolCall, keys: &[&str]) -> Option<&'a str> {
+pub(super) fn image_optional_string_arg<'a>(call: &'a ToolCall, keys: &[&str]) -> Option<&'a str> {
     keys.iter().find_map(|key| {
         call.arguments
             .get(*key)
@@ -567,12 +576,12 @@ fn image_optional_string_arg<'a>(call: &'a ToolCall, keys: &[&str]) -> Option<&'
     })
 }
 
-fn image_optional_u64_arg(call: &ToolCall, keys: &[&str]) -> Option<u64> {
+pub(super) fn image_optional_u64_arg(call: &ToolCall, keys: &[&str]) -> Option<u64> {
     keys.iter()
         .find_map(|key| call.arguments.get(*key).and_then(Value::as_u64))
 }
 
-fn image_generation_count(call: &ToolCall) -> Result<usize, (ToolResultStatus, String)> {
+pub(super) fn image_generation_count(call: &ToolCall) -> Result<usize, (ToolResultStatus, String)> {
     let Some(value) = call.arguments.get("n") else {
         return Ok(1);
     };
@@ -591,7 +600,7 @@ fn image_generation_count(call: &ToolCall) -> Result<usize, (ToolResultStatus, S
     Ok(n as usize)
 }
 
-fn default_image_output_path(prompt: &str, output_format: &str) -> String {
+pub(super) fn default_image_output_path(prompt: &str, output_format: &str) -> String {
     let mut slug = prompt
         .chars()
         .filter_map(|ch| {
@@ -635,7 +644,7 @@ fn image_output_path_with_index(path: &Path, output_format: &str, index: usize) 
         .unwrap_or_else(|| PathBuf::from(file_name))
 }
 
-fn image_output_paths(
+pub(super) fn image_output_paths(
     cwd: &str,
     output_format: &str,
     output_path: &str,
@@ -650,7 +659,7 @@ fn image_output_paths(
         .collect())
 }
 
-fn mime_type_for_image_format(format: &str) -> &'static str {
+pub(super) fn mime_type_for_image_format(format: &str) -> &'static str {
     match format {
         "jpg" | "jpeg" => "image/jpeg",
         "webp" => "image/webp",
@@ -658,7 +667,7 @@ fn mime_type_for_image_format(format: &str) -> &'static str {
     }
 }
 
-fn image_dimensions(bytes: &[u8], format: &str) -> (Option<u32>, Option<u32>) {
+pub(super) fn image_dimensions(bytes: &[u8], format: &str) -> (Option<u32>, Option<u32>) {
     if matches!(format, "png" | "") && bytes.len() >= 24 && bytes.starts_with(b"\x89PNG\r\n\x1a\n")
     {
         let width = u32::from_be_bytes([bytes[16], bytes[17], bytes[18], bytes[19]]);
@@ -668,7 +677,7 @@ fn image_dimensions(bytes: &[u8], format: &str) -> (Option<u32>, Option<u32>) {
     (None, None)
 }
 
-fn artifact_metadata_from_tool_result(
+pub(super) fn artifact_metadata_from_tool_result(
     call: &ToolCall,
     result: &ToolResult,
 ) -> Option<ArtifactMetadata> {
@@ -759,7 +768,7 @@ fn artifact_metadata_from_tool_result(
     })
 }
 
-fn decode_base64(raw: &str) -> Result<Vec<u8>, String> {
+pub(super) fn decode_base64(raw: &str) -> Result<Vec<u8>, String> {
     let mut buffer = 0u32;
     let mut bits = 0u8;
     let mut output = Vec::new();
@@ -786,7 +795,7 @@ fn decode_base64(raw: &str) -> Result<Vec<u8>, String> {
     Ok(output)
 }
 
-fn download_image_url(url: &str) -> Result<Vec<u8>, (ToolResultStatus, String)> {
+pub(super) fn download_image_url(url: &str) -> Result<Vec<u8>, (ToolResultStatus, String)> {
     let response = match ureq::get(url).call() {
         Ok(response) => response,
         Err(ureq::Error::Status(status, response)) => {
@@ -824,7 +833,7 @@ fn download_image_url(url: &str) -> Result<Vec<u8>, (ToolResultStatus, String)> 
     Ok(bytes)
 }
 
-fn tool_delay_ms(call: &ToolCall) -> Option<u64> {
+pub(super) fn tool_delay_ms(call: &ToolCall) -> Option<u64> {
     call.arguments
         .get("delayMs")
         .or_else(|| call.arguments.get("delay_ms"))
@@ -833,7 +842,7 @@ fn tool_delay_ms(call: &ToolCall) -> Option<u64> {
         .filter(|delay| *delay > 0)
 }
 
-fn file_tool_kind(definition: &ToolDefinition, call: &ToolCall) -> Option<FileToolKind> {
+pub(super) fn file_tool_kind(definition: &ToolDefinition, call: &ToolCall) -> Option<FileToolKind> {
     match call.name.as_str() {
         "read" | "read_file" | "oppi_review_read" => return Some(FileToolKind::Read),
         "ls" | "list" | "list_files" | "oppi_review_ls" => return Some(FileToolKind::List),
@@ -888,7 +897,7 @@ fn file_tool_kind(definition: &ToolDefinition, call: &ToolCall) -> Option<FileTo
     None
 }
 
-fn required_string_arg<'a>(
+pub(super) fn required_string_arg<'a>(
     call: &'a ToolCall,
     key: &str,
 ) -> Result<&'a str, (ToolResultStatus, String)> {
@@ -904,7 +913,7 @@ fn required_string_arg<'a>(
         })
 }
 
-fn usize_arg(call: &ToolCall, key: &str) -> Option<usize> {
+pub(super) fn usize_arg(call: &ToolCall, key: &str) -> Option<usize> {
     call.arguments
         .get(key)
         .and_then(Value::as_u64)
@@ -997,7 +1006,7 @@ fn clean_suggestion_text(raw: &str, max_chars: usize) -> Option<String> {
     Some(text)
 }
 
-fn normalize_suggest_next(
+pub(super) fn normalize_suggest_next(
     call: &ToolCall,
 ) -> Result<Option<SuggestedNextMessage>, (ToolResultStatus, String)> {
     let Some(raw_message) = call.arguments.get("message").and_then(Value::as_str) else {
@@ -1032,7 +1041,7 @@ fn normalize_suggest_next(
     }))
 }
 
-fn normalize_ask_user_request(
+pub(super) fn normalize_ask_user_request(
     request_id: QuestionId,
     call: &ToolCall,
     settings: &AskUserSettings,
@@ -1194,7 +1203,7 @@ fn ask_user_answer_text(answer: &AskUserAnswer) -> String {
         .unwrap_or_else(|| "answered".to_string())
 }
 
-fn ask_user_response_text(response: &AskUserResponse) -> String {
+pub(super) fn ask_user_response_text(response: &AskUserResponse) -> String {
     if response.cancelled {
         return "User cancelled the questionnaire.".to_string();
     }
@@ -1348,7 +1357,7 @@ fn feedback_clamp(value: Option<&Value>, max_chars: usize) -> Option<String> {
         .map(|value| truncate_chars(value, max_chars))
 }
 
-fn feedback_sanitize(text: &str) -> String {
+pub(super) fn feedback_sanitize(text: &str) -> String {
     text.split_whitespace()
         .map(|token| {
             let lower = token.to_lowercase();
@@ -1416,7 +1425,7 @@ fn feedback_title(kind: &str, summary: &str) -> String {
     truncate_chars(&format!("{prefix} {summary}"), 140)
 }
 
-fn feedback_body(
+pub(super) fn feedback_body(
     kind: &str,
     call: &ToolCall,
     cwd: &str,
@@ -1501,7 +1510,7 @@ fn feedback_body(
     Ok((feedback_title(kind, &summary), body, repo))
 }
 
-fn render_mermaid_fallback(source: &str) -> Result<String, (ToolResultStatus, String)> {
+pub(super) fn render_mermaid_fallback(source: &str) -> Result<String, (ToolResultStatus, String)> {
     let source = source.replace("\r\n", "\n").replace('\r', "\n");
     let lines = source.lines().collect::<Vec<_>>();
     let first = lines
@@ -1532,7 +1541,9 @@ fn render_mermaid_fallback(source: &str) -> Result<String, (ToolResultStatus, St
     ))
 }
 
-fn normalize_todo_write_state(call: &ToolCall) -> Result<TodoState, (ToolResultStatus, String)> {
+pub(super) fn normalize_todo_write_state(
+    call: &ToolCall,
+) -> Result<TodoState, (ToolResultStatus, String)> {
     let items = call
         .arguments
         .get("todos")
@@ -1594,7 +1605,7 @@ fn normalize_todo_write_state(call: &ToolCall) -> Result<TodoState, (ToolResultS
     Ok(TodoState { todos, summary })
 }
 
-fn todo_write_output(state: &TodoState) -> String {
+pub(super) fn todo_write_output(state: &TodoState) -> String {
     let mut lines = vec![format!("Updated todos: {}", state.summary)];
     for todo in &state.todos {
         lines.push(format!(
@@ -1607,7 +1618,7 @@ fn todo_write_output(state: &TodoState) -> String {
     lines.join("\n")
 }
 
-fn read_task_tail(path: &Path, max_bytes: usize) -> String {
+pub(super) fn read_task_tail(path: &Path, max_bytes: usize) -> String {
     let bytes = fs::read(path).unwrap_or_default();
     if bytes.len() <= max_bytes {
         return String::from_utf8_lossy(&bytes).to_string();
@@ -1615,14 +1626,17 @@ fn read_task_tail(path: &Path, max_bytes: usize) -> String {
     String::from_utf8_lossy(&bytes[bytes.len() - max_bytes..]).to_string()
 }
 
-fn file_io_error(error: std::io::Error) -> (ToolResultStatus, String) {
+pub(super) fn file_io_error(error: std::io::Error) -> (ToolResultStatus, String) {
     (
         ToolResultStatus::Error,
         format!("file tool I/O error: {error}"),
     )
 }
 
-fn resolve_project_path(cwd: &str, raw: &str) -> Result<PathBuf, (ToolResultStatus, String)> {
+pub(super) fn resolve_project_path(
+    cwd: &str,
+    raw: &str,
+) -> Result<PathBuf, (ToolResultStatus, String)> {
     let cwd = lexical_normalize(Path::new(cwd));
     let raw_path = Path::new(raw);
     let path = if raw_path.is_absolute() {
@@ -1640,7 +1654,7 @@ fn resolve_project_path(cwd: &str, raw: &str) -> Result<PathBuf, (ToolResultStat
     Ok(normalized)
 }
 
-fn resolve_child_worktree_root(
+pub(super) fn resolve_child_worktree_root(
     parent_root: &Path,
     requested: &str,
 ) -> Result<PathBuf, (ToolResultStatus, String)> {
@@ -1677,7 +1691,7 @@ fn resolve_child_worktree_root(
     Ok(resolved)
 }
 
-fn lexical_normalize(path: &Path) -> PathBuf {
+pub(super) fn lexical_normalize(path: &Path) -> PathBuf {
     let mut normalized = PathBuf::new();
     for component in path.components() {
         match component {
@@ -1693,7 +1707,7 @@ fn lexical_normalize(path: &Path) -> PathBuf {
     normalized
 }
 
-fn default_file_tool_policy(cwd: &str, writes: bool) -> SandboxPolicy {
+pub(super) fn default_file_tool_policy(cwd: &str, writes: bool) -> SandboxPolicy {
     default_policy(PermissionProfile {
         mode: if writes {
             PermissionMode::Default
@@ -1711,7 +1725,7 @@ fn default_file_tool_policy(cwd: &str, writes: bool) -> SandboxPolicy {
     })
 }
 
-fn default_shell_policy(cwd: &str) -> SandboxPolicy {
+pub(super) fn default_shell_policy(cwd: &str) -> SandboxPolicy {
     default_policy(PermissionProfile {
         mode: PermissionMode::ReadOnly,
         readable_roots: vec![cwd.to_string()],
@@ -1721,7 +1735,7 @@ fn default_shell_policy(cwd: &str) -> SandboxPolicy {
     })
 }
 
-fn shell_sandbox_preference_from_call(
+pub(super) fn shell_sandbox_preference_from_call(
     call: &ToolCall,
     fallback: SandboxPreference,
 ) -> SandboxPreference {
@@ -1734,7 +1748,7 @@ fn shell_sandbox_preference_from_call(
         .unwrap_or(fallback)
 }
 
-fn policy_with_cwd_defaults(mut policy: SandboxPolicy, cwd: &str) -> SandboxPolicy {
+pub(super) fn policy_with_cwd_defaults(mut policy: SandboxPolicy, cwd: &str) -> SandboxPolicy {
     if policy.permission_profile.readable_roots.is_empty() {
         policy
             .permission_profile
@@ -1753,7 +1767,7 @@ fn policy_with_cwd_defaults(mut policy: SandboxPolicy, cwd: &str) -> SandboxPoli
     policy
 }
 
-fn file_path_allowed_by_roots(
+pub(super) fn file_path_allowed_by_roots(
     path: &Path,
     cwd: &str,
     policy: &SandboxPolicy,
@@ -1787,7 +1801,7 @@ fn file_path_allowed_by_roots(
     })
 }
 
-fn protected_path_preflight_denial(
+pub(super) fn protected_path_preflight_denial(
     policy: &SandboxPolicy,
     request: &SandboxExecRequest,
 ) -> Option<String> {
@@ -1797,19 +1811,19 @@ fn protected_path_preflight_denial(
     }
 }
 
-fn guardian_tool_signature(call: &ToolCall) -> String {
+pub(super) fn guardian_tool_signature(call: &ToolCall) -> String {
     let namespace = call.namespace.as_deref().unwrap_or("default");
     let args = serde_json::to_string(&call.arguments).unwrap_or_else(|_| "{}".to_string());
     format!("{namespace}::{}\n{args}", call.name)
 }
 
-fn guardian_circuit_key(call: &ToolCall, risk: &GuardianRiskSummary) -> String {
+pub(super) fn guardian_circuit_key(call: &ToolCall, risk: &GuardianRiskSummary) -> String {
     let namespace = call.namespace.as_deref().unwrap_or("default");
     let paths = risk.paths.join("|");
     format!("{namespace}::{}:{}:{paths}", call.name, risk.category)
 }
 
-fn guardian_can_cache(record: &GuardianReviewRecord) -> bool {
+pub(super) fn guardian_can_cache(record: &GuardianReviewRecord) -> bool {
     let Some(decision) = record.decision.as_ref() else {
         return false;
     };
@@ -1823,7 +1837,7 @@ fn guardian_can_cache(record: &GuardianReviewRecord) -> bool {
         && record.risk.protected_hits.is_empty()
 }
 
-fn guardian_review_counts_as_denial(record: &GuardianReviewRecord) -> bool {
+pub(super) fn guardian_review_counts_as_denial(record: &GuardianReviewRecord) -> bool {
     matches!(
         record.status,
         GuardianReviewStatus::Denied
@@ -1884,7 +1898,7 @@ fn guardian_reviewer_config_from_setting(
     })
 }
 
-fn guardian_reviewer_provider_config(
+pub(super) fn guardian_reviewer_provider_config(
     parent: Option<&DirectModelProviderConfig>,
     settings: &GuardianReviewSettings,
 ) -> Result<DirectModelProviderConfig, RuntimeError> {
@@ -1998,7 +2012,7 @@ fn parse_guardian_cache_scope(value: Option<&Value>) -> Result<GuardianCacheScop
     }
 }
 
-fn parse_guardian_review_decision(
+pub(super) fn parse_guardian_review_decision(
     text: &str,
 ) -> Result<(oppi_protocol::GuardianReviewDecision, String), String> {
     let candidates = guardian_json_object_candidates(text);
@@ -2049,7 +2063,7 @@ fn parse_guardian_review_decision(
     ))
 }
 
-fn risk_level_name(risk: RiskLevel) -> &'static str {
+pub(super) fn risk_level_name(risk: RiskLevel) -> &'static str {
     match risk {
         RiskLevel::Low => "low",
         RiskLevel::Medium => "medium",
@@ -2058,14 +2072,14 @@ fn risk_level_name(risk: RiskLevel) -> &'static str {
     }
 }
 
-fn guardian_decision_name(decision: GuardianReviewDecisionKind) -> &'static str {
+pub(super) fn guardian_decision_name(decision: GuardianReviewDecisionKind) -> &'static str {
     match decision {
         GuardianReviewDecisionKind::Allow => "allow",
         GuardianReviewDecisionKind::Deny => "deny",
     }
 }
 
-fn guardian_review_result(
+pub(super) fn guardian_review_result(
     decision: GuardianReviewDecisionKind,
     risk: RiskLevel,
     reason: impl Into<String>,
@@ -2134,7 +2148,10 @@ fn guardian_risk_category(call: &ToolCall) -> String {
     }
 }
 
-fn guardian_risk_summary(call: &ToolCall, review: &GuardianReviewResult) -> GuardianRiskSummary {
+pub(super) fn guardian_risk_summary(
+    call: &ToolCall,
+    review: &GuardianReviewResult,
+) -> GuardianRiskSummary {
     let paths = guardian_call_paths(call);
     let protected_hits = if review
         .reason
@@ -2158,7 +2175,7 @@ fn guardian_risk_summary(call: &ToolCall, review: &GuardianReviewResult) -> Guar
     }
 }
 
-fn guardian_approved_tool_call(call: &ToolCall) -> ToolCall {
+pub(super) fn guardian_approved_tool_call(call: &ToolCall) -> ToolCall {
     let mut approved = call.clone();
     match &mut approved.arguments {
         Value::Object(arguments) => {
@@ -2171,7 +2188,7 @@ fn guardian_approved_tool_call(call: &ToolCall) -> ToolCall {
     approved
 }
 
-fn value_contains_raw_secret(value: &Value) -> bool {
+pub(super) fn value_contains_raw_secret(value: &Value) -> bool {
     match value {
         Value::String(text) => string_contains_raw_secret(text),
         Value::Array(items) => items.iter().any(value_contains_raw_secret),
@@ -2253,7 +2270,7 @@ fn guardian_shell_tool_request(call: &ToolCall, cwd: &str) -> Result<SandboxExec
     })
 }
 
-fn guardian_mcp_tool_request(
+pub(super) fn guardian_mcp_tool_request(
     definition: &ToolDefinition,
     call: &ToolCall,
     cwd: &str,
@@ -2312,7 +2329,7 @@ fn guardian_plugin_runner_tool_request(
     })
 }
 
-fn guardian_review_request_for_tool(
+pub(super) fn guardian_review_request_for_tool(
     definition: &ToolDefinition,
     call: &ToolCall,
     cwd: &str,
@@ -2345,7 +2362,7 @@ fn guardian_review_request_for_tool(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn search_files_under(
+pub(super) fn search_files_under(
     runtime: &Runtime,
     turn: &Turn,
     call: &ToolCall,
@@ -2457,7 +2474,7 @@ fn search_one_file(
     }
 }
 
-fn tool_results_by_call_id(
+pub(super) fn tool_results_by_call_id(
     step: &ScriptedModelStep,
 ) -> Result<BTreeMap<ToolCallId, ToolResult>, RuntimeError> {
     let mut results = BTreeMap::new();
@@ -2476,7 +2493,7 @@ fn tool_results_by_call_id(
     Ok(results)
 }
 
-fn cancellation_before_model_reason(
+pub(super) fn cancellation_before_model_reason(
     cancellation: &Option<AgenticCancellation>,
     continuation: u32,
 ) -> Option<String> {
@@ -2488,7 +2505,7 @@ fn cancellation_before_model_reason(
     }
 }
 
-fn cancellation_tool_reason(
+pub(super) fn cancellation_tool_reason(
     cancellation: &Option<AgenticCancellation>,
     call_id: &str,
 ) -> Option<String> {
@@ -2513,7 +2530,7 @@ fn render_command_template(template: &str, vars: &[(&str, String)]) -> String {
     })
 }
 
-fn split_prompt_template_args(args: &str) -> Vec<String> {
+pub(super) fn split_prompt_template_args(args: &str) -> Vec<String> {
     let mut values = Vec::new();
     let mut current = String::new();
     let mut quote: Option<char> = None;
@@ -2568,7 +2585,7 @@ fn prompt_template_arg_slice(args: &[String], start: usize, len: Option<usize>) 
     }
 }
 
-fn render_prompt_template_body(template: &str, args: &[String]) -> String {
+pub(super) fn render_prompt_template_body(template: &str, args: &[String]) -> String {
     let all_args = args.join(" ");
     let mut rendered = String::new();
     let chars = template.chars().collect::<Vec<_>>();
@@ -2646,7 +2663,7 @@ fn command_variant_append(params: &CommandPrepareParams, _surface: &str) -> Stri
         .unwrap_or_default()
 }
 
-fn normalize_runtime_command(command: &str) -> String {
+pub(super) fn normalize_runtime_command(command: &str) -> String {
     command
         .trim()
         .trim_start_matches('/')
@@ -2824,7 +2841,7 @@ fn prepare_review_command(params: &CommandPrepareParams) -> CommandPrepareResult
     }
 }
 
-fn prepare_runtime_command(
+pub(super) fn prepare_runtime_command(
     params: CommandPrepareParams,
 ) -> Result<CommandPrepareResult, RuntimeError> {
     match normalize_runtime_command(&params.command).as_str() {
@@ -2853,7 +2870,7 @@ fn prepare_runtime_command(
     }
 }
 
-fn model_registry_models_json_path() -> PathBuf {
+pub(super) fn model_registry_models_json_path() -> PathBuf {
     std::env::var_os("OPPI_MODELS_JSON_PATH")
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)
@@ -2872,7 +2889,7 @@ fn model_registry_diagnostic(
     }
 }
 
-fn model_registry_providers_from_path(
+pub(super) fn model_registry_providers_from_path(
     path: &Path,
 ) -> (Option<serde_json::Map<String, Value>>, Vec<Diagnostic>) {
     let raw = match fs::read_to_string(path) {
@@ -2930,7 +2947,7 @@ fn model_registry_provider_aliases(provider: &str) -> Vec<String> {
     }
 }
 
-fn model_registry_builtin_model_ids(provider: &str) -> &'static [&'static str] {
+pub(super) fn model_registry_builtin_model_ids(provider: &str) -> &'static [&'static str] {
     match provider {
         "mock" => &["local-test"],
         "openai-compatible" | "openai" => OPENAI_DIRECT_MODEL_CATALOG,
@@ -2970,7 +2987,7 @@ fn model_registry_registered_auth_configured(
         .any(|provider| model_registry_string_field(provider, "apiKey").is_some())
 }
 
-fn model_registry_builtin_auth_configured(
+pub(super) fn model_registry_builtin_auth_configured(
     provider: &str,
     providers: Option<&serde_json::Map<String, Value>>,
 ) -> bool {
@@ -3000,7 +3017,7 @@ fn model_registry_builtin_auth_configured(
     }
 }
 
-fn model_registry_upsert(entries: &mut Vec<ModelRef>, model: ModelRef) {
+pub(super) fn model_registry_upsert(entries: &mut Vec<ModelRef>, model: ModelRef) {
     if let Some(existing) = entries
         .iter_mut()
         .find(|existing| existing.id == model.id && existing.provider == model.provider)
@@ -3075,7 +3092,7 @@ fn model_registry_scan_diagnostics(
     diagnostics
 }
 
-fn model_registry_apply_models_json(
+pub(super) fn model_registry_apply_models_json(
     provider: &str,
     path: &Path,
     providers: &serde_json::Map<String, Value>,
@@ -3206,7 +3223,7 @@ fn model_registry_matches_scope(provider: &str, model_id: &str, pattern: &str) -
     }
 }
 
-fn model_registry_order_models(
+pub(super) fn model_registry_order_models(
     provider: &str,
     entries: &[ModelRef],
     selected_model_id: Option<&str>,
