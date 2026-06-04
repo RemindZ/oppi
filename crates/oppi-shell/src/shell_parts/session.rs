@@ -460,6 +460,7 @@ pub(super) fn diagnostic_u64(diagnostic: &Diagnostic, key: &str) -> Option<u64> 
 pub(super) fn redact_render_text(text: &str) -> String {
     text.lines()
         .map(|line| {
+            let line = redact_inline_image_preview_line(line);
             line.split_whitespace()
                 .map(|token| {
                     let lower = token.to_ascii_lowercase();
@@ -481,6 +482,14 @@ pub(super) fn redact_render_text(text: &str) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+fn redact_inline_image_preview_line(line: &str) -> String {
+    if line.contains("\x1b_G") || line.contains("\x1b]1337;File=") {
+        "image preview: inline preview omitted from retained transcript".to_string()
+    } else {
+        line.to_string()
+    }
 }
 
 pub(super) fn transcript_entry_from_event(

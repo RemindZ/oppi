@@ -6343,6 +6343,59 @@ You are a careful repo helper.
         assert!(rendered.contains("Enable terminal images to preview inline."));
     }
 
+    #[test]
+    fn retained_tui_sanitizes_inline_image_sequences_before_storage() {
+        let mut ui = RetainedTui::new(8);
+        let rendered = "artifact artifact-image-1 created: output/image.png\nimage preview:\n\x1b_Ga=T,f=100,t=f,c=80,q=2;b3V0cHV0L2ltYWdlLnBuZw==\x1b\\";
+        ui.push_transcript(rendered.to_string());
+
+        let fallback_scrollback = ui.scrollback.back().expect("stored fallback scrollback");
+        assert!(!fallback_scrollback.contains('\x1b'));
+        assert!(!fallback_scrollback.contains("b3V0cHV0L2ltYWdlLnBuZw=="));
+        assert!(
+            fallback_scrollback
+                .contains("image preview: inline preview omitted from retained transcript")
+        );
+
+        ui.push_event_transcript(
+            &Event {
+                id: 51,
+                thread_id: "thread-1".to_string(),
+                turn_id: Some("turn-1".to_string()),
+                created_at_ms: 51,
+                kind: EventKind::ArtifactCreated {
+                    artifact: ArtifactMetadata {
+                        id: "artifact-image-1".to_string(),
+                        tool_call_id: "image-1".to_string(),
+                        output_path: "output/image.png".to_string(),
+                        mime_type: Some("image/png".to_string()),
+                        width: Some(64),
+                        height: Some(64),
+                        source_images: Vec::new(),
+                        mask: None,
+                        backend: Some("openai-images".to_string()),
+                        model: Some("gpt-image-2".to_string()),
+                        bytes: Some(1024),
+                        diagnostics: Vec::new(),
+                    },
+                },
+            },
+            rendered.to_string(),
+            &BTreeMap::new(),
+        );
+
+        let scrollback = ui.scrollback.back().expect("stored scrollback");
+        assert!(!scrollback.contains('\x1b'));
+        assert!(!scrollback.contains("b3V0cHV0L2ltYWdlLnBuZw=="));
+        assert!(scrollback.contains("artifact://output/image.png"));
+        assert!(scrollback.contains("image/png"));
+        let typed = ui.typed_scrollback.back().expect("typed artifact row");
+        assert_eq!(typed.kind, TranscriptEntryKind::Artifact);
+        assert!(!typed.body.contains('\x1b'));
+        assert!(!typed.body.contains("b3V0cHV0L2ltYWdlLnBuZw=="));
+        assert!(typed.body.contains("artifact://output/image.png"));
+    }
+
     fn sample_retained_ui_snapshot() -> RetainedTui {
         let mut ui = RetainedTui::new(20);
         ui.push_transcript("assistant:\n# Plan\n  • one\n```diff\n+ add\n- del\n```");
