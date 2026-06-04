@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import test from "node:test";
@@ -238,11 +238,12 @@ test("oppi-native delegates management commands to the configured CLI bridge", (
   });
 
   assert.equal(result.status, 0, result.stderr || result.stdout);
-  assert.deepEqual(JSON.parse(result.stdout), {
-    delegated: true,
-    args: ["plugin", "list", "--json"],
-    cwd: root,
-  });
+  const parsed = JSON.parse(result.stdout);
+  assert.deepEqual(
+    { delegated: parsed.delegated, args: parsed.args },
+    { delegated: true, args: ["plugin", "list", "--json"] },
+  );
+  assert.equal(realpathSync(parsed.cwd), realpathSync(root));
 });
 
 test("oppi-native management commands fail closed when the CLI bridge is unavailable", () => {

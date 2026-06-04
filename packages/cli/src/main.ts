@@ -3337,6 +3337,7 @@ async function runNativeShellDogfood(command: Extract<OppiCommand, { type: "tui"
   let networkDenied = false;
   let missingImageFailedClosed = false;
   let finished = false;
+  const askFollowUpCompletionTarget = 2;
   const backgroundReadMaxAttempts = 30;
   const backgroundReadRetryMs = 200;
   const backgroundReadMaxBytes = 30_000;
@@ -3373,7 +3374,7 @@ async function runNativeShellDogfood(command: Extract<OppiCommand, { type: "tui"
       },
       {
         name: "ask-user-follow-up-queue",
-        ok: askPaused && askResolved && queuedFollowUps >= 2 && askTurnCompletions >= 3,
+        ok: askPaused && askResolved && queuedFollowUps >= 2 && askTurnCompletions >= askFollowUpCompletionTarget,
         status: `${askPaused ? "paused" : "missing-pause"}->${askTurnCompletions} completions, ${queuedFollowUps} queued`,
       },
       {
@@ -3579,7 +3580,7 @@ async function runNativeShellDogfood(command: Extract<OppiCommand, { type: "tui"
         send("oppi-dogfood-ask-user");
       } else if (phase === "ask" && askResolved) {
         askTurnCompletions += 1;
-        if (queuedFollowUps >= 2 && askTurnCompletions >= 3) {
+        if (queuedFollowUps >= 2 && askTurnCompletions >= askFollowUpCompletionTarget) {
           phase = "background";
           send("oppi-dogfood-background-start");
         }

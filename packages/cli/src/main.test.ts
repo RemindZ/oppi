@@ -195,7 +195,7 @@ rl.on('line', (line) => {
   if (line === 'oppi-dogfood-ask-user') { event('askUserRequested'); return; }
   if (line === 'oppi-dogfood-follow-up-one') { emit({ shell: 'queued follow-up #1' }); return; }
   if (line === 'oppi-dogfood-follow-up-two') { emit({ shell: 'queued follow-up #2' }); return; }
-  if (line === '/answer safe') { event('askUserResolved'); event('turnCompleted'); event('turnCompleted'); event('turnCompleted'); phase = 'background'; return; }
+  if (line === '/answer safe') { event('askUserResolved'); event('turnCompleted'); event('turnCompleted'); phase = 'background'; return; }
   if (line === 'oppi-dogfood-background-start') { event('approvalRequested'); return; }
   if (line === '/approve' && phase === 'background' && backgroundSandboxDenied) { event('toolCallCompleted', { result: { status: 'denied', error: 'sandboxed background execution is unavailable on this host' } }); event('turnCompleted'); phase = 'readonly-setup'; return; }
   if (line === '/approve' && phase === 'background') { event('toolCallCompleted', { result: { output: 'background shell task started: ' + taskId } }); event('turnCompleted'); return; }
