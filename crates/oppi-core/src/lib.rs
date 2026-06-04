@@ -39,7 +39,7 @@ use oppi_tools::{
     ToolPairingTracker, ToolRegistry, describe_tool_batch, partition_ordered_tool_batches,
 };
 use plugins_mcp::*;
-use providers::*;
+pub use providers::*;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
