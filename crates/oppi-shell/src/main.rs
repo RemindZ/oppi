@@ -26,6 +26,8 @@ mod provider_ui;
 mod ratatui_ui;
 #[path = "shell_parts/rendering.rs"]
 mod rendering;
+#[path = "shell_parts/session.rs"]
+mod session;
 #[cfg(test)]
 #[path = "shell_parts/tests.rs"]
 mod shell_tests;
@@ -47,6 +49,7 @@ use models_and_memory::*;
 use provider_ui::*;
 use rendering::*;
 use serde_json::{Value, json};
+use session::*;
 use slash_palette::*;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::env;
@@ -424,5 +427,3 @@ fn run(args: Vec<String>) -> Result<(), String> {
 fn should_print_startup_banner(json_output: bool, quiet_startup: bool) -> bool {
     !json_output && !quiet_startup
 }
-
-include!("shell_parts/session.rs");

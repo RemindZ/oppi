@@ -1,12 +1,14 @@
+use super::*;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum EventOutputMode {
+pub(super) enum EventOutputMode {
     Text,
     Json,
     Silent,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum TurnOutcome {
+pub(super) enum TurnOutcome {
     Completed,
     Paused,
     Aborted(String),
@@ -14,7 +16,7 @@ enum TurnOutcome {
 }
 
 impl TurnOutcome {
-    fn into_result(self) -> Result<(), String> {
+    pub(super) fn into_result(self) -> Result<(), String> {
         match self {
             Self::Completed | Self::Paused => Ok(()),
             Self::Aborted(reason) => Err(format!("turn aborted: {reason}")),
@@ -24,23 +26,23 @@ impl TurnOutcome {
 }
 
 #[derive(Debug, Clone)]
-struct PendingApproval {
-    turn_id: String,
-    request_id: String,
-    tool_call_id: Option<String>,
-    tool_call: Option<ToolCall>,
+pub(super) struct PendingApproval {
+    pub(super) turn_id: String,
+    pub(super) request_id: String,
+    pub(super) tool_call_id: Option<String>,
+    pub(super) tool_call: Option<ToolCall>,
 }
 
 #[derive(Debug, Clone)]
-struct PendingQuestion {
-    turn_id: String,
-    request: AskUserRequest,
-    requested_at: Instant,
-    deadline_at: Option<Instant>,
+pub(super) struct PendingQuestion {
+    pub(super) turn_id: String,
+    pub(super) request: AskUserRequest,
+    pub(super) requested_at: Instant,
+    pub(super) deadline_at: Option<Instant>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-enum UiComponent {
+pub(super) enum UiComponent {
     Transcript,
     Todos,
     Approval,
@@ -51,7 +53,7 @@ enum UiComponent {
 }
 
 impl UiComponent {
-    fn label(self) -> &'static str {
+    pub(super) fn label(self) -> &'static str {
         match self {
             Self::Transcript => "transcript",
             Self::Todos => "todos",
@@ -65,17 +67,17 @@ impl UiComponent {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-struct DockState {
-    todos: Vec<String>,
-    approval: Option<String>,
-    question: Option<String>,
-    background: Option<String>,
-    suggestion: Option<String>,
-    footer: String,
+pub(super) struct DockState {
+    pub(super) todos: Vec<String>,
+    pub(super) approval: Option<String>,
+    pub(super) question: Option<String>,
+    pub(super) background: Option<String>,
+    pub(super) suggestion: Option<String>,
+    pub(super) footer: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum TranscriptEntryKind {
+pub(super) enum TranscriptEntryKind {
     Info,
     User,
     Assistant,
@@ -89,70 +91,70 @@ enum TranscriptEntryKind {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct TranscriptEntry {
-    kind: TranscriptEntryKind,
-    label: String,
-    body: String,
-    event_id: u64,
-    turn_id: Option<String>,
-    item_id: Option<String>,
-    tool_call_id: Option<String>,
-    artifact_id: Option<String>,
+pub(super) struct TranscriptEntry {
+    pub(super) kind: TranscriptEntryKind,
+    pub(super) label: String,
+    pub(super) body: String,
+    pub(super) event_id: u64,
+    pub(super) turn_id: Option<String>,
+    pub(super) item_id: Option<String>,
+    pub(super) tool_call_id: Option<String>,
+    pub(super) artifact_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-struct NativeTokenUsage {
-    input_tokens: i64,
-    output_tokens: i64,
-    total_tokens: i64,
-    provider_calls: usize,
+pub(super) struct NativeTokenUsage {
+    pub(super) input_tokens: i64,
+    pub(super) output_tokens: i64,
+    pub(super) total_tokens: i64,
+    pub(super) provider_calls: usize,
 }
 
 #[derive(Debug, Clone, Default)]
-struct NativeUsageState {
-    session: NativeTokenUsage,
-    latest_context_tokens: Option<i64>,
-    latest_context_window: Option<u64>,
-    live_limits: Option<NativeLiveUsage>,
-    live_error: Option<String>,
-    last_refresh: Option<Instant>,
+pub(super) struct NativeUsageState {
+    pub(super) session: NativeTokenUsage,
+    pub(super) latest_context_tokens: Option<i64>,
+    pub(super) latest_context_window: Option<u64>,
+    pub(super) live_limits: Option<NativeLiveUsage>,
+    pub(super) live_error: Option<String>,
+    pub(super) last_refresh: Option<Instant>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-struct NativeLiveUsage {
-    source: String,
-    plan_type: Option<String>,
-    five_hour: Option<NativeUsageWindow>,
-    weekly: Option<NativeUsageWindow>,
-    fetched_at_ms: u64,
+pub(super) struct NativeLiveUsage {
+    pub(super) source: String,
+    pub(super) plan_type: Option<String>,
+    pub(super) five_hour: Option<NativeUsageWindow>,
+    pub(super) weekly: Option<NativeUsageWindow>,
+    pub(super) fetched_at_ms: u64,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-struct NativeUsageWindow {
-    label: String,
-    used_percent: Option<f64>,
-    resets_at: Option<u64>,
+pub(super) struct NativeUsageWindow {
+    pub(super) label: String,
+    pub(super) used_percent: Option<f64>,
+    pub(super) resets_at: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct CodexUsageAuth {
-    access_token: String,
-    refresh_token: String,
-    expires: i64,
-    account_id: String,
+pub(super) struct CodexUsageAuth {
+    pub(super) access_token: String,
+    pub(super) refresh_token: String,
+    pub(super) expires: i64,
+    pub(super) account_id: String,
 }
 
 #[derive(Debug, Clone)]
-struct RetainedTui {
-    scrollback: VecDeque<String>,
-    typed_scrollback: VecDeque<TranscriptEntry>,
-    max_scrollback: usize,
-    docks: DockState,
-    dirty: BTreeSet<UiComponent>,
+pub(super) struct RetainedTui {
+    pub(super) scrollback: VecDeque<String>,
+    pub(super) typed_scrollback: VecDeque<TranscriptEntry>,
+    pub(super) max_scrollback: usize,
+    pub(super) docks: DockState,
+    pub(super) dirty: BTreeSet<UiComponent>,
 }
 
 impl RetainedTui {
-    fn new(max_scrollback: usize) -> Self {
+    pub(super) fn new(max_scrollback: usize) -> Self {
         let mut dirty = BTreeSet::new();
         dirty.insert(UiComponent::Transcript);
         dirty.insert(UiComponent::Footer);
@@ -165,7 +167,7 @@ impl RetainedTui {
         }
     }
 
-    fn clear(&mut self) {
+    pub(super) fn clear(&mut self) {
         self.scrollback.clear();
         self.typed_scrollback.clear();
         self.docks = DockState::default();
@@ -182,7 +184,7 @@ impl RetainedTui {
         .collect();
     }
 
-    fn push_transcript(&mut self, line: impl Into<String>) {
+    pub(super) fn push_transcript(&mut self, line: impl Into<String>) {
         let line = line.into();
         if line.trim().is_empty() {
             return;
@@ -199,7 +201,7 @@ impl RetainedTui {
         });
     }
 
-    fn push_event_transcript(
+    pub(super) fn push_event_transcript(
         &mut self,
         event: &Event,
         rendered: String,
@@ -212,7 +214,7 @@ impl RetainedTui {
         self.push_transcript_entry(entry);
     }
 
-    fn push_transcript_entry(&mut self, mut entry: TranscriptEntry) {
+    pub(super) fn push_transcript_entry(&mut self, mut entry: TranscriptEntry) {
         entry.body = redact_render_text(&entry.body);
         if entry.body.trim().is_empty() {
             return;
@@ -228,7 +230,7 @@ impl RetainedTui {
         self.dirty.insert(UiComponent::Transcript);
     }
 
-    fn update_docks(&mut self, next: DockState) {
+    pub(super) fn update_docks(&mut self, next: DockState) {
         if self.docks.todos != next.todos {
             self.dirty.insert(UiComponent::Todos);
         }
@@ -250,15 +252,15 @@ impl RetainedTui {
         self.docks = next;
     }
 
-    fn dirty_components(&self) -> Vec<&'static str> {
+    pub(super) fn dirty_components(&self) -> Vec<&'static str> {
         self.dirty.iter().copied().map(UiComponent::label).collect()
     }
 
-    fn clear_dirty(&mut self) {
+    pub(super) fn clear_dirty(&mut self) {
         self.dirty.clear();
     }
 
-    fn render_docks(&self, width: usize) -> String {
+    pub(super) fn render_docks(&self, width: usize) -> String {
         let mut lines = self.dock_lines(width);
         if lines.is_empty() {
             return String::new();
@@ -270,7 +272,7 @@ impl RetainedTui {
         lines.join("\n")
     }
 
-    fn render_frame(&self, width: usize, height: usize) -> String {
+    pub(super) fn render_frame(&self, width: usize, height: usize) -> String {
         let width = width.max(24);
         let height = height.max(6);
         let dock_lines = self.dock_lines(width);
@@ -311,7 +313,7 @@ impl RetainedTui {
         lines.join("\n")
     }
 
-    fn dock_lines(&self, width: usize) -> Vec<String> {
+    pub(super) fn dock_lines(&self, width: usize) -> Vec<String> {
         let mut lines = Vec::new();
         if !self.docks.todos.is_empty() {
             lines.push(width_safe_line(
@@ -339,7 +341,7 @@ impl RetainedTui {
 }
 
 impl NativeUsageState {
-    fn observe_provider_diagnostic(&mut self, diagnostic: &Diagnostic) {
+    pub(super) fn observe_provider_diagnostic(&mut self, diagnostic: &Diagnostic) {
         if diagnostic.metadata.get("component").map(String::as_str) != Some("provider") {
             return;
         }
@@ -365,7 +367,7 @@ impl NativeUsageState {
         }
     }
 
-    fn session_footer_label(&self) -> String {
+    pub(super) fn session_footer_label(&self) -> String {
         if let Some(window) = self
             .live_limits
             .as_ref()
@@ -380,19 +382,19 @@ impl NativeUsageState {
         )
     }
 
-    fn weekly_footer_label(&self) -> Option<String> {
+    pub(super) fn weekly_footer_label(&self) -> Option<String> {
         let window = self.live_limits.as_ref()?.weekly.as_ref()?;
         let remaining = window.remaining_percent()?;
         Some(format!("week {}% left", remaining.round() as i64))
     }
 
-    fn context_footer_label(&self) -> String {
+    pub(super) fn context_footer_label(&self) -> String {
         self.latest_context_tokens
             .map(|tokens| format!("ctx {}", format_compact_tokens(tokens)))
             .unwrap_or_else(|| "ctx pending".to_string())
     }
 
-    fn panel_limits_line(&self) -> String {
+    pub(super) fn panel_limits_line(&self) -> String {
         if let Some(limits) = &self.live_limits {
             let mut parts = Vec::new();
             if let Some(window) = &limits.five_hour {
@@ -422,12 +424,12 @@ impl NativeUsageState {
 }
 
 impl NativeUsageWindow {
-    fn remaining_percent(&self) -> Option<f64> {
+    pub(super) fn remaining_percent(&self) -> Option<f64> {
         self.used_percent
             .map(|used| (100.0 - used).clamp(0.0, 100.0))
     }
 
-    fn panel_label(&self) -> String {
+    pub(super) fn panel_label(&self) -> String {
         let pct = self
             .remaining_percent()
             .map(|remaining| format!("{}% left", remaining.round() as i64))
@@ -441,21 +443,21 @@ impl NativeUsageWindow {
     }
 }
 
-fn diagnostic_i64(diagnostic: &Diagnostic, key: &str) -> Option<i64> {
+pub(super) fn diagnostic_i64(diagnostic: &Diagnostic, key: &str) -> Option<i64> {
     diagnostic
         .metadata
         .get(key)
         .and_then(|value| value.parse::<i64>().ok())
 }
 
-fn diagnostic_u64(diagnostic: &Diagnostic, key: &str) -> Option<u64> {
+pub(super) fn diagnostic_u64(diagnostic: &Diagnostic, key: &str) -> Option<u64> {
     diagnostic
         .metadata
         .get(key)
         .and_then(|value| value.parse::<u64>().ok())
 }
 
-fn redact_render_text(text: &str) -> String {
+pub(super) fn redact_render_text(text: &str) -> String {
     text.lines()
         .map(|line| {
             line.split_whitespace()
@@ -481,7 +483,7 @@ fn redact_render_text(text: &str) -> String {
         .join("\n")
 }
 
-fn transcript_entry_from_event(
+pub(super) fn transcript_entry_from_event(
     event: &Event,
     rendered: String,
     calls: &BTreeMap<String, ToolCall>,
@@ -604,7 +606,7 @@ fn transcript_entry_from_event(
     entry
 }
 
-fn permission_review_transcript_kind(
+pub(super) fn permission_review_transcript_kind(
     status: oppi_protocol::GuardianReviewStatus,
 ) -> TranscriptEntryKind {
     match status {
@@ -615,7 +617,7 @@ fn permission_review_transcript_kind(
     }
 }
 
-fn tool_display_kind_name_main(name: &str) -> &'static str {
+pub(super) fn tool_display_kind_name_main(name: &str) -> &'static str {
     if tool_name_suggests_write_main(name) {
         "write"
     } else if tool_name_suggests_run_main(name) {
@@ -625,7 +627,7 @@ fn tool_display_kind_name_main(name: &str) -> &'static str {
     }
 }
 
-fn tool_transcript_kind(call: &ToolCall) -> TranscriptEntryKind {
+pub(super) fn tool_transcript_kind(call: &ToolCall) -> TranscriptEntryKind {
     if tool_name_suggests_write_main(&call.name) {
         TranscriptEntryKind::ToolWrite
     } else if tool_name_suggests_run_main(&call.name) {
@@ -635,7 +637,7 @@ fn tool_transcript_kind(call: &ToolCall) -> TranscriptEntryKind {
     }
 }
 
-fn tool_name_suggests_write_main(name: &str) -> bool {
+pub(super) fn tool_name_suggests_write_main(name: &str) -> bool {
     let lower = name.to_ascii_lowercase();
     lower.contains("write")
         || lower.contains("edit")
@@ -643,12 +645,12 @@ fn tool_name_suggests_write_main(name: &str) -> bool {
         || lower.contains("patch")
 }
 
-fn tool_name_suggests_run_main(name: &str) -> bool {
+pub(super) fn tool_name_suggests_run_main(name: &str) -> bool {
     let lower = name.to_ascii_lowercase();
     lower.contains("shell") || lower.contains("bash") || lower.contains("exec")
 }
 
-fn artifact_transcript_body(artifact: &ArtifactMetadata) -> String {
+pub(super) fn artifact_transcript_body(artifact: &ArtifactMetadata) -> String {
     let mut parts = vec![format!("artifact://{}", artifact.output_path)];
     if let Some(mime) = artifact.mime_type.as_deref() {
         parts.push(mime.to_string());
@@ -665,39 +667,39 @@ fn artifact_transcript_body(artifact: &ArtifactMetadata) -> String {
 }
 
 #[derive(Debug, Clone)]
-struct LoadedShellTheme {
-    name: String,
-    source: String,
-    colors: Value,
-    export: Option<Value>,
-    line_tokens: ThemeTokens,
+pub(super) struct LoadedShellTheme {
+    pub(super) name: String,
+    pub(super) source: String,
+    pub(super) colors: Value,
+    pub(super) export: Option<Value>,
+    pub(super) line_tokens: ThemeTokens,
 }
 
 #[derive(Debug, Clone)]
-struct ModelRegistryCache {
-    provider: String,
-    selected_model: Option<String>,
-    scope: Vec<String>,
-    available_only: bool,
-    items: Vec<ModelRef>,
+pub(super) struct ModelRegistryCache {
+    pub(super) provider: String,
+    pub(super) selected_model: Option<String>,
+    pub(super) scope: Vec<String>,
+    pub(super) available_only: bool,
+    pub(super) items: Vec<ModelRef>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-struct PermissionSandboxSettings {
-    allow_internet: bool,
-    allow_ssh: bool,
-    project_roots: Vec<String>,
-    readable_roots: Vec<String>,
-    writable_roots: Vec<String>,
-    protected_patterns: Vec<String>,
+pub(super) struct PermissionSandboxSettings {
+    pub(super) allow_internet: bool,
+    pub(super) allow_ssh: bool,
+    pub(super) project_roots: Vec<String>,
+    pub(super) readable_roots: Vec<String>,
+    pub(super) writable_roots: Vec<String>,
+    pub(super) protected_patterns: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct OppiCompactSettings {
-    idle_enabled: bool,
-    idle_minutes: u64,
-    idle_threshold_percent: u64,
-    smart_threshold_percent: u64,
+pub(super) struct OppiCompactSettings {
+    pub(super) idle_enabled: bool,
+    pub(super) idle_minutes: u64,
+    pub(super) idle_threshold_percent: u64,
+    pub(super) smart_threshold_percent: u64,
 }
 
 impl Default for OppiCompactSettings {
@@ -712,7 +714,7 @@ impl Default for OppiCompactSettings {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum FollowUpMode {
+pub(super) enum FollowUpMode {
     All,
     OneAtATime,
 }
@@ -724,14 +726,14 @@ impl Default for FollowUpMode {
 }
 
 impl FollowUpMode {
-    fn as_str(self) -> &'static str {
+    pub(super) fn as_str(self) -> &'static str {
         match self {
             Self::All => "all",
             Self::OneAtATime => "one-at-a-time",
         }
     }
 
-    fn label(self) -> &'static str {
+    pub(super) fn label(self) -> &'static str {
         match self {
             Self::All => "all",
             Self::OneAtATime => "one at a time",
@@ -740,7 +742,7 @@ impl FollowUpMode {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum SteeringMode {
+pub(super) enum SteeringMode {
     All,
     OneAtATime,
 }
@@ -752,7 +754,7 @@ impl Default for SteeringMode {
 }
 
 impl SteeringMode {
-    fn as_str(self) -> &'static str {
+    pub(super) fn as_str(self) -> &'static str {
         match self {
             Self::All => "all",
             Self::OneAtATime => "one-at-a-time",
@@ -761,7 +763,7 @@ impl SteeringMode {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum FooterUsageDisplay {
+pub(super) enum FooterUsageDisplay {
     SessionWeekly,
     Session,
     Weekly,
@@ -775,7 +777,7 @@ impl Default for FooterUsageDisplay {
 }
 
 impl FooterUsageDisplay {
-    fn as_str(self) -> &'static str {
+    pub(super) fn as_str(self) -> &'static str {
         match self {
             Self::SessionWeekly => "session-weekly",
             Self::Session => "session",
@@ -784,7 +786,7 @@ impl FooterUsageDisplay {
         }
     }
 
-    fn label(self) -> &'static str {
+    pub(super) fn label(self) -> &'static str {
         match self {
             Self::SessionWeekly => "session + weekly",
             Self::Session => "session",
@@ -795,14 +797,14 @@ impl FooterUsageDisplay {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct FooterSettings {
-    show_path: bool,
-    show_help_bar: bool,
-    usage_display: FooterUsageDisplay,
-    show_model: bool,
-    show_permission: bool,
-    show_memory: bool,
-    show_context: bool,
+pub(super) struct FooterSettings {
+    pub(super) show_path: bool,
+    pub(super) show_help_bar: bool,
+    pub(super) usage_display: FooterUsageDisplay,
+    pub(super) show_model: bool,
+    pub(super) show_permission: bool,
+    pub(super) show_memory: bool,
+    pub(super) show_context: bool,
 }
 
 impl Default for FooterSettings {
@@ -820,7 +822,7 @@ impl Default for FooterSettings {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ImagePreviewProtocolOverride {
+pub(super) enum ImagePreviewProtocolOverride {
     Auto,
     Kitty,
     Wezterm,
@@ -830,7 +832,7 @@ enum ImagePreviewProtocolOverride {
 }
 
 impl ImagePreviewProtocolOverride {
-    fn as_str(self) -> &'static str {
+    pub(super) fn as_str(self) -> &'static str {
         match self {
             Self::Auto => "auto",
             Self::Kitty => "kitty",
@@ -849,12 +851,12 @@ impl Default for ImagePreviewProtocolOverride {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct ImageSettings {
-    show_images: bool,
-    image_width_cells: u64,
-    auto_resize_images: bool,
-    block_images: bool,
-    preview_protocol: ImagePreviewProtocolOverride,
+pub(super) struct ImageSettings {
+    pub(super) show_images: bool,
+    pub(super) image_width_cells: u64,
+    pub(super) auto_resize_images: bool,
+    pub(super) block_images: bool,
+    pub(super) preview_protocol: ImagePreviewProtocolOverride,
 }
 
 impl Default for ImageSettings {
@@ -870,27 +872,27 @@ impl Default for ImageSettings {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct MemorySettings {
-    enabled: bool,
-    agent_model: String,
-    deep_model: String,
-    startup_recall: bool,
-    task_start_recall: bool,
-    turn_summaries: bool,
-    idle_consolidation: bool,
-    dashboard_port: Option<u16>,
-    hoppi_install_offer: String,
-    sync_enabled: bool,
-    sync_repo_path: Option<String>,
-    sync_repo_url: Option<String>,
-    sync_pull_on_startup: bool,
-    sync_push_on_exit: bool,
-    sync_background: String,
-    sync_encryption: String,
-    sync_passphrase_source: String,
-    sync_passphrase_env: String,
-    sync_passphrase_file: Option<String>,
-    sync_conflict_mode: String,
+pub(super) struct MemorySettings {
+    pub(super) enabled: bool,
+    pub(super) agent_model: String,
+    pub(super) deep_model: String,
+    pub(super) startup_recall: bool,
+    pub(super) task_start_recall: bool,
+    pub(super) turn_summaries: bool,
+    pub(super) idle_consolidation: bool,
+    pub(super) dashboard_port: Option<u16>,
+    pub(super) hoppi_install_offer: String,
+    pub(super) sync_enabled: bool,
+    pub(super) sync_repo_path: Option<String>,
+    pub(super) sync_repo_url: Option<String>,
+    pub(super) sync_pull_on_startup: bool,
+    pub(super) sync_push_on_exit: bool,
+    pub(super) sync_background: String,
+    pub(super) sync_encryption: String,
+    pub(super) sync_passphrase_source: String,
+    pub(super) sync_passphrase_env: String,
+    pub(super) sync_passphrase_file: Option<String>,
+    pub(super) sync_conflict_mode: String,
 }
 
 impl Default for MemorySettings {
@@ -921,14 +923,14 @@ impl Default for MemorySettings {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum HoppiSyncDirection {
+pub(super) enum HoppiSyncDirection {
     Pull,
     Push,
     Both,
 }
 
 impl HoppiSyncDirection {
-    fn as_str(self) -> &'static str {
+    pub(super) fn as_str(self) -> &'static str {
         match self {
             Self::Pull => "pull",
             Self::Push => "push",
@@ -938,14 +940,14 @@ impl HoppiSyncDirection {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum HoppiSyncLifecycle {
+pub(super) enum HoppiSyncLifecycle {
     Startup,
     Exit,
     Clear,
 }
 
 impl HoppiSyncLifecycle {
-    fn reason(self) -> &'static str {
+    pub(super) fn reason(self) -> &'static str {
         match self {
             Self::Startup => "startup",
             Self::Exit => "exit",
@@ -953,7 +955,7 @@ impl HoppiSyncLifecycle {
         }
     }
 
-    fn label(self) -> &'static str {
+    pub(super) fn label(self) -> &'static str {
         match self {
             Self::Startup => "startup",
             Self::Exit => "exit",
@@ -963,27 +965,27 @@ impl HoppiSyncLifecycle {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum HoppiSessionRecapReason {
+pub(super) enum HoppiSessionRecapReason {
     Exit,
     Clear,
 }
 
 impl HoppiSessionRecapReason {
-    fn as_str(self) -> &'static str {
+    pub(super) fn as_str(self) -> &'static str {
         match self {
             Self::Exit => "exit",
             Self::Clear => "clear",
         }
     }
 
-    fn job_reason(self) -> &'static str {
+    pub(super) fn job_reason(self) -> &'static str {
         match self {
             Self::Exit => "exit-recap",
             Self::Clear => "clear-recap",
         }
     }
 
-    fn tag(self) -> &'static str {
+    pub(super) fn tag(self) -> &'static str {
         match self {
             Self::Exit => "oppi-exit-recap",
             Self::Clear => "oppi-clear-recap",
@@ -992,258 +994,261 @@ impl HoppiSessionRecapReason {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct HoppiSyncInvocation {
-    module_path: PathBuf,
-    repo_path: PathBuf,
-    direction: HoppiSyncDirection,
-    remote: Option<String>,
-    conflict_mode: String,
-    passphrase: Option<String>,
-    message: String,
+pub(super) struct HoppiSyncInvocation {
+    pub(super) module_path: PathBuf,
+    pub(super) repo_path: PathBuf,
+    pub(super) direction: HoppiSyncDirection,
+    pub(super) remote: Option<String>,
+    pub(super) conflict_mode: String,
+    pub(super) passphrase: Option<String>,
+    pub(super) message: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct HoppiSyncCommandResult {
-    imported: u64,
-    exported: u64,
-    committed: bool,
-    pushed: bool,
-    conflicts: Vec<String>,
-    embeddings_rebuild_recommended: bool,
-    rebuilt_embeddings: bool,
+pub(super) struct HoppiSyncCommandResult {
+    pub(super) imported: u64,
+    pub(super) exported: u64,
+    pub(super) committed: bool,
+    pub(super) pushed: bool,
+    pub(super) conflicts: Vec<String>,
+    pub(super) embeddings_rebuild_recommended: bool,
+    pub(super) rebuilt_embeddings: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct HoppiSyncRunResult {
-    invocation: HoppiSyncInvocation,
-    result: HoppiSyncCommandResult,
+pub(super) struct HoppiSyncRunResult {
+    pub(super) invocation: HoppiSyncInvocation,
+    pub(super) result: HoppiSyncCommandResult,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct HoppiRecallInvocation {
-    module_path: PathBuf,
-    cwd: PathBuf,
-    prompt: String,
-    include_startup: bool,
-    include_task: bool,
+pub(super) struct HoppiRecallInvocation {
+    pub(super) module_path: PathBuf,
+    pub(super) cwd: PathBuf,
+    pub(super) prompt: String,
+    pub(super) include_startup: bool,
+    pub(super) include_task: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-struct HoppiRecallCommandResult {
-    context_markdown: Option<String>,
-    context_bytes: u64,
-    memory_count: u64,
-    pinned_count: Option<u64>,
-    store_path: Option<String>,
-    records: Vec<MemoryRecord>,
-    omitted_reason: Option<String>,
-    truncated: bool,
+pub(super) struct HoppiRecallCommandResult {
+    pub(super) context_markdown: Option<String>,
+    pub(super) context_bytes: u64,
+    pub(super) memory_count: u64,
+    pub(super) pinned_count: Option<u64>,
+    pub(super) store_path: Option<String>,
+    pub(super) records: Vec<MemoryRecord>,
+    pub(super) omitted_reason: Option<String>,
+    pub(super) truncated: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct HoppiDashboardInvocation {
-    module_path: PathBuf,
-    cwd: PathBuf,
-    port: Option<u16>,
+pub(super) struct HoppiDashboardInvocation {
+    pub(super) module_path: PathBuf,
+    pub(super) cwd: PathBuf,
+    pub(super) port: Option<u16>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct HoppiDashboardCommandResult {
-    url: String,
-    fallback_url: Option<String>,
-    memory_count: u64,
-    pinned_count: u64,
-    store_path: Option<String>,
+pub(super) struct HoppiDashboardCommandResult {
+    pub(super) url: String,
+    pub(super) fallback_url: Option<String>,
+    pub(super) memory_count: u64,
+    pub(super) pinned_count: u64,
+    pub(super) store_path: Option<String>,
 }
 
-struct HoppiDashboardProcess {
-    result: HoppiDashboardCommandResult,
-    child: Child,
+pub(super) struct HoppiDashboardProcess {
+    pub(super) result: HoppiDashboardCommandResult,
+    pub(super) child: Child,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct HoppiListInvocation {
-    module_path: PathBuf,
-    cwd: PathBuf,
-    include_superseded: bool,
-    pinned_only: bool,
-    limit: Option<u64>,
+pub(super) struct HoppiListInvocation {
+    pub(super) module_path: PathBuf,
+    pub(super) cwd: PathBuf,
+    pub(super) include_superseded: bool,
+    pub(super) pinned_only: bool,
+    pub(super) limit: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-struct HoppiListCommandResult {
-    records: Vec<MemoryRecord>,
-    memory_count: u64,
-    pinned_count: u64,
-    store_path: Option<String>,
+pub(super) struct HoppiListCommandResult {
+    pub(super) records: Vec<MemoryRecord>,
+    pub(super) memory_count: u64,
+    pub(super) pinned_count: u64,
+    pub(super) store_path: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct HoppiForgetInvocation {
-    module_path: PathBuf,
-    cwd: PathBuf,
-    id: String,
+pub(super) struct HoppiForgetInvocation {
+    pub(super) module_path: PathBuf,
+    pub(super) cwd: PathBuf,
+    pub(super) id: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct HoppiForgetCommandResult {
-    id: String,
-    memory_count: Option<u64>,
-    pinned_count: Option<u64>,
-    store_path: Option<String>,
+pub(super) struct HoppiForgetCommandResult {
+    pub(super) id: String,
+    pub(super) memory_count: Option<u64>,
+    pub(super) pinned_count: Option<u64>,
+    pub(super) store_path: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct HoppiPinInvocation {
-    module_path: PathBuf,
-    cwd: PathBuf,
-    id: String,
-    pinned: bool,
+pub(super) struct HoppiPinInvocation {
+    pub(super) module_path: PathBuf,
+    pub(super) cwd: PathBuf,
+    pub(super) id: String,
+    pub(super) pinned: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-struct HoppiPinCommandResult {
-    id: String,
-    pinned: bool,
-    record: Option<MemoryRecord>,
-    memory_count: Option<u64>,
-    pinned_count: Option<u64>,
-    store_path: Option<String>,
+pub(super) struct HoppiPinCommandResult {
+    pub(super) id: String,
+    pub(super) pinned: bool,
+    pub(super) record: Option<MemoryRecord>,
+    pub(super) memory_count: Option<u64>,
+    pub(super) pinned_count: Option<u64>,
+    pub(super) store_path: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-struct HoppiUpdateInvocation {
-    module_path: PathBuf,
-    cwd: PathBuf,
-    id: String,
-    patch: Value,
+pub(super) struct HoppiUpdateInvocation {
+    pub(super) module_path: PathBuf,
+    pub(super) cwd: PathBuf,
+    pub(super) id: String,
+    pub(super) patch: Value,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-struct HoppiUpdateCommandResult {
-    id: String,
-    record: Option<MemoryRecord>,
-    memory_count: Option<u64>,
-    pinned_count: Option<u64>,
-    store_path: Option<String>,
+pub(super) struct HoppiUpdateCommandResult {
+    pub(super) id: String,
+    pub(super) record: Option<MemoryRecord>,
+    pub(super) memory_count: Option<u64>,
+    pub(super) pinned_count: Option<u64>,
+    pub(super) store_path: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct HoppiConsolidateInvocation {
-    module_path: PathBuf,
-    cwd: PathBuf,
-    dry_run: bool,
-    stage: String,
-    limit: Option<u64>,
-    budget: Option<u64>,
-    agent_model: String,
-    deep_model: String,
+pub(super) struct HoppiConsolidateInvocation {
+    pub(super) module_path: PathBuf,
+    pub(super) cwd: PathBuf,
+    pub(super) dry_run: bool,
+    pub(super) stage: String,
+    pub(super) limit: Option<u64>,
+    pub(super) budget: Option<u64>,
+    pub(super) agent_model: String,
+    pub(super) deep_model: String,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-struct HoppiConsolidateCommandResult {
-    dry_run: bool,
-    model_used: Option<String>,
-    summary: Option<String>,
-    records: Vec<MemoryRecord>,
-    deleted_ids: Vec<String>,
-    memory_count: u64,
-    pinned_count: Option<u64>,
-    store_path: Option<String>,
-    last_consolidated_at: Option<String>,
-    queue_depth: Option<u64>,
+pub(super) struct HoppiConsolidateCommandResult {
+    pub(super) dry_run: bool,
+    pub(super) model_used: Option<String>,
+    pub(super) summary: Option<String>,
+    pub(super) records: Vec<MemoryRecord>,
+    pub(super) deleted_ids: Vec<String>,
+    pub(super) memory_count: u64,
+    pub(super) pinned_count: Option<u64>,
+    pub(super) store_path: Option<String>,
+    pub(super) last_consolidated_at: Option<String>,
+    pub(super) queue_depth: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct HoppiRememberInvocation {
-    module_path: PathBuf,
-    cwd: PathBuf,
-    summary: String,
-    tags: Vec<String>,
-    source: String,
-    source_session_id: String,
-    layer: Option<String>,
+pub(super) struct HoppiRememberInvocation {
+    pub(super) module_path: PathBuf,
+    pub(super) cwd: PathBuf,
+    pub(super) summary: String,
+    pub(super) tags: Vec<String>,
+    pub(super) source: String,
+    pub(super) source_session_id: String,
+    pub(super) layer: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-struct HoppiRememberCommandResult {
-    saved: bool,
-    memory_count: u64,
-    pinned_count: Option<u64>,
-    store_path: Option<String>,
-    record: Option<MemoryRecord>,
+pub(super) struct HoppiRememberCommandResult {
+    pub(super) saved: bool,
+    pub(super) memory_count: u64,
+    pub(super) pinned_count: Option<u64>,
+    pub(super) store_path: Option<String>,
+    pub(super) record: Option<MemoryRecord>,
 }
 
-struct ShellSession {
-    rpc: RpcClient,
-    thread_id: String,
-    cwd: String,
-    cursor: u64,
-    pending_approval: Option<PendingApproval>,
-    pending_question: Option<PendingQuestion>,
-    active_turn_id: Option<String>,
-    active_turn_model_provider: Option<OpenAiCompatibleConfig>,
-    todo_state: TodoState,
-    current_goal: Option<ThreadGoal>,
-    usage_state: NativeUsageState,
-    memory_status: Option<MemoryStatus>,
-    suggestion: Option<SuggestedNextMessage>,
-    permission_mode: PermissionMode,
-    permission_mode_source: String,
-    permission_review_settings: GuardianReviewSettings,
-    permission_sandbox_settings: PermissionSandboxSettings,
-    compact_settings: OppiCompactSettings,
-    ask_user_settings: AskUserSettings,
-    follow_up_mode: FollowUpMode,
-    steering_mode: SteeringMode,
-    quiet_startup: bool,
-    enable_skill_commands: bool,
-    autocomplete_max_visible: usize,
-    show_hardware_cursor: bool,
-    double_escape_action: DoubleEscapeAction,
-    tree_filter_mode: TreeFilterMode,
-    show_terminal_progress: bool,
-    terminal_clear_on_shrink: bool,
-    editor_padding_x: usize,
-    skill_command_cache: Vec<ResolvedSkill>,
-    footer_settings: FooterSettings,
-    image_settings: ImageSettings,
-    memory_settings: MemorySettings,
-    hoppi_dashboard_process: Option<HoppiDashboardProcess>,
-    next_hoppi_background_sync_at: Option<Instant>,
-    hoppi_dirty_version: u64,
-    hoppi_consolidated_version: u64,
-    hoppi_idle_consolidation_attempted_version: u64,
-    hoppi_dirty_at: Option<Instant>,
-    hoppi_idle_consolidating: bool,
-    compaction_idle_since: Option<Instant>,
-    last_compaction_offer_key: Option<String>,
-    mcp_summary: Option<String>,
-    follow_up_queue: VecDeque<String>,
-    steering_queue: VecDeque<String>,
-    steered_turns: BTreeSet<String>,
-    last_prompt: Option<String>,
-    prompt_variant: String,
-    theme: String,
-    loaded_theme: Option<LoadedShellTheme>,
-    theme_list_cache: Option<Value>,
-    theme_preview_cache: BTreeMap<String, LoadedShellTheme>,
-    selected_model: Option<String>,
-    model_registry_cache: Option<ModelRegistryCache>,
-    known_model_ids: BTreeSet<String>,
-    scoped_model_ids: Vec<String>,
-    role_models: BTreeMap<String, String>,
-    role_profile_path: PathBuf,
-    tool_calls: BTreeMap<String, ToolCall>,
-    background_summary: Option<String>,
-    folded_threads: BTreeSet<String>,
-    pending_login_picker: Option<LoginPicker>,
-    meridian_child: Option<Child>,
-    ui: RetainedTui,
-    terminal_ui_active: bool,
+pub(super) struct ShellSession {
+    pub(super) rpc: RpcClient,
+    pub(super) thread_id: String,
+    pub(super) cwd: String,
+    pub(super) cursor: u64,
+    pub(super) pending_approval: Option<PendingApproval>,
+    pub(super) pending_question: Option<PendingQuestion>,
+    pub(super) active_turn_id: Option<String>,
+    pub(super) active_turn_model_provider: Option<OpenAiCompatibleConfig>,
+    pub(super) todo_state: TodoState,
+    pub(super) current_goal: Option<ThreadGoal>,
+    pub(super) usage_state: NativeUsageState,
+    pub(super) memory_status: Option<MemoryStatus>,
+    pub(super) suggestion: Option<SuggestedNextMessage>,
+    pub(super) permission_mode: PermissionMode,
+    pub(super) permission_mode_source: String,
+    pub(super) permission_review_settings: GuardianReviewSettings,
+    pub(super) permission_sandbox_settings: PermissionSandboxSettings,
+    pub(super) compact_settings: OppiCompactSettings,
+    pub(super) ask_user_settings: AskUserSettings,
+    pub(super) follow_up_mode: FollowUpMode,
+    pub(super) steering_mode: SteeringMode,
+    pub(super) quiet_startup: bool,
+    pub(super) enable_skill_commands: bool,
+    pub(super) autocomplete_max_visible: usize,
+    pub(super) show_hardware_cursor: bool,
+    pub(super) double_escape_action: DoubleEscapeAction,
+    pub(super) tree_filter_mode: TreeFilterMode,
+    pub(super) show_terminal_progress: bool,
+    pub(super) terminal_clear_on_shrink: bool,
+    pub(super) editor_padding_x: usize,
+    pub(super) skill_command_cache: Vec<ResolvedSkill>,
+    pub(super) footer_settings: FooterSettings,
+    pub(super) image_settings: ImageSettings,
+    pub(super) memory_settings: MemorySettings,
+    pub(super) hoppi_dashboard_process: Option<HoppiDashboardProcess>,
+    pub(super) next_hoppi_background_sync_at: Option<Instant>,
+    pub(super) hoppi_dirty_version: u64,
+    pub(super) hoppi_consolidated_version: u64,
+    pub(super) hoppi_idle_consolidation_attempted_version: u64,
+    pub(super) hoppi_dirty_at: Option<Instant>,
+    pub(super) hoppi_idle_consolidating: bool,
+    pub(super) compaction_idle_since: Option<Instant>,
+    pub(super) last_compaction_offer_key: Option<String>,
+    pub(super) mcp_summary: Option<String>,
+    pub(super) follow_up_queue: VecDeque<String>,
+    pub(super) steering_queue: VecDeque<String>,
+    pub(super) steered_turns: BTreeSet<String>,
+    pub(super) last_prompt: Option<String>,
+    pub(super) prompt_variant: String,
+    pub(super) theme: String,
+    pub(super) loaded_theme: Option<LoadedShellTheme>,
+    pub(super) theme_list_cache: Option<Value>,
+    pub(super) theme_preview_cache: BTreeMap<String, LoadedShellTheme>,
+    pub(super) selected_model: Option<String>,
+    pub(super) model_registry_cache: Option<ModelRegistryCache>,
+    pub(super) known_model_ids: BTreeSet<String>,
+    pub(super) scoped_model_ids: Vec<String>,
+    pub(super) role_models: BTreeMap<String, String>,
+    pub(super) role_profile_path: PathBuf,
+    pub(super) tool_calls: BTreeMap<String, ToolCall>,
+    pub(super) background_summary: Option<String>,
+    pub(super) folded_threads: BTreeSet<String>,
+    pub(super) pending_login_picker: Option<LoginPicker>,
+    pub(super) meridian_child: Option<Child>,
+    pub(super) ui: RetainedTui,
+    pub(super) terminal_ui_active: bool,
 }
 
-fn take_follow_up_batch(queue: &mut VecDeque<String>, mode: FollowUpMode) -> Vec<String> {
+pub(super) fn take_follow_up_batch(
+    queue: &mut VecDeque<String>,
+    mode: FollowUpMode,
+) -> Vec<String> {
     let Some(first) = queue.pop_front() else {
         return Vec::new();
     };
@@ -1254,7 +1259,7 @@ fn take_follow_up_batch(queue: &mut VecDeque<String>, mode: FollowUpMode) -> Vec
     batch
 }
 
-fn format_follow_up_batch_prompt(prompts: &[String]) -> String {
+pub(super) fn format_follow_up_batch_prompt(prompts: &[String]) -> String {
     match prompts {
         [] => String::new(),
         [prompt] => prompt.clone(),
@@ -1269,7 +1274,7 @@ fn format_follow_up_batch_prompt(prompts: &[String]) -> String {
     }
 }
 
-fn format_follow_up_run_message(prompts: &[String]) -> String {
+pub(super) fn format_follow_up_run_message(prompts: &[String]) -> String {
     match prompts {
         [] => "running queued follow-up".to_string(),
         [prompt] => format!("running queued follow-up: {prompt}"),
@@ -1277,7 +1282,7 @@ fn format_follow_up_run_message(prompts: &[String]) -> String {
     }
 }
 
-fn take_steering_batch(queue: &mut VecDeque<String>, mode: SteeringMode) -> Vec<String> {
+pub(super) fn take_steering_batch(queue: &mut VecDeque<String>, mode: SteeringMode) -> Vec<String> {
     let Some(first) = queue.pop_front() else {
         return Vec::new();
     };
@@ -1288,7 +1293,7 @@ fn take_steering_batch(queue: &mut VecDeque<String>, mode: SteeringMode) -> Vec<
     batch
 }
 
-fn format_steering_batch_prompt(prompts: &[String]) -> String {
+pub(super) fn format_steering_batch_prompt(prompts: &[String]) -> String {
     match prompts {
         [] => String::new(),
         [prompt] => prompt.clone(),
@@ -1303,7 +1308,7 @@ fn format_steering_batch_prompt(prompts: &[String]) -> String {
     }
 }
 
-fn format_steering_run_message(prompts: &[String]) -> String {
+pub(super) fn format_steering_run_message(prompts: &[String]) -> String {
     match prompts {
         [] => "running queued steering".to_string(),
         [prompt] => format!("running queued steering: {prompt}"),
@@ -1312,7 +1317,7 @@ fn format_steering_run_message(prompts: &[String]) -> String {
 }
 
 impl ShellSession {
-    fn refresh_native_usage(&mut self, provider: &ProviderConfig, force: bool) {
+    pub(super) fn refresh_native_usage(&mut self, provider: &ProviderConfig, force: bool) {
         let Some(config) = codex_usage_provider_config(provider) else {
             return;
         };
@@ -1337,7 +1342,7 @@ impl ShellSession {
         self.sync_ui_docks();
     }
 
-    fn memory_footer_label(&self) -> String {
+    pub(super) fn memory_footer_label(&self) -> String {
         self.memory_status
             .as_ref()
             .map(|status| {
@@ -1350,7 +1355,10 @@ impl ShellSession {
             .unwrap_or_else(|| "unknown".to_string())
     }
 
-    fn connect(server_path: PathBuf, resume_thread: Option<String>) -> Result<Self, String> {
+    pub(super) fn connect(
+        server_path: PathBuf,
+        resume_thread: Option<String>,
+    ) -> Result<Self, String> {
         let mut rpc = RpcClient::spawn(server_path)?;
         initialize_rpc_client(&mut rpc)?;
 
@@ -1476,7 +1484,7 @@ impl ShellSession {
         Ok(session)
     }
 
-    fn line_theme_tokens(&self) -> ThemeTokens {
+    pub(super) fn line_theme_tokens(&self) -> ThemeTokens {
         if !ansi_enabled() {
             return plain_theme_tokens();
         }
@@ -1486,7 +1494,7 @@ impl ShellSession {
             .unwrap_or_else(|| theme_tokens(&self.theme))
     }
 
-    fn refresh_skill_command_cache(&mut self) {
+    pub(super) fn refresh_skill_command_cache(&mut self) {
         let Ok(value) = self
             .rpc
             .request("skills/list", json!({ "threadId": self.thread_id }))
@@ -1501,7 +1509,7 @@ impl ShellSession {
         self.skill_command_cache = result.items;
     }
 
-    fn refresh_theme_settings_cache(&mut self) {
+    pub(super) fn refresh_theme_settings_cache(&mut self) {
         let Ok(list) = self
             .rpc
             .request("theme/list", json!({ "threadId": self.thread_id }))
@@ -1533,7 +1541,7 @@ impl ShellSession {
         }
     }
 
-    fn render_event_line(&self, event: &Event) -> Option<String> {
+    pub(super) fn render_event_line(&self, event: &Event) -> Option<String> {
         match &event.kind {
             EventKind::ArtifactCreated { artifact } => {
                 Some(format_artifact_created_with_image_settings(
@@ -1546,7 +1554,7 @@ impl ShellSession {
         }
     }
 
-    fn start_turn_for_role(
+    pub(super) fn start_turn_for_role(
         &mut self,
         prompt: &str,
         provider: &ProviderConfig,
@@ -1556,7 +1564,7 @@ impl ShellSession {
         self.start_turn_for_role_with_system_append(prompt, provider, json_output, role, None)
     }
 
-    fn start_turn_for_role_with_system_append(
+    pub(super) fn start_turn_for_role_with_system_append(
         &mut self,
         prompt: &str,
         provider: &ProviderConfig,
@@ -1632,7 +1640,7 @@ impl ShellSession {
         Ok(turn_id)
     }
 
-    fn emit_terminal_progress(&self, active: bool, json_output: bool) {
+    pub(super) fn emit_terminal_progress(&self, active: bool, json_output: bool) {
         if let Some(sequence) =
             terminal_progress_output(self.show_terminal_progress, active, json_output)
         {
@@ -1641,7 +1649,7 @@ impl ShellSession {
         }
     }
 
-    fn expand_skill_command_input(&mut self, prompt: &str) -> Result<String, String> {
+    pub(super) fn expand_skill_command_input(&mut self, prompt: &str) -> Result<String, String> {
         if !self.enable_skill_commands || !prompt.trim_start().starts_with("/skill:") {
             return Ok(prompt.to_string());
         }
@@ -1656,7 +1664,7 @@ impl ShellSession {
             .to_string())
     }
 
-    fn run_turn_for_role(
+    pub(super) fn run_turn_for_role(
         &mut self,
         prompt: &str,
         provider: &ProviderConfig,
@@ -1667,7 +1675,7 @@ impl ShellSession {
         self.poll_until_turn_boundary(json)
     }
 
-    fn run_turn_for_role_with_system_append(
+    pub(super) fn run_turn_for_role_with_system_append(
         &mut self,
         prompt: &str,
         provider: &ProviderConfig,
@@ -1679,7 +1687,7 @@ impl ShellSession {
         self.poll_until_turn_boundary(json)
     }
 
-    fn handle_command(
+    pub(super) fn handle_command(
         &mut self,
         line: &str,
         provider: &mut ProviderConfig,
@@ -1995,7 +2003,7 @@ impl ShellSession {
         }
     }
 
-    fn handle_login_picker_input(
+    pub(super) fn handle_login_picker_input(
         &mut self,
         input: &str,
         provider: &mut ProviderConfig,
@@ -2088,7 +2096,7 @@ impl ShellSession {
         Ok(true)
     }
 
-    fn handle_login_command(
+    pub(super) fn handle_login_command(
         &mut self,
         command: &str,
         provider: &mut ProviderConfig,
@@ -2189,7 +2197,7 @@ impl ShellSession {
         }
     }
 
-    fn handle_logout_command(
+    pub(super) fn handle_logout_command(
         &mut self,
         provider: &mut ProviderConfig,
         args: Vec<&str>,
@@ -2206,7 +2214,7 @@ impl ShellSession {
         }
     }
 
-    fn configure_openai_env_login(
+    pub(super) fn configure_openai_env_login(
         &mut self,
         provider: &mut ProviderConfig,
         env_name: &str,
@@ -2245,7 +2253,7 @@ impl ShellSession {
         )
     }
 
-    fn print_memory_settings_value_update(
+    pub(super) fn print_memory_settings_value_update(
         &mut self,
         label: &str,
         value: &str,
@@ -2261,7 +2269,7 @@ impl ShellSession {
         self.print_text(&format!("memory: {label} {value}"), json_output)
     }
 
-    fn print_memory_settings_text_update(
+    pub(super) fn print_memory_settings_text_update(
         &mut self,
         label: &str,
         value: String,
@@ -2277,7 +2285,7 @@ impl ShellSession {
         self.print_text(&format!("memory: {label} {value}"), json_output)
     }
 
-    fn configure_codex_login(
+    pub(super) fn configure_codex_login(
         &mut self,
         provider: &mut ProviderConfig,
         flags: &[&str],
@@ -2348,7 +2356,7 @@ impl ShellSession {
         )
     }
 
-    fn configure_github_copilot_login(
+    pub(super) fn configure_github_copilot_login(
         &mut self,
         provider: &mut ProviderConfig,
         flags: &[&str],
@@ -2428,7 +2436,7 @@ impl ShellSession {
         )
     }
 
-    fn configure_meridian_login(
+    pub(super) fn configure_meridian_login(
         &mut self,
         provider: &mut ProviderConfig,
         json_output: bool,
@@ -2452,7 +2460,7 @@ impl ShellSession {
         )
     }
 
-    fn start_meridian_bridge(&mut self) -> Result<String, String> {
+    pub(super) fn start_meridian_bridge(&mut self) -> Result<String, String> {
         if meridian_reachable() {
             return Ok(format!(
                 "Meridian already reachable at {}",
@@ -2483,7 +2491,7 @@ impl ShellSession {
         ))
     }
 
-    fn stop_meridian_bridge(&mut self, json_output: bool) -> Result<(), String> {
+    pub(super) fn stop_meridian_bridge(&mut self, json_output: bool) -> Result<(), String> {
         if let Some(mut child) = self.meridian_child.take() {
             let _ = child.kill();
             return self.print_text(
@@ -2494,7 +2502,7 @@ impl ShellSession {
         self.print_text("Meridian was not started by this OPPi shell session; if you run it externally, stop that process directly.", json_output)
     }
 
-    fn run_claude_code_login(&mut self, json_output: bool) -> Result<(), String> {
+    pub(super) fn run_claude_code_login(&mut self, json_output: bool) -> Result<(), String> {
         if json_output {
             return self.print_text(
                 "login Claude: run `claude login` in an interactive terminal, then `/login subscription claude start` or `/login subscription claude use`. Meridian owns token refresh through the Claude Code SDK; OPPi does not extract Claude tokens.",
@@ -2527,7 +2535,7 @@ impl ShellSession {
         }
     }
 
-    fn handle_provider_command(
+    pub(super) fn handle_provider_command(
         &mut self,
         provider: &mut ProviderConfig,
         args: Vec<&str>,
@@ -2595,7 +2603,11 @@ impl ShellSession {
         }
     }
 
-    fn handle_todos_command(&mut self, args: Vec<&str>, json_output: bool) -> Result<(), String> {
+    pub(super) fn handle_todos_command(
+        &mut self,
+        args: Vec<&str>,
+        json_output: bool,
+    ) -> Result<(), String> {
         match parse_todos_command_args(&args)? {
             TodoCommand::List => {
                 let value = self.rpc.request("todos/list", json!({}))?;
@@ -2629,7 +2641,7 @@ impl ShellSession {
         }
     }
 
-    fn handle_models_command(
+    pub(super) fn handle_models_command(
         &mut self,
         provider: &ProviderConfig,
         args: &str,
@@ -2678,7 +2690,7 @@ impl ShellSession {
         }
     }
 
-    fn model_registry_result(
+    pub(super) fn model_registry_result(
         &mut self,
         provider: &ProviderConfig,
         available_only: bool,
@@ -2690,7 +2702,7 @@ impl ShellSession {
         )
     }
 
-    fn model_registry_result_with_scope(
+    pub(super) fn model_registry_result_with_scope(
         &mut self,
         provider: &ProviderConfig,
         available_only: bool,
@@ -2720,7 +2732,7 @@ impl ShellSession {
         Ok(result)
     }
 
-    fn refresh_model_registry_cache(
+    pub(super) fn refresh_model_registry_cache(
         &mut self,
         provider: &ProviderConfig,
         available_only: bool,
@@ -2739,7 +2751,7 @@ impl ShellSession {
             .map(|_| ())
     }
 
-    fn cached_model_refs_for_provider(
+    pub(super) fn cached_model_refs_for_provider(
         &self,
         provider: &ProviderConfig,
         available_only: bool,
@@ -2753,7 +2765,7 @@ impl ShellSession {
             .map(|cache| cache.items.as_slice())
     }
 
-    fn current_model_context_window(&self, provider: &ProviderConfig) -> Option<u64> {
+    pub(super) fn current_model_context_window(&self, provider: &ProviderConfig) -> Option<u64> {
         let provider_name = provider_name(provider);
         let selected = self.session_model(provider)?;
         self.model_registry_cache
@@ -2772,7 +2784,7 @@ impl ShellSession {
             })
     }
 
-    fn compaction_trigger_telemetry_for_provider(
+    pub(super) fn compaction_trigger_telemetry_for_provider(
         &mut self,
         provider: &ProviderConfig,
     ) -> CompactionTriggerTelemetry {
@@ -2789,7 +2801,7 @@ impl ShellSession {
         )
     }
 
-    fn cached_model_ids_for_provider(
+    pub(super) fn cached_model_ids_for_provider(
         &self,
         provider: &ProviderConfig,
         available_only: bool,
@@ -2798,7 +2810,7 @@ impl ShellSession {
             .map(|items| items.iter().map(|model| model.id.clone()).collect())
     }
 
-    fn runtime_model_refs_for_provider(
+    pub(super) fn runtime_model_refs_for_provider(
         &mut self,
         provider: &ProviderConfig,
         available_only: bool,
@@ -2806,7 +2818,7 @@ impl ShellSession {
         Ok(self.model_registry_result(provider, available_only)?.items)
     }
 
-    fn runtime_model_refs_for_provider_with_scope(
+    pub(super) fn runtime_model_refs_for_provider_with_scope(
         &mut self,
         provider: &ProviderConfig,
         available_only: bool,
@@ -2817,7 +2829,7 @@ impl ShellSession {
             .items)
     }
 
-    fn runtime_model_ids_for_provider(
+    pub(super) fn runtime_model_ids_for_provider(
         &mut self,
         provider: &ProviderConfig,
         available_only: bool,
@@ -2829,7 +2841,7 @@ impl ShellSession {
             .collect())
     }
 
-    fn handle_suggest_next_command(
+    pub(super) fn handle_suggest_next_command(
         &mut self,
         args: Vec<&str>,
         json_output: bool,
@@ -2866,7 +2878,11 @@ impl ShellSession {
         }
     }
 
-    fn handle_goal_command(&mut self, args: &str, json_output: bool) -> Result<(), String> {
+    pub(super) fn handle_goal_command(
+        &mut self,
+        args: &str,
+        json_output: bool,
+    ) -> Result<(), String> {
         let route = match goal_command_route(args) {
             Ok(route) => route,
             Err(message) if message.starts_with("usage:") => {
@@ -2938,7 +2954,7 @@ impl ShellSession {
         }
     }
 
-    fn apply_goal_response(&mut self, value: &Value) -> Result<(), String> {
+    pub(super) fn apply_goal_response(&mut self, value: &Value) -> Result<(), String> {
         if value.get("goal").is_some() {
             self.current_goal = decode_goal_from_response(value)?;
             self.sync_ui_docks();
@@ -2949,7 +2965,7 @@ impl ShellSession {
         Ok(())
     }
 
-    fn handle_scoped_models_command(
+    pub(super) fn handle_scoped_models_command(
         &mut self,
         provider: &ProviderConfig,
         args: Vec<&str>,
@@ -3009,7 +3025,7 @@ impl ShellSession {
         }
     }
 
-    fn handle_model_command(
+    pub(super) fn handle_model_command(
         &mut self,
         provider: &mut ProviderConfig,
         args: Vec<&str>,
@@ -3028,7 +3044,7 @@ impl ShellSession {
         }
     }
 
-    fn handle_role_model_command(
+    pub(super) fn handle_role_model_command(
         &mut self,
         provider: &mut ProviderConfig,
         args: Vec<&str>,
@@ -3079,7 +3095,7 @@ impl ShellSession {
         }
     }
 
-    fn select_session_model(
+    pub(super) fn select_session_model(
         &mut self,
         provider: &mut ProviderConfig,
         model: &str,
@@ -3121,13 +3137,13 @@ impl ShellSession {
         }
     }
 
-    fn session_model<'a>(&'a self, provider: &'a ProviderConfig) -> Option<&'a str> {
+    pub(super) fn session_model<'a>(&'a self, provider: &'a ProviderConfig) -> Option<&'a str> {
         self.selected_model
             .as_deref()
             .or_else(|| current_provider_model(provider))
     }
 
-    fn model_status(&self, provider: &ProviderConfig) -> String {
+    pub(super) fn model_status(&self, provider: &ProviderConfig) -> String {
         let session_model = self.session_model(provider).unwrap_or("none");
         let session_model_display = display_model_id(session_model);
         format!(
@@ -3141,7 +3157,10 @@ impl ShellSession {
         )
     }
 
-    fn register_provider_model(&mut self, provider: &ProviderConfig) -> Result<(), String> {
+    pub(super) fn register_provider_model(
+        &mut self,
+        provider: &ProviderConfig,
+    ) -> Result<(), String> {
         match provider {
             ProviderConfig::Mock => {
                 self.register_model_ref(MOCK_MODEL_ID, "mock", None)?;
@@ -3163,7 +3182,10 @@ impl ShellSession {
         self.register_role_model_refs(provider)
     }
 
-    fn register_role_model_refs(&mut self, provider: &ProviderConfig) -> Result<(), String> {
+    pub(super) fn register_role_model_refs(
+        &mut self,
+        provider: &ProviderConfig,
+    ) -> Result<(), String> {
         let provider = provider_name(provider);
         for (role, model) in self.role_models.clone() {
             self.register_model_ref(&model, provider, Some(&role))?;
@@ -3171,7 +3193,7 @@ impl ShellSession {
         Ok(())
     }
 
-    fn register_model_ref(
+    pub(super) fn register_model_ref(
         &mut self,
         model: &str,
         provider: &str,
@@ -3198,7 +3220,7 @@ impl ShellSession {
         Ok(())
     }
 
-    fn list_models(&mut self) -> Result<Vec<ModelRef>, String> {
+    pub(super) fn list_models(&mut self) -> Result<Vec<ModelRef>, String> {
         let value = self.rpc.request("model/list", json!({}))?;
         let result: RuntimeListResult<ModelRef> =
             serde_json::from_value(value).map_err(|error| format!("decode model/list: {error}"))?;
@@ -3208,11 +3230,15 @@ impl ShellSession {
         Ok(result.items)
     }
 
-    fn provider_for_role(&self, provider: &ProviderConfig, role: Option<&str>) -> ProviderConfig {
+    pub(super) fn provider_for_role(
+        &self,
+        provider: &ProviderConfig,
+        role: Option<&str>,
+    ) -> ProviderConfig {
         provider_for_role_config(provider, &self.role_models, role)
     }
 
-    fn provider_for_role_with_complexity(
+    pub(super) fn provider_for_role_with_complexity(
         &self,
         provider: &ProviderConfig,
         role: Option<&str>,
@@ -3226,13 +3252,21 @@ impl ShellSession {
         )
     }
 
-    fn effective_model_for_role(&self, role: &str, provider: &ProviderConfig) -> Option<String> {
+    pub(super) fn effective_model_for_role(
+        &self,
+        role: &str,
+        provider: &ProviderConfig,
+    ) -> Option<String> {
         let role = normalize_role(role)?;
         let effective = self.provider_for_role(provider, Some(role));
         current_provider_model(&effective).map(str::to_string)
     }
 
-    fn effective_effort_for_role(&self, role: &str, provider: &ProviderConfig) -> Option<String> {
+    pub(super) fn effective_effort_for_role(
+        &self,
+        role: &str,
+        provider: &ProviderConfig,
+    ) -> Option<String> {
         let effective = self.provider_for_role(provider, Some(role));
         match effective {
             ProviderConfig::OpenAiCompatible(config) => config.reasoning_effort,
@@ -3240,7 +3274,7 @@ impl ShellSession {
         }
     }
 
-    fn role_execution_profile(&self, role: &str, provider: &ProviderConfig) -> String {
+    pub(super) fn role_execution_profile(&self, role: &str, provider: &ProviderConfig) -> String {
         let normalized = normalize_role(role).unwrap_or("executor");
         let model = self
             .effective_model_for_role(normalized, provider)
@@ -3261,7 +3295,11 @@ impl ShellSession {
         )
     }
 
-    fn handle_resume_command(&mut self, args: Vec<&str>, json_output: bool) -> Result<(), String> {
+    pub(super) fn handle_resume_command(
+        &mut self,
+        args: Vec<&str>,
+        json_output: bool,
+    ) -> Result<(), String> {
         let Some(thread_id) = args.first().copied() else {
             let value = self.rpc.request("thread/list", json!({}))?;
             let result: RuntimeListResult<Thread> = serde_json::from_value(value)
@@ -3296,7 +3334,7 @@ impl ShellSession {
         self.switch_to_thread(value, json_output, "resumed")
     }
 
-    fn handle_new_thread_command(
+    pub(super) fn handle_new_thread_command(
         &mut self,
         args: Vec<&str>,
         json_output: bool,
@@ -3322,7 +3360,11 @@ impl ShellSession {
         self.switch_to_thread(value, json_output, "started")
     }
 
-    fn handle_fork_command(&mut self, args: Vec<&str>, json_output: bool) -> Result<(), String> {
+    pub(super) fn handle_fork_command(
+        &mut self,
+        args: Vec<&str>,
+        json_output: bool,
+    ) -> Result<(), String> {
         let title = if args.is_empty() {
             format!("Fork of {}", self.thread_id)
         } else {
@@ -3335,7 +3377,7 @@ impl ShellSession {
         self.switch_to_thread(value, json_output, "forked")
     }
 
-    fn handle_tree_command(
+    pub(super) fn handle_tree_command(
         &mut self,
         command: &str,
         args: Vec<&str>,
@@ -3514,7 +3556,7 @@ impl ShellSession {
         self.print_text(&rendered, json_output)
     }
 
-    fn handle_debug_command(&mut self, json_output: bool) -> Result<(), String> {
+    pub(super) fn handle_debug_command(&mut self, json_output: bool) -> Result<(), String> {
         let mut value = self.rpc.request("debug/bundle", json!({}))?;
         value["client"] = json!({
             "name": "oppi-shell",
@@ -3547,7 +3589,7 @@ impl ShellSession {
         self.print_value("debug", value, json_output)
     }
 
-    fn handle_ui_command(
+    pub(super) fn handle_ui_command(
         &mut self,
         provider: &ProviderConfig,
         args: Vec<&str>,
@@ -3625,7 +3667,7 @@ impl ShellSession {
         Ok(())
     }
 
-    fn switch_to_thread(
+    pub(super) fn switch_to_thread(
         &mut self,
         value: Value,
         json_output: bool,
@@ -3660,7 +3702,7 @@ impl ShellSession {
         }
     }
 
-    fn load_thread_state(&mut self, render_pauses: bool) -> Result<(), String> {
+    pub(super) fn load_thread_state(&mut self, render_pauses: bool) -> Result<(), String> {
         self.current_goal = None;
         self.usage_state = NativeUsageState::default();
         self.memory_status = None;
@@ -3763,7 +3805,7 @@ impl ShellSession {
         Ok(())
     }
 
-    fn latest_handoff_summary(&mut self) -> Result<Option<String>, String> {
+    pub(super) fn latest_handoff_summary(&mut self) -> Result<Option<String>, String> {
         let listed = self.rpc.request(
             "events/list",
             json!({ "threadId": self.thread_id, "after": 0, "limit": 5000 }),
@@ -3790,7 +3832,7 @@ impl ShellSession {
         Ok(latest)
     }
 
-    fn handle_effort_command(
+    pub(super) fn handle_effort_command(
         &mut self,
         provider: &mut ProviderConfig,
         effort: &str,
@@ -3844,7 +3886,7 @@ impl ShellSession {
         )
     }
 
-    fn sync_permission_review_settings(&mut self) -> Result<(), String> {
+    pub(super) fn sync_permission_review_settings(&mut self) -> Result<(), String> {
         self.rpc.request(
             "permissions/settings/update",
             json!({
@@ -3855,7 +3897,7 @@ impl ShellSession {
         Ok(())
     }
 
-    fn sync_ask_user_settings(&mut self) -> Result<(), String> {
+    pub(super) fn sync_ask_user_settings(&mut self) -> Result<(), String> {
         self.rpc.request(
             "ask-user/settings/update",
             json!({
@@ -3866,7 +3908,11 @@ impl ShellSession {
         Ok(())
     }
 
-    fn handle_ask_user_command(&mut self, args: &str, json_output: bool) -> Result<(), String> {
+    pub(super) fn handle_ask_user_command(
+        &mut self,
+        args: &str,
+        json_output: bool,
+    ) -> Result<(), String> {
         match ask_user_command_route(args)? {
             AskUserCommandRoute::Status => {
                 if json_output {
@@ -3906,7 +3952,11 @@ impl ShellSession {
         }
     }
 
-    fn handle_follow_up_command(&mut self, args: &str, json_output: bool) -> Result<(), String> {
+    pub(super) fn handle_follow_up_command(
+        &mut self,
+        args: &str,
+        json_output: bool,
+    ) -> Result<(), String> {
         match follow_up_command_route(args)? {
             FollowUpCommandRoute::Status => {
                 if json_output {
@@ -3945,7 +3995,11 @@ impl ShellSession {
         }
     }
 
-    fn handle_steer_command(&mut self, args: &str, json_output: bool) -> Result<(), String> {
+    pub(super) fn handle_steer_command(
+        &mut self,
+        args: &str,
+        json_output: bool,
+    ) -> Result<(), String> {
         match steer_command_route(args)? {
             SteerCommandRoute::Status => {
                 if json_output {
@@ -3985,7 +4039,11 @@ impl ShellSession {
         }
     }
 
-    fn handle_startup_command(&mut self, args: &str, json_output: bool) -> Result<(), String> {
+    pub(super) fn handle_startup_command(
+        &mut self,
+        args: &str,
+        json_output: bool,
+    ) -> Result<(), String> {
         match startup_command_route(args)? {
             StartupCommandRoute::Status => {
                 if json_output {
@@ -4015,7 +4073,11 @@ impl ShellSession {
         }
     }
 
-    fn handle_autocomplete_command(&mut self, args: &str, json_output: bool) -> Result<(), String> {
+    pub(super) fn handle_autocomplete_command(
+        &mut self,
+        args: &str,
+        json_output: bool,
+    ) -> Result<(), String> {
         match autocomplete_command_route(args)? {
             AutocompleteCommandRoute::Status => {
                 if json_output {
@@ -4048,7 +4110,11 @@ impl ShellSession {
         }
     }
 
-    fn handle_cursor_command(&mut self, args: &str, json_output: bool) -> Result<(), String> {
+    pub(super) fn handle_cursor_command(
+        &mut self,
+        args: &str,
+        json_output: bool,
+    ) -> Result<(), String> {
         match cursor_command_route(args)? {
             CursorCommandRoute::Status => {
                 if json_output {
@@ -4081,7 +4147,11 @@ impl ShellSession {
         }
     }
 
-    fn handle_editor_command(&mut self, args: &str, json_output: bool) -> Result<(), String> {
+    pub(super) fn handle_editor_command(
+        &mut self,
+        args: &str,
+        json_output: bool,
+    ) -> Result<(), String> {
         match editor_command_route(args)? {
             EditorCommandRoute::Status => {
                 if json_output {
@@ -4129,7 +4199,11 @@ impl ShellSession {
         }
     }
 
-    fn handle_terminal_command(&mut self, args: &str, json_output: bool) -> Result<(), String> {
+    pub(super) fn handle_terminal_command(
+        &mut self,
+        args: &str,
+        json_output: bool,
+    ) -> Result<(), String> {
         match terminal_command_route(args)? {
             TerminalCommandRoute::Status => {
                 if json_output {
@@ -4183,7 +4257,11 @@ impl ShellSession {
         }
     }
 
-    fn handle_footer_command(&mut self, args: &str, json_output: bool) -> Result<(), String> {
+    pub(super) fn handle_footer_command(
+        &mut self,
+        args: &str,
+        json_output: bool,
+    ) -> Result<(), String> {
         match footer_command_route(args)? {
             FooterCommandRoute::Status => {
                 if json_output {
@@ -4237,7 +4315,11 @@ impl ShellSession {
         }
     }
 
-    fn handle_images_command(&mut self, args: &str, json_output: bool) -> Result<(), String> {
+    pub(super) fn handle_images_command(
+        &mut self,
+        args: &str,
+        json_output: bool,
+    ) -> Result<(), String> {
         match image_settings_command_route(args)? {
             ImageSettingsCommandRoute::Status => {
                 if json_output {
@@ -4347,7 +4429,7 @@ impl ShellSession {
         }
     }
 
-    fn handle_compaction_command(
+    pub(super) fn handle_compaction_command(
         &mut self,
         provider: &ProviderConfig,
         args: &str,
@@ -4436,7 +4518,11 @@ impl ShellSession {
         }
     }
 
-    fn handle_permissions_command(&mut self, args: &str, json_output: bool) -> Result<(), String> {
+    pub(super) fn handle_permissions_command(
+        &mut self,
+        args: &str,
+        json_output: bool,
+    ) -> Result<(), String> {
         match permissions_command_route(args)? {
             PermissionCommandRoute::Status => {}
             PermissionCommandRoute::History => {
@@ -4865,17 +4951,17 @@ impl ShellSession {
         Ok(())
     }
 
-    fn mcp_list_value(&mut self) -> Result<Value, String> {
+    pub(super) fn mcp_list_value(&mut self) -> Result<Value, String> {
         self.rpc
             .request("mcp/list", json!({ "threadId": self.thread_id }))
     }
 
-    fn update_mcp_summary(&mut self, value: &Value) {
+    pub(super) fn update_mcp_summary(&mut self, value: &Value) {
         self.mcp_summary = Some(format_mcp_status_summary(value));
         self.sync_ui_docks();
     }
 
-    fn handle_mcp_action(
+    pub(super) fn handle_mcp_action(
         &mut self,
         action: &str,
         server_id: &str,
@@ -4909,7 +4995,11 @@ impl ShellSession {
         self.print_text(&rendered, json_output)
     }
 
-    fn handle_mcp_resources(&mut self, server_id: &str, json_output: bool) -> Result<(), String> {
+    pub(super) fn handle_mcp_resources(
+        &mut self,
+        server_id: &str,
+        json_output: bool,
+    ) -> Result<(), String> {
         let value = self.rpc.request(
             "mcp/resources/list",
             json!({
@@ -4924,7 +5014,7 @@ impl ShellSession {
         }
     }
 
-    fn handle_mcp_resource_templates(
+    pub(super) fn handle_mcp_resource_templates(
         &mut self,
         server_id: &str,
         cursor: Option<&str>,
@@ -4941,7 +5031,7 @@ impl ShellSession {
         }
     }
 
-    fn handle_mcp_prompts(
+    pub(super) fn handle_mcp_prompts(
         &mut self,
         server_id: &str,
         cursor: Option<&str>,
@@ -4958,7 +5048,7 @@ impl ShellSession {
         }
     }
 
-    fn handle_mcp_prompt_get(
+    pub(super) fn handle_mcp_prompt_get(
         &mut self,
         server_id: &str,
         name: &str,
@@ -4982,7 +5072,7 @@ impl ShellSession {
         }
     }
 
-    fn handle_mcp_resource_read(
+    pub(super) fn handle_mcp_resource_read(
         &mut self,
         server_id: &str,
         uri: &str,
@@ -5003,7 +5093,7 @@ impl ShellSession {
         }
     }
 
-    fn handle_mcp_resource_subscription(
+    pub(super) fn handle_mcp_resource_subscription(
         &mut self,
         action: &str,
         server_id: &str,
@@ -5033,7 +5123,7 @@ impl ShellSession {
         }
     }
 
-    fn handle_plugin_mcp_trust(
+    pub(super) fn handle_plugin_mcp_trust(
         &mut self,
         plugin_id: &str,
         server_id: &str,
@@ -5069,7 +5159,11 @@ impl ShellSession {
         self.print_text(&rendered, json_output)
     }
 
-    fn handle_mcp_command(&mut self, args: Vec<&str>, json_output: bool) -> Result<(), String> {
+    pub(super) fn handle_mcp_command(
+        &mut self,
+        args: Vec<&str>,
+        json_output: bool,
+    ) -> Result<(), String> {
         match args.as_slice() {
             [] | ["list"] | ["status"] => {
                 let value = self.mcp_list_value()?;
@@ -5110,7 +5204,7 @@ impl ShellSession {
         }
     }
 
-    fn handle_memory_command(
+    pub(super) fn handle_memory_command(
         &mut self,
         provider: &ProviderConfig,
         args: Vec<&str>,
@@ -5341,7 +5435,11 @@ impl ShellSession {
         }
     }
 
-    fn handle_memory_compact(&mut self, rest: &[&str], json_output: bool) -> Result<(), String> {
+    pub(super) fn handle_memory_compact(
+        &mut self,
+        rest: &[&str],
+        json_output: bool,
+    ) -> Result<(), String> {
         let summary = memory_compact_summary_arg(rest);
         let value = self.rpc.request(
             "memory/compact",
@@ -5350,7 +5448,7 @@ impl ShellSession {
         self.print_value("memoryCompact", value, json_output)
     }
 
-    fn handle_memory_dashboard(&mut self, json_output: bool) -> Result<(), String> {
+    pub(super) fn handle_memory_dashboard(&mut self, json_output: bool) -> Result<(), String> {
         let params =
             memory_backend_dashboard_params_from_settings(&self.memory_settings, &self.thread_id)?;
         let value = self.request_memory_backend_normalized("memory/backend/dashboard", params)?;
@@ -5362,7 +5460,7 @@ impl ShellSession {
         }
     }
 
-    fn handle_memory_list(
+    pub(super) fn handle_memory_list(
         &mut self,
         include_superseded: bool,
         pinned_only: bool,
@@ -5384,7 +5482,7 @@ impl ShellSession {
         }
     }
 
-    fn handle_memory_jobs(
+    pub(super) fn handle_memory_jobs(
         &mut self,
         include_finished: bool,
         json_output: bool,
@@ -5398,7 +5496,11 @@ impl ShellSession {
         }
     }
 
-    fn handle_memory_job_cancel(&mut self, id: &str, json_output: bool) -> Result<(), String> {
+    pub(super) fn handle_memory_job_cancel(
+        &mut self,
+        id: &str,
+        json_output: bool,
+    ) -> Result<(), String> {
         let id = id.trim();
         if id.is_empty() {
             return Err(memory_settings_usage().to_string());
@@ -5419,7 +5521,11 @@ impl ShellSession {
         }
     }
 
-    fn handle_memory_forget(&mut self, id: &str, json_output: bool) -> Result<(), String> {
+    pub(super) fn handle_memory_forget(
+        &mut self,
+        id: &str,
+        json_output: bool,
+    ) -> Result<(), String> {
         let params =
             memory_backend_forget_params_from_settings(&self.memory_settings, &self.thread_id, id)?;
         let value = self.request_memory_backend_normalized("memory/backend/forget", params)?;
@@ -5431,7 +5537,7 @@ impl ShellSession {
         }
     }
 
-    fn handle_memory_pin(
+    pub(super) fn handle_memory_pin(
         &mut self,
         id: &str,
         pinned: bool,
@@ -5452,7 +5558,7 @@ impl ShellSession {
         }
     }
 
-    fn run_hoppi_sync_with_job_reporting(
+    pub(super) fn run_hoppi_sync_with_job_reporting(
         &mut self,
         direction: HoppiSyncDirection,
         reason: &str,
@@ -5470,7 +5576,7 @@ impl ShellSession {
         Ok(HoppiSyncRunResult { invocation, result })
     }
 
-    fn handle_memory_sync(
+    pub(super) fn handle_memory_sync(
         &mut self,
         direction: HoppiSyncDirection,
         json_output: bool,
@@ -5495,7 +5601,7 @@ impl ShellSession {
         )
     }
 
-    fn handle_memory_maintenance(
+    pub(super) fn handle_memory_maintenance(
         &mut self,
         dry_run: bool,
         json_output: bool,
@@ -5514,7 +5620,7 @@ impl ShellSession {
         }
     }
 
-    fn request_memory_backend_normalized(
+    pub(super) fn request_memory_backend_normalized(
         &mut self,
         method: &str,
         params: Value,
@@ -5525,7 +5631,7 @@ impl ShellSession {
         Ok(normalized)
     }
 
-    fn record_memory_status_from_value(&mut self, value: &Value) {
+    pub(super) fn record_memory_status_from_value(&mut self, value: &Value) {
         if let Some(status) = value
             .get("status")
             .cloned()
@@ -5536,7 +5642,7 @@ impl ShellSession {
         }
     }
 
-    fn record_memory_job_update(&mut self, params: Value) {
+    pub(super) fn record_memory_job_update(&mut self, params: Value) {
         if let Ok(value) = self.rpc.request("memory/jobs/update", params)
             && let Some(status) = value
                 .get("status")
@@ -5548,16 +5654,16 @@ impl ShellSession {
         }
     }
 
-    fn mark_hoppi_memory_dirty(&mut self) {
+    pub(super) fn mark_hoppi_memory_dirty(&mut self) {
         self.hoppi_dirty_version = self.hoppi_dirty_version.saturating_add(1);
         self.hoppi_dirty_at = Some(Instant::now());
     }
 
-    fn mark_hoppi_memory_consolidated(&mut self) {
+    pub(super) fn mark_hoppi_memory_consolidated(&mut self) {
         self.hoppi_consolidated_version = self.hoppi_dirty_version;
     }
 
-    fn maybe_drain_memory_jobs(&mut self, json_output: bool) -> Result<(), String> {
+    pub(super) fn maybe_drain_memory_jobs(&mut self, json_output: bool) -> Result<(), String> {
         match self.wait_for_memory_jobs_idle(HOPPI_MEMORY_DRAIN_TIMEOUT) {
             Ok(None) => Ok(()),
             Ok(Some(message)) => self.print_text(&message, json_output),
@@ -5565,7 +5671,10 @@ impl ShellSession {
         }
     }
 
-    fn wait_for_memory_jobs_idle(&mut self, timeout: Duration) -> Result<Option<String>, String> {
+    pub(super) fn wait_for_memory_jobs_idle(
+        &mut self,
+        timeout: Duration,
+    ) -> Result<Option<String>, String> {
         let started = Instant::now();
         let mut last = self.memory_jobs_list(false)?;
         loop {
@@ -5580,7 +5689,7 @@ impl ShellSession {
         }
     }
 
-    fn memory_jobs_list(&mut self, include_finished: bool) -> Result<Value, String> {
+    pub(super) fn memory_jobs_list(&mut self, include_finished: bool) -> Result<Value, String> {
         self.rpc.request(
             "memory/jobs/list",
             json!({
@@ -5591,7 +5700,7 @@ impl ShellSession {
         )
     }
 
-    fn print_memory_settings_update(
+    pub(super) fn print_memory_settings_update(
         &mut self,
         label: &str,
         enabled: bool,
@@ -5610,7 +5719,7 @@ impl ShellSession {
         )
     }
 
-    fn handle_memory_control(
+    pub(super) fn handle_memory_control(
         &mut self,
         action: &str,
         apply: bool,
@@ -5628,7 +5737,11 @@ impl ShellSession {
         }
     }
 
-    fn handle_skills_command(&mut self, args: Vec<&str>, json_output: bool) -> Result<(), String> {
+    pub(super) fn handle_skills_command(
+        &mut self,
+        args: Vec<&str>,
+        json_output: bool,
+    ) -> Result<(), String> {
         let route = skills_command_route(&args.join(" "))?;
         match route {
             SkillsCommandRoute::Status => {
@@ -5697,7 +5810,10 @@ impl ShellSession {
         self.print_text(&rendered, json_output)
     }
 
-    fn handle_prompt_templates_command(&mut self, json_output: bool) -> Result<(), String> {
+    pub(super) fn handle_prompt_templates_command(
+        &mut self,
+        json_output: bool,
+    ) -> Result<(), String> {
         let value = self.rpc.request(
             "prompt-template/list",
             json!({ "threadId": self.thread_id }),
@@ -5708,7 +5824,7 @@ impl ShellSession {
         self.print_text(&format_prompt_templates(&value), json_output)
     }
 
-    fn handle_graphify_command(
+    pub(super) fn handle_graphify_command(
         &mut self,
         args: Vec<&str>,
         json_output: bool,
@@ -5728,7 +5844,7 @@ impl ShellSession {
         }
     }
 
-    fn handle_agents_command(
+    pub(super) fn handle_agents_command(
         &mut self,
         provider: &ProviderConfig,
         args: Vec<&str>,
@@ -5994,7 +6110,7 @@ impl ShellSession {
         }
     }
 
-    fn handle_prompt_variant_command(
+    pub(super) fn handle_prompt_variant_command(
         &mut self,
         variant: &str,
         json_output: bool,
@@ -6011,7 +6127,11 @@ impl ShellSession {
         )
     }
 
-    fn handle_theme_command(&mut self, theme: &str, json_output: bool) -> Result<(), String> {
+    pub(super) fn handle_theme_command(
+        &mut self,
+        theme: &str,
+        json_output: bool,
+    ) -> Result<(), String> {
         let trimmed = theme.trim();
         if trimmed == "preview" || trimmed.starts_with("preview ") {
             let preview = trimmed.strip_prefix("preview").unwrap_or_default();
@@ -6050,7 +6170,7 @@ impl ShellSession {
         )
     }
 
-    fn handle_theme_preview_command(
+    pub(super) fn handle_theme_preview_command(
         &mut self,
         theme: &str,
         json_output: bool,
@@ -6091,7 +6211,7 @@ impl ShellSession {
         )
     }
 
-    fn apply_theme_selection(&mut self, theme: &str) -> Result<(), String> {
+    pub(super) fn apply_theme_selection(&mut self, theme: &str) -> Result<(), String> {
         if let Some(normalized) = normalize_theme_name(theme) {
             self.theme = normalized;
             self.loaded_theme = None;
@@ -6106,7 +6226,7 @@ impl ShellSession {
         Ok(())
     }
 
-    fn prepare_and_run_command(
+    pub(super) fn prepare_and_run_command(
         &mut self,
         command: &str,
         args: &str,
@@ -6148,7 +6268,7 @@ impl ShellSession {
         Ok(())
     }
 
-    fn resolve_background_task_id(
+    pub(super) fn resolve_background_task_id(
         &mut self,
         requested: Option<&str>,
         running_only: bool,
@@ -6168,7 +6288,7 @@ impl ShellSession {
         })
     }
 
-    fn print_background_read(
+    pub(super) fn print_background_read(
         &mut self,
         task_id: &str,
         max_bytes: usize,
@@ -6188,7 +6308,11 @@ impl ShellSession {
         }
     }
 
-    fn print_background_kill(&mut self, task_id: &str, json: bool) -> Result<(), String> {
+    pub(super) fn print_background_kill(
+        &mut self,
+        task_id: &str,
+        json: bool,
+    ) -> Result<(), String> {
         let value = self
             .rpc
             .request("background/kill", json!({ "taskId": task_id }))?;
@@ -6202,7 +6326,11 @@ impl ShellSession {
         }
     }
 
-    fn handle_background_command(&mut self, args: Vec<&str>, json: bool) -> Result<(), String> {
+    pub(super) fn handle_background_command(
+        &mut self,
+        args: Vec<&str>,
+        json: bool,
+    ) -> Result<(), String> {
         match args.as_slice() {
             [] | ["list"] => {
                 let value = self.rpc.request("background/list", json!({}))?;
@@ -6245,7 +6373,7 @@ impl ShellSession {
         }
     }
 
-    fn handle_btw_command(
+    pub(super) fn handle_btw_command(
         &mut self,
         question: &str,
         provider: &ProviderConfig,
@@ -6274,7 +6402,7 @@ impl ShellSession {
         }
     }
 
-    fn resume_pending_approval(
+    pub(super) fn resume_pending_approval(
         &mut self,
         provider: &ProviderConfig,
         json_output: bool,
@@ -6314,7 +6442,7 @@ impl ShellSession {
         Ok(())
     }
 
-    fn deny_pending_approval(&mut self, json_output: bool) -> Result<(), String> {
+    pub(super) fn deny_pending_approval(&mut self, json_output: bool) -> Result<(), String> {
         let pending = self
             .pending_approval
             .take()
@@ -6331,7 +6459,7 @@ impl ShellSession {
         Ok(())
     }
 
-    fn answer_pending_question(
+    pub(super) fn answer_pending_question(
         &mut self,
         answer: &str,
         provider: &ProviderConfig,
@@ -6351,7 +6479,7 @@ impl ShellSession {
         Ok(())
     }
 
-    fn resume_pending_question(
+    pub(super) fn resume_pending_question(
         &mut self,
         pending: PendingQuestion,
         answers: Vec<AskUserAnswer>,
@@ -6386,7 +6514,7 @@ impl ShellSession {
         Ok(())
     }
 
-    fn maybe_timeout_pending_question(
+    pub(super) fn maybe_timeout_pending_question(
         &mut self,
         provider: &ProviderConfig,
         json_output: bool,
@@ -6413,7 +6541,10 @@ impl ShellSession {
         Ok(true)
     }
 
-    fn poll_turn_events(&mut self, json_output: bool) -> Result<Option<TurnOutcome>, String> {
+    pub(super) fn poll_turn_events(
+        &mut self,
+        json_output: bool,
+    ) -> Result<Option<TurnOutcome>, String> {
         self.poll_turn_events_with_output(if json_output {
             EventOutputMode::Json
         } else {
@@ -6421,11 +6552,11 @@ impl ShellSession {
         })
     }
 
-    fn poll_turn_events_silent(&mut self) -> Result<Option<TurnOutcome>, String> {
+    pub(super) fn poll_turn_events_silent(&mut self) -> Result<Option<TurnOutcome>, String> {
         self.poll_turn_events_with_output(EventOutputMode::Silent)
     }
 
-    fn poll_turn_events_with_output(
+    pub(super) fn poll_turn_events_with_output(
         &mut self,
         output: EventOutputMode,
     ) -> Result<Option<TurnOutcome>, String> {
@@ -6544,7 +6675,10 @@ impl ShellSession {
         Ok(outcome)
     }
 
-    fn poll_until_turn_boundary(&mut self, json_output: bool) -> Result<TurnOutcome, String> {
+    pub(super) fn poll_until_turn_boundary(
+        &mut self,
+        json_output: bool,
+    ) -> Result<TurnOutcome, String> {
         let started = Instant::now();
         loop {
             if let Some(outcome) = self.poll_turn_events(json_output)? {
@@ -6557,15 +6691,15 @@ impl ShellSession {
         }
     }
 
-    fn has_pending_pause(&self) -> bool {
+    pub(super) fn has_pending_pause(&self) -> bool {
         self.pending_approval.is_some() || self.pending_question.is_some()
     }
 
-    fn is_turn_running(&self) -> bool {
+    pub(super) fn is_turn_running(&self) -> bool {
         self.active_turn_id.is_some()
     }
 
-    fn mutable_turn_id(&self) -> Option<String> {
+    pub(super) fn mutable_turn_id(&self) -> Option<String> {
         self.active_turn_id
             .clone()
             .or_else(|| {
@@ -6580,7 +6714,11 @@ impl ShellSession {
             })
     }
 
-    fn steer_active_turn(&mut self, input: &str, json_output: bool) -> Result<(), String> {
+    pub(super) fn steer_active_turn(
+        &mut self,
+        input: &str,
+        json_output: bool,
+    ) -> Result<(), String> {
         if input.trim().is_empty() {
             return Err(steer_usage().to_string());
         }
@@ -6602,7 +6740,7 @@ impl ShellSession {
         }
     }
 
-    fn interrupt_active_turn(&mut self, json_output: bool) -> Result<(), String> {
+    pub(super) fn interrupt_active_turn(&mut self, json_output: bool) -> Result<(), String> {
         let Some(turn_id) = self.mutable_turn_id() else {
             return self.print_text("no active turn to interrupt", json_output);
         };
@@ -6627,7 +6765,7 @@ impl ShellSession {
         }
     }
 
-    fn restore_latest_follow_up(&mut self) -> Option<String> {
+    pub(super) fn restore_latest_follow_up(&mut self) -> Option<String> {
         let restored = self
             .steering_queue
             .pop_back()
@@ -6636,7 +6774,7 @@ impl ShellSession {
         restored
     }
 
-    fn queue_steering(&mut self, prompt: &str, json_output: bool) -> Result<(), String> {
+    pub(super) fn queue_steering(&mut self, prompt: &str, json_output: bool) -> Result<(), String> {
         let prompt = prompt.trim();
         if prompt.is_empty() {
             return Ok(());
@@ -6649,7 +6787,11 @@ impl ShellSession {
         )
     }
 
-    fn queue_follow_up(&mut self, prompt: &str, json_output: bool) -> Result<(), String> {
+    pub(super) fn queue_follow_up(
+        &mut self,
+        prompt: &str,
+        json_output: bool,
+    ) -> Result<(), String> {
         let prompt = prompt.trim();
         if prompt.is_empty() {
             return Ok(());
@@ -6662,7 +6804,7 @@ impl ShellSession {
         )
     }
 
-    fn start_next_queued_steering(
+    pub(super) fn start_next_queued_steering(
         &mut self,
         provider: &ProviderConfig,
         json_output: bool,
@@ -6682,7 +6824,7 @@ impl ShellSession {
         Ok(true)
     }
 
-    fn start_next_queued_follow_up(
+    pub(super) fn start_next_queued_follow_up(
         &mut self,
         provider: &ProviderConfig,
         json_output: bool,
@@ -6702,7 +6844,7 @@ impl ShellSession {
         Ok(true)
     }
 
-    fn start_next_queued_or_goal_continuation(
+    pub(super) fn start_next_queued_or_goal_continuation(
         &mut self,
         provider: &ProviderConfig,
         json_output: bool,
@@ -6717,7 +6859,7 @@ impl ShellSession {
             .map(|_| ())
     }
 
-    fn drain_follow_ups(
+    pub(super) fn drain_follow_ups(
         &mut self,
         provider: &ProviderConfig,
         json_output: bool,
@@ -6794,7 +6936,7 @@ impl ShellSession {
         Ok(())
     }
 
-    fn start_goal_continuation_turn(
+    pub(super) fn start_goal_continuation_turn(
         &mut self,
         provider: &ProviderConfig,
         json_output: bool,
@@ -6813,7 +6955,7 @@ impl ShellSession {
         Ok(true)
     }
 
-    fn claim_goal_continuation_prompt(
+    pub(super) fn claim_goal_continuation_prompt(
         &mut self,
         json_output: bool,
     ) -> Result<Option<(String, u32)>, String> {
@@ -6851,7 +6993,7 @@ impl ShellSession {
         Ok(Some((prompt.to_string(), continuation)))
     }
 
-    fn sync_ui_docks(&mut self) {
+    pub(super) fn sync_ui_docks(&mut self) {
         let active = active_todos(&self.todo_state);
         let approval = self.pending_approval.as_ref().map(|pending| {
             format!(
@@ -6915,11 +7057,11 @@ impl ShellSession {
         });
     }
 
-    fn goal_status_label(&self) -> String {
+    pub(super) fn goal_status_label(&self) -> String {
         format_goal_status_label(self.current_goal.as_ref())
     }
 
-    fn goal_header_label(&self) -> Option<String> {
+    pub(super) fn goal_header_label(&self) -> Option<String> {
         if let Some(steering) = self.steering_queue.front() {
             return Some(steering.clone());
         }
@@ -6931,7 +7073,7 @@ impl ShellSession {
         })
     }
 
-    fn render_docks(&mut self) {
+    pub(super) fn render_docks(&mut self) {
         self.sync_ui_docks();
         let rendered = self.ui.render_docks(terminal_width());
         if !rendered.trim().is_empty() {
@@ -6940,7 +7082,7 @@ impl ShellSession {
         self.ui.clear_dirty();
     }
 
-    fn prepare_hoppi_recall_for_prompt(
+    pub(super) fn prepare_hoppi_recall_for_prompt(
         &mut self,
         prompt: &str,
     ) -> Option<HoppiRecallCommandResult> {
@@ -6966,7 +7108,7 @@ impl ShellSession {
         })
     }
 
-    fn hoppi_thread_events(&mut self) -> Option<Vec<Event>> {
+    pub(super) fn hoppi_thread_events(&mut self) -> Option<Vec<Event>> {
         let listed = match self.rpc.request(
             "events/list",
             json!({ "threadId": self.thread_id, "after": 0, "limit": 5000 }),
@@ -6985,7 +7127,7 @@ impl ShellSession {
         )
     }
 
-    fn maybe_remember_hoppi_turn(&mut self, turn_id: &str) {
+    pub(super) fn maybe_remember_hoppi_turn(&mut self, turn_id: &str) {
         let Some(events) = self.hoppi_thread_events() else {
             return;
         };
@@ -7017,7 +7159,7 @@ impl ShellSession {
         }
     }
 
-    fn maybe_distill_hoppi_turn(&mut self, events: &[Event], turn_id: &str) -> bool {
+    pub(super) fn maybe_distill_hoppi_turn(&mut self, events: &[Event], turn_id: &str) -> bool {
         let params = {
             let Some(provider) = self.active_turn_model_provider.as_ref() else {
                 return false;
@@ -7053,15 +7195,18 @@ impl ShellSession {
         true
     }
 
-    fn maybe_remember_hoppi_exit_recap(&mut self) {
+    pub(super) fn maybe_remember_hoppi_exit_recap(&mut self) {
         let _ = self.maybe_remember_hoppi_session_recap(HoppiSessionRecapReason::Exit);
     }
 
-    fn maybe_remember_hoppi_clear_recap(&mut self) -> bool {
+    pub(super) fn maybe_remember_hoppi_clear_recap(&mut self) -> bool {
         self.maybe_remember_hoppi_session_recap(HoppiSessionRecapReason::Clear)
     }
 
-    fn maybe_remember_hoppi_session_recap(&mut self, reason: HoppiSessionRecapReason) -> bool {
+    pub(super) fn maybe_remember_hoppi_session_recap(
+        &mut self,
+        reason: HoppiSessionRecapReason,
+    ) -> bool {
         let Some(events) = self.hoppi_thread_events() else {
             return false;
         };
@@ -7090,7 +7235,7 @@ impl ShellSession {
         false
     }
 
-    fn record_hoppi_memory_status(&mut self, enabled: bool, memory_count: u64) {
+    pub(super) fn record_hoppi_memory_status(&mut self, enabled: bool, memory_count: u64) {
         let status = MemoryStatus {
             enabled,
             initialized: enabled,
@@ -7110,7 +7255,7 @@ impl ShellSession {
         self.sync_ui_docks();
     }
 
-    fn record_hoppi_dashboard_status(&mut self, result: &HoppiDashboardCommandResult) {
+    pub(super) fn record_hoppi_dashboard_status(&mut self, result: &HoppiDashboardCommandResult) {
         let status = MemoryStatus {
             enabled: true,
             initialized: true,
@@ -7133,7 +7278,7 @@ impl ShellSession {
         self.sync_ui_docks();
     }
 
-    fn record_hoppi_list_records(&mut self, result: &HoppiListCommandResult) {
+    pub(super) fn record_hoppi_list_records(&mut self, result: &HoppiListCommandResult) {
         let status = MemoryStatus {
             enabled: true,
             initialized: true,
@@ -7163,20 +7308,20 @@ impl ShellSession {
         self.sync_ui_docks();
     }
 
-    fn reset_hoppi_background_sync_timer(&mut self) {
+    pub(super) fn reset_hoppi_background_sync_timer(&mut self) {
         self.next_hoppi_background_sync_at =
             hoppi_next_background_sync_at(&self.memory_settings, Instant::now());
     }
 
-    fn is_idle_for_hoppi_background_sync(&self) -> bool {
+    pub(super) fn is_idle_for_hoppi_background_sync(&self) -> bool {
         !self.is_turn_running() && !self.has_pending_pause() && self.follow_up_queue.is_empty()
     }
 
-    fn is_idle_for_compaction_offer(&self) -> bool {
+    pub(super) fn is_idle_for_compaction_offer(&self) -> bool {
         !self.is_turn_running() && !self.has_pending_pause() && self.follow_up_queue.is_empty()
     }
 
-    fn refresh_compaction_idle_timer(&mut self) {
+    pub(super) fn refresh_compaction_idle_timer(&mut self) {
         if self.is_idle_for_compaction_offer() {
             if self.compaction_idle_since.is_none() {
                 self.compaction_idle_since = Some(Instant::now());
@@ -7186,7 +7331,7 @@ impl ShellSession {
         }
     }
 
-    fn maybe_offer_compaction(
+    pub(super) fn maybe_offer_compaction(
         &mut self,
         provider: &ProviderConfig,
         json_output: bool,
@@ -7208,7 +7353,10 @@ impl ShellSession {
         self.print_text(&offer.message, json_output)
     }
 
-    fn maybe_run_hoppi_background_sync(&mut self, json_output: bool) -> Result<(), String> {
+    pub(super) fn maybe_run_hoppi_background_sync(
+        &mut self,
+        json_output: bool,
+    ) -> Result<(), String> {
         let now = Instant::now();
         if self.next_hoppi_background_sync_at.is_none() {
             self.reset_hoppi_background_sync_timer();
@@ -7239,7 +7387,10 @@ impl ShellSession {
         }
     }
 
-    fn maybe_run_hoppi_idle_consolidation(&mut self, json_output: bool) -> Result<(), String> {
+    pub(super) fn maybe_run_hoppi_idle_consolidation(
+        &mut self,
+        json_output: bool,
+    ) -> Result<(), String> {
         let now = Instant::now();
         if self.hoppi_idle_consolidating
             || self.hoppi_idle_consolidation_attempted_version == self.hoppi_dirty_version
@@ -7292,7 +7443,7 @@ impl ShellSession {
         result
     }
 
-    fn print_exit_requested(&mut self, json_output: bool) -> Result<(), String> {
+    pub(super) fn print_exit_requested(&mut self, json_output: bool) -> Result<(), String> {
         let resume_command = exit_resume_command(&self.thread_id);
         if self.terminal_ui_active && !json_output {
             self.ui.push_transcript(EXIT_COMMAND_ECHO_TEXT.to_string());
@@ -7307,7 +7458,7 @@ impl ShellSession {
         )
     }
 
-    fn print_text(&mut self, text: &str, json_output: bool) -> Result<(), String> {
+    pub(super) fn print_text(&mut self, text: &str, json_output: bool) -> Result<(), String> {
         if self.terminal_ui_active && !json_output {
             self.ui.push_transcript(text.to_string());
             self.sync_ui_docks();
@@ -7321,7 +7472,12 @@ impl ShellSession {
         Ok(())
     }
 
-    fn print_value(&mut self, label: &str, value: Value, json_output: bool) -> Result<(), String> {
+    pub(super) fn print_value(
+        &mut self,
+        label: &str,
+        value: Value,
+        json_output: bool,
+    ) -> Result<(), String> {
         if json_output {
             println!("{}", json!({ label: value }));
         } else {
@@ -7339,7 +7495,7 @@ impl ShellSession {
         Ok(())
     }
 
-    fn shutdown(&mut self) {
+    pub(super) fn shutdown(&mut self) {
         if let Some(mut process) = self.hoppi_dashboard_process.take() {
             let _ = process.child.kill();
             let _ = process.child.wait();
@@ -7351,7 +7507,7 @@ impl ShellSession {
     }
 }
 
-fn initialize_rpc_client(rpc: &mut RpcClient) -> Result<(), String> {
+pub(super) fn initialize_rpc_client(rpc: &mut RpcClient) -> Result<(), String> {
     let init = rpc.request(
         "initialize",
         json!({
@@ -7364,7 +7520,7 @@ fn initialize_rpc_client(rpc: &mut RpcClient) -> Result<(), String> {
     validate_initialize_response(&init)
 }
 
-fn list_sessions_command(server_path: PathBuf, json_output: bool) -> Result<(), String> {
+pub(super) fn list_sessions_command(server_path: PathBuf, json_output: bool) -> Result<(), String> {
     let mut rpc = RpcClient::spawn(server_path)?;
     initialize_rpc_client(&mut rpc)?;
     let cwd = env::current_dir().map_err(|error| format!("read cwd: {error}"))?;
@@ -7397,11 +7553,11 @@ fn list_sessions_command(server_path: PathBuf, json_output: bool) -> Result<(), 
     Ok(())
 }
 
-fn tool_call_id(call: &ToolCall) -> String {
+pub(super) fn tool_call_id(call: &ToolCall) -> String {
     call.id.clone()
 }
 
-fn validate_initialize_response(init: &Value) -> Result<(), String> {
+pub(super) fn validate_initialize_response(init: &Value) -> Result<(), String> {
     if init["protocolCompatible"] == json!(false) {
         return Err(format!(
             "oppi-server protocol is incompatible: server={} min={}",
@@ -7418,10 +7574,9 @@ fn validate_initialize_response(init: &Value) -> Result<(), String> {
     Ok(())
 }
 
-fn permission_mode_from_env() -> Option<PermissionMode> {
+pub(super) fn permission_mode_from_env() -> Option<PermissionMode> {
     env::var("OPPI_RUNTIME_WORKER_PERMISSION_MODE")
         .ok()
         .as_deref()
         .and_then(parse_permission_mode)
 }
-
