@@ -1,3 +1,5 @@
+use super::*;
+
 impl Runtime {
     pub fn new() -> Self {
         Self::default()
@@ -1562,7 +1564,7 @@ impl Runtime {
         })
     }
 
-    fn start_memory_backend_job(
+    pub(super) fn start_memory_backend_job(
         &mut self,
         thread_id: &str,
         kind: MemoryJobKind,
@@ -1620,7 +1622,7 @@ impl Runtime {
             })
     }
 
-    fn finish_memory_backend_job(
+    pub(super) fn finish_memory_backend_job(
         &mut self,
         thread_id: &str,
         job_id: &str,
@@ -1725,7 +1727,7 @@ impl Runtime {
         });
     }
 
-    fn memory_backend_execution_result<T: Serialize>(
+    pub(super) fn memory_backend_execution_result<T: Serialize>(
         &self,
         job_id: MemoryJobId,
         operation: MemoryBackendOperation,
@@ -3294,7 +3296,8 @@ impl Runtime {
             model_used: Some(model_used),
             cancelled,
             message: if cancelled {
-                "Turn memory distillation was cancelled; late terminal state was ignored.".to_string()
+                "Turn memory distillation was cancelled; late terminal state was ignored."
+                    .to_string()
             } else {
                 finish_message
             },
@@ -3304,7 +3307,7 @@ impl Runtime {
         })
     }
 
-    fn finish_memory_distill_job(
+    pub(super) fn finish_memory_distill_job(
         &mut self,
         thread_id: &str,
         job_id: &str,
@@ -3339,7 +3342,7 @@ impl Runtime {
         Ok((false, finished.events))
     }
 
-    fn fail_memory_distill_job(
+    pub(super) fn fail_memory_distill_job(
         &mut self,
         thread_id: &str,
         job_id: &str,
@@ -7999,7 +8002,7 @@ impl Runtime {
         }
     }
 
-    fn turn_tool_registry(&self, definitions: Vec<ToolDefinition>) -> ToolRegistry {
+    pub(super) fn turn_tool_registry(&self, definitions: Vec<ToolDefinition>) -> ToolRegistry {
         let mut registry = self.tool_registry.clone();
         for server in self.mcp_servers.values() {
             if server.status != McpServerStatus::Enabled || !server.trusted {
@@ -8080,7 +8083,7 @@ impl Runtime {
         )
     }
 
-    fn skill_injection_prompt(
+    pub(super) fn skill_injection_prompt(
         &self,
         thread_id: &str,
         input: &str,
@@ -8129,7 +8132,7 @@ impl Runtime {
             .collect()
     }
 
-    fn compact_provider_history(
+    pub(super) fn compact_provider_history(
         &self,
         thread_id: &str,
         current_turn_id: &str,
@@ -9333,7 +9336,7 @@ impl Runtime {
         }
     }
 
-    fn execute_goal_tool(&mut self, thread_id: &str, call: &ToolCall) -> ToolResult {
+    pub(super) fn execute_goal_tool(&mut self, thread_id: &str, call: &ToolCall) -> ToolResult {
         let result = match call.name.as_str() {
             "get_goal" => self
                 .get_thread_goal(ThreadGoalGetParams {
@@ -9446,18 +9449,18 @@ impl Runtime {
             .unwrap_or(fallback)
     }
 
-    fn guardian_cached_record(&self, signature: &str) -> Option<GuardianReviewRecord> {
+    pub(super) fn guardian_cached_record(&self, signature: &str) -> Option<GuardianReviewRecord> {
         self.guardian_exact_cache.get(signature).cloned()
     }
 
-    fn guardian_remember_cache(&mut self, record: &GuardianReviewRecord) {
+    pub(super) fn guardian_remember_cache(&mut self, record: &GuardianReviewRecord) {
         if guardian_can_cache(record) {
             self.guardian_exact_cache
                 .insert(record.signature.clone(), record.clone());
         }
     }
 
-    fn guardian_record_denial(&mut self, circuit_key: &str) {
+    pub(super) fn guardian_record_denial(&mut self, circuit_key: &str) {
         self.guardian_record_denial_at(circuit_key, now_millis());
     }
 
@@ -9471,7 +9474,7 @@ impl Runtime {
         entries.push_back(now_ms);
     }
 
-    fn guardian_circuit_open(&self, circuit_key: &str) -> bool {
+    pub(super) fn guardian_circuit_open(&self, circuit_key: &str) -> bool {
         let cutoff = now_millis().saturating_sub(GUARDIAN_DENIAL_CIRCUIT_WINDOW_MS);
         self.guardian_denial_circuit
             .get(circuit_key)
@@ -9485,7 +9488,7 @@ impl Runtime {
             .unwrap_or(false)
     }
 
-    fn guardian_remember_review_record(&mut self, record: GuardianReviewRecord) {
+    pub(super) fn guardian_remember_review_record(&mut self, record: GuardianReviewRecord) {
         if let Some(index) = self
             .guardian_review_records
             .iter()
@@ -9503,7 +9506,7 @@ impl Runtime {
         }
     }
 
-    fn guardian_review_prompt(
+    pub(super) fn guardian_review_prompt(
         &self,
         turn: &Turn,
         parent_config: Option<&DirectModelProviderConfig>,
@@ -9770,7 +9773,7 @@ impl Runtime {
         )
     }
 
-    fn run_guardian_reviewer(
+    pub(super) fn run_guardian_reviewer(
         &mut self,
         turn: &Turn,
         parent_config: Option<&DirectModelProviderConfig>,
@@ -10591,7 +10594,7 @@ impl Runtime {
         }
     }
 
-    fn execute_image_gen_tool_inner(
+    pub(super) fn execute_image_gen_tool_inner(
         &self,
         turn: &Turn,
         call: &ToolCall,
@@ -11344,7 +11347,7 @@ impl Runtime {
         }
     }
 
-    fn preflight_file_access(
+    pub(super) fn preflight_file_access(
         &self,
         turn: &Turn,
         call: &ToolCall,
@@ -11543,7 +11546,7 @@ impl Runtime {
         ));
     }
 
-    fn thread(&self, thread_id: &str) -> Result<&Thread, RuntimeError> {
+    pub(super) fn thread(&self, thread_id: &str) -> Result<&Thread, RuntimeError> {
         self.threads
             .get(thread_id)
             .ok_or_else(|| not_found("thread", thread_id))
@@ -11775,7 +11778,12 @@ impl Runtime {
         }
     }
 
-    fn event(&mut self, thread_id: &str, turn_id: Option<&str>, kind: EventKind) -> Event {
+    pub(super) fn event(
+        &mut self,
+        thread_id: &str,
+        turn_id: Option<&str>,
+        kind: EventKind,
+    ) -> Event {
         self.next_event += 1;
         let event = Event {
             id: self.next_event,

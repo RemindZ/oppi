@@ -13,6 +13,8 @@ mod memory_helpers;
 mod plugins_mcp;
 #[path = "core_parts/providers.rs"]
 mod providers;
+#[path = "core_parts/runtime_impl.rs"]
+mod runtime_impl;
 #[path = "core_parts/tools_guardian_registry.rs"]
 mod tools_guardian_registry;
 
@@ -909,7 +911,5 @@ fn subagent_system_prompt(
     prompt.push_str("Complete only the delegated task. Report concise results and blockers.\n");
     prompt
 }
-
-include!("core_parts/runtime_impl.rs");
 
 include!("core_parts/tests.rs");
