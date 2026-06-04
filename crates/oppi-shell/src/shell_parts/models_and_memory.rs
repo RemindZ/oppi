@@ -1,11 +1,13 @@
-fn current_provider_model(provider: &ProviderConfig) -> Option<&str> {
+use super::*;
+
+pub(super) fn current_provider_model(provider: &ProviderConfig) -> Option<&str> {
     match provider {
         ProviderConfig::Mock => Some(MOCK_MODEL_ID),
         ProviderConfig::OpenAiCompatible(config) => Some(config.model.as_str()),
     }
 }
 
-fn provider_name(provider: &ProviderConfig) -> &str {
+pub(super) fn provider_name(provider: &ProviderConfig) -> &str {
     match provider {
         ProviderConfig::Mock => "mock",
         ProviderConfig::OpenAiCompatible(config) => match config.flavor {
@@ -18,14 +20,16 @@ fn provider_name(provider: &ProviderConfig) -> &str {
     }
 }
 
-fn display_provider_id(provider: &ProviderConfig) -> &str {
+pub(super) fn display_provider_id(provider: &ProviderConfig) -> &str {
     match provider {
         ProviderConfig::Mock => "local-test",
         ProviderConfig::OpenAiCompatible(_) => provider_name(provider),
     }
 }
 
-fn with_default_reasoning_effort(mut config: OpenAiCompatibleConfig) -> OpenAiCompatibleConfig {
+pub(super) fn with_default_reasoning_effort(
+    mut config: OpenAiCompatibleConfig,
+) -> OpenAiCompatibleConfig {
     if config.reasoning_effort.is_none() {
         config.reasoning_effort = default_reasoning_effort_for_config(&config);
     }
@@ -50,7 +54,7 @@ fn default_reasoning_effort_for_config(config: &OpenAiCompatibleConfig) -> Optio
     }
 }
 
-fn normalize_thinking_level(input: &str) -> Option<ThinkingLevel> {
+pub(super) fn normalize_thinking_level(input: &str) -> Option<ThinkingLevel> {
     match input.trim().to_ascii_lowercase().as_str() {
         "off" | "none" => Some(ThinkingLevel::Off),
         "minimal" | "min" => Some(ThinkingLevel::Minimal),
@@ -68,7 +72,7 @@ fn normalize_current_thinking_level(value: Option<&str>) -> ThinkingLevel {
         .unwrap_or(ThinkingLevel::Off)
 }
 
-fn effort_model_name(provider: &ProviderConfig) -> String {
+pub(super) fn effort_model_name(provider: &ProviderConfig) -> String {
     format!(
         "{}/{}",
         display_provider_id(provider),
@@ -78,7 +82,7 @@ fn effort_model_name(provider: &ProviderConfig) -> String {
     )
 }
 
-fn is_anthropic_like_model(provider: &ProviderConfig, model: &str) -> bool {
+pub(super) fn is_anthropic_like_model(provider: &ProviderConfig, model: &str) -> bool {
     let provider_name = provider_name(provider).to_ascii_lowercase();
     let id = model.to_ascii_lowercase();
     provider_name.contains("anthropic")
@@ -126,7 +130,10 @@ fn is_reasoning_capable_model(provider: &ProviderConfig, model: &str) -> bool {
         || id.contains("gemini-3")
 }
 
-fn allowed_effort_levels_for_model(provider: &ProviderConfig, model: &str) -> Vec<ThinkingLevel> {
+pub(super) fn allowed_effort_levels_for_model(
+    provider: &ProviderConfig,
+    model: &str,
+) -> Vec<ThinkingLevel> {
     if !is_reasoning_capable_model(provider, model) {
         return vec![ThinkingLevel::Off];
     }
@@ -136,12 +143,12 @@ fn allowed_effort_levels_for_model(provider: &ProviderConfig, model: &str) -> Ve
         .collect()
 }
 
-fn allowed_effort_levels_for_provider(provider: &ProviderConfig) -> Vec<ThinkingLevel> {
+pub(super) fn allowed_effort_levels_for_provider(provider: &ProviderConfig) -> Vec<ThinkingLevel> {
     let model = current_provider_model(provider).unwrap_or("unknown");
     allowed_effort_levels_for_model(provider, model)
 }
 
-fn recommended_effort_level_for_provider(provider: &ProviderConfig) -> ThinkingLevel {
+pub(super) fn recommended_effort_level_for_provider(provider: &ProviderConfig) -> ThinkingLevel {
     let model = current_provider_model(provider).unwrap_or("unknown");
     if !is_reasoning_capable_model(provider, model) {
         return ThinkingLevel::Off;
@@ -173,7 +180,7 @@ fn recommended_effort_level_for_provider(provider: &ProviderConfig) -> ThinkingL
     ThinkingLevel::Medium
 }
 
-fn current_effort_level_for_provider(provider: &ProviderConfig) -> ThinkingLevel {
+pub(super) fn current_effort_level_for_provider(provider: &ProviderConfig) -> ThinkingLevel {
     match provider {
         ProviderConfig::Mock => ThinkingLevel::Off,
         ProviderConfig::OpenAiCompatible(config) => {
@@ -182,7 +189,7 @@ fn current_effort_level_for_provider(provider: &ProviderConfig) -> ThinkingLevel
     }
 }
 
-fn effort_level_label_for_provider(
+pub(super) fn effort_level_label_for_provider(
     provider: &ProviderConfig,
     level: ThinkingLevel,
 ) -> &'static str {
@@ -194,7 +201,7 @@ fn effort_level_label_for_provider(
     }
 }
 
-fn set_provider_effort_level(provider: &mut ProviderConfig, level: ThinkingLevel) {
+pub(super) fn set_provider_effort_level(provider: &mut ProviderConfig, level: ThinkingLevel) {
     if let ProviderConfig::OpenAiCompatible(config) = provider {
         config.reasoning_effort = if level == ThinkingLevel::Off {
             None
@@ -204,7 +211,11 @@ fn set_provider_effort_level(provider: &mut ProviderConfig, level: ThinkingLevel
     }
 }
 
-fn apply_saved_reasoning_effort(provider: &mut ProviderConfig, path: &Path, explicit_effort: bool) {
+pub(super) fn apply_saved_reasoning_effort(
+    provider: &mut ProviderConfig,
+    path: &Path,
+    explicit_effort: bool,
+) {
     if explicit_effort {
         return;
     }
@@ -216,7 +227,7 @@ fn apply_saved_reasoning_effort(provider: &mut ProviderConfig, path: &Path, expl
     }
 }
 
-fn format_effort_status(provider: &ProviderConfig) -> String {
+pub(super) fn format_effort_status(provider: &ProviderConfig) -> String {
     let current = current_effort_level_for_provider(provider);
     let recommended = recommended_effort_level_for_provider(provider);
     let allowed = allowed_effort_levels_for_provider(provider);
@@ -244,7 +255,7 @@ fn format_effort_status(provider: &ProviderConfig) -> String {
     )
 }
 
-fn effort_status_json(provider: &ProviderConfig) -> Value {
+pub(super) fn effort_status_json(provider: &ProviderConfig) -> Value {
     let current = current_effort_level_for_provider(provider);
     let recommended = recommended_effort_level_for_provider(provider);
     let allowed = allowed_effort_levels_for_provider(provider);
@@ -259,7 +270,9 @@ fn effort_status_json(provider: &ProviderConfig) -> Value {
     })
 }
 
-fn native_model_catalog_for_provider(provider: &ProviderConfig) -> &'static [&'static str] {
+pub(super) fn native_model_catalog_for_provider(
+    provider: &ProviderConfig,
+) -> &'static [&'static str] {
     match provider {
         ProviderConfig::Mock => &[MOCK_MODEL_ID],
         ProviderConfig::OpenAiCompatible(config)
@@ -283,18 +296,18 @@ fn native_model_catalog_for_provider(provider: &ProviderConfig) -> &'static [&'s
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct NativeModelCatalogEntry {
-    id: String,
-    display_name: String,
-    api: Option<String>,
-    base_url: Option<String>,
-    reasoning: Option<bool>,
-    input: Vec<String>,
-    cost: Option<Value>,
-    context_window: Option<u64>,
-    max_tokens: Option<u64>,
-    headers: Option<Value>,
-    compat: Option<Value>,
+pub(super) struct NativeModelCatalogEntry {
+    pub(super) id: String,
+    pub(super) display_name: String,
+    pub(super) api: Option<String>,
+    pub(super) base_url: Option<String>,
+    pub(super) reasoning: Option<bool>,
+    pub(super) input: Vec<String>,
+    pub(super) cost: Option<Value>,
+    pub(super) context_window: Option<u64>,
+    pub(super) max_tokens: Option<u64>,
+    pub(super) headers: Option<Value>,
+    pub(super) compat: Option<Value>,
 }
 
 impl NativeModelCatalogEntry {
@@ -406,7 +419,7 @@ fn merge_json_object_values(base: Option<Value>, override_value: Option<&Value>)
     }
 }
 
-fn models_json_path() -> PathBuf {
+pub(super) fn models_json_path() -> PathBuf {
     env::var_os("OPPI_MODELS_JSON_PATH")
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)
@@ -770,7 +783,7 @@ fn native_model_entries_for_provider_at_path(
     native_model_entries_for_provider_at_path_with_diagnostics(provider, models_path).0
 }
 
-fn native_model_entries_for_provider_at_path_with_diagnostics(
+pub(super) fn native_model_entries_for_provider_at_path_with_diagnostics(
     provider: &ProviderConfig,
     models_path: &Path,
 ) -> (Vec<NativeModelCatalogEntry>, Vec<String>) {
@@ -852,7 +865,7 @@ fn models_json_u32_field(object: &serde_json::Map<String, Value>, key: &str) -> 
         .and_then(|value| u32::try_from(value).ok())
 }
 
-fn custom_provider_config_for_model_at_path(
+pub(super) fn custom_provider_config_for_model_at_path(
     selector: &str,
     models_path: &Path,
 ) -> Result<ProviderConfig, String> {
@@ -979,21 +992,21 @@ fn native_provider_auth_configured(provider: &ProviderConfig, models_path: &Path
     )
 }
 
-fn native_model_ids_for_provider(provider: &ProviderConfig) -> Vec<String> {
+pub(super) fn native_model_ids_for_provider(provider: &ProviderConfig) -> Vec<String> {
     native_model_entries_for_provider(provider)
         .into_iter()
         .map(|model| model.id)
         .collect()
 }
 
-fn native_model_refs_for_provider_at_path(
+pub(super) fn native_model_refs_for_provider_at_path(
     provider: &ProviderConfig,
     models_path: &Path,
 ) -> Vec<ModelRef> {
     native_model_refs_for_provider_at_path_with_diagnostics(provider, models_path).0
 }
 
-fn native_model_refs_for_provider_at_path_with_diagnostics(
+pub(super) fn native_model_refs_for_provider_at_path_with_diagnostics(
     provider: &ProviderConfig,
     models_path: &Path,
 ) -> (Vec<ModelRef>, Vec<String>) {
@@ -1038,7 +1051,11 @@ fn wildcard_match(pattern: &str, value: &str) -> bool {
     inner(pattern.as_bytes(), value.as_bytes())
 }
 
-fn model_matches_scope_pattern(provider: &ProviderConfig, model: &str, pattern: &str) -> bool {
+pub(super) fn model_matches_scope_pattern(
+    provider: &ProviderConfig,
+    model: &str,
+    pattern: &str,
+) -> bool {
     let pattern = thinking_suffix_stripped(pattern.trim());
     if pattern.is_empty() {
         return false;
@@ -1062,7 +1079,10 @@ fn model_matches_scope_pattern(provider: &ProviderConfig, model: &str, pattern: 
     }
 }
 
-fn scoped_model_ids_for_patterns(patterns: &[String], provider: &ProviderConfig) -> Vec<String> {
+pub(super) fn scoped_model_ids_for_patterns(
+    patterns: &[String],
+    provider: &ProviderConfig,
+) -> Vec<String> {
     if patterns.is_empty() {
         return Vec::new();
     }
@@ -1079,11 +1099,14 @@ fn scoped_model_ids_for_patterns(patterns: &[String], provider: &ProviderConfig)
     out
 }
 
-fn scoped_model_ids_for_provider(session: &ShellSession, provider: &ProviderConfig) -> Vec<String> {
+pub(super) fn scoped_model_ids_for_provider(
+    session: &ShellSession,
+    provider: &ProviderConfig,
+) -> Vec<String> {
     scoped_model_ids_for_patterns(&session.scoped_model_ids, provider)
 }
 
-fn main_model_ids_for_selection(
+pub(super) fn main_model_ids_for_selection(
     current: Option<&str>,
     scoped_patterns: &[String],
     provider: &ProviderConfig,
@@ -1163,7 +1186,7 @@ fn main_model_refs_from_entries(
         .collect()
 }
 
-fn main_model_refs_for_provider_at_path_with_auth_paths(
+pub(super) fn main_model_refs_for_provider_at_path_with_auth_paths(
     current: Option<&str>,
     scoped_patterns: &[String],
     provider: &ProviderConfig,
@@ -1218,13 +1241,16 @@ fn main_model_refs_for_provider(
     main_model_refs_for_provider_with_diagnostics(session, provider, true).0
 }
 
-fn main_model_ids_for_provider(session: &ShellSession, provider: &ProviderConfig) -> Vec<String> {
+pub(super) fn main_model_ids_for_provider(
+    session: &ShellSession,
+    provider: &ProviderConfig,
+) -> Vec<String> {
     session
         .cached_model_ids_for_provider(provider, true)
         .unwrap_or_default()
 }
 
-fn provider_api_key_env(config: &OpenAiCompatibleConfig) -> &str {
+pub(super) fn provider_api_key_env(config: &OpenAiCompatibleConfig) -> &str {
     if config.flavor == DirectProviderFlavor::OpenAiCodex {
         return "Pi/OPPi auth store (openai-codex)";
     }
@@ -1261,7 +1287,7 @@ fn configured_api_key_env(config: &OpenAiCompatibleConfig) -> Option<String> {
     None
 }
 
-fn provider_auth_present(config: &OpenAiCompatibleConfig) -> bool {
+pub(super) fn provider_auth_present(config: &OpenAiCompatibleConfig) -> bool {
     if config.flavor == DirectProviderFlavor::OpenAiCodex {
         return codex_auth_present_at(&auth_store_path());
     }
@@ -1271,7 +1297,7 @@ fn provider_auth_present(config: &OpenAiCompatibleConfig) -> bool {
     configured_api_key_env(config).is_some() || provider_uses_meridian_placeholder(config)
 }
 
-fn provider_auth_status_label(config: &OpenAiCompatibleConfig) -> &'static str {
+pub(super) fn provider_auth_status_label(config: &OpenAiCompatibleConfig) -> &'static str {
     if config.flavor == DirectProviderFlavor::OpenAiCodex {
         return if codex_auth_present_at(&auth_store_path()) {
             "stored oauth"
@@ -1295,7 +1321,7 @@ fn provider_auth_status_label(config: &OpenAiCompatibleConfig) -> &'static str {
     }
 }
 
-fn default_authenticated_provider_config() -> Option<ProviderConfig> {
+pub(super) fn default_authenticated_provider_config() -> Option<ProviderConfig> {
     let codex_present = codex_auth_present_at(&auth_store_path());
     let copilot_auth = read_github_copilot_auth_at(&github_copilot_auth_store_path()).ok();
     default_authenticated_provider_config_from_state(
@@ -1305,7 +1331,7 @@ fn default_authenticated_provider_config() -> Option<ProviderConfig> {
     )
 }
 
-fn default_authenticated_provider_config_from_state(
+pub(super) fn default_authenticated_provider_config_from_state(
     codex_present: bool,
     copilot_auth: Option<&GitHubCopilotStoredAuth>,
     claude_bridge_reachable: bool,
@@ -1353,7 +1379,7 @@ fn default_authenticated_provider_config_from_state(
     None
 }
 
-fn is_safe_api_key_env_name(name: &str) -> bool {
+pub(super) fn is_safe_api_key_env_name(name: &str) -> bool {
     if name.is_empty() || name.len() > 128 {
         return false;
     }
@@ -1370,7 +1396,7 @@ fn is_safe_api_key_env_name(name: &str) -> bool {
         || (name.starts_with("AZURE_OPENAI_") && name.ends_with("_API_KEY"))
 }
 
-fn meridian_base_url() -> String {
+pub(super) fn meridian_base_url() -> String {
     env::var("OPPI_MERIDIAN_BASE_URL")
         .ok()
         .or_else(|| env::var("MERIDIAN_BASE_URL").ok())
@@ -1387,7 +1413,7 @@ fn meridian_package_spec() -> String {
         .unwrap_or_else(|| format!("{MERIDIAN_PACKAGE_NAME}@latest"))
 }
 
-fn hoppi_package_spec() -> String {
+pub(super) fn hoppi_package_spec() -> String {
     env::var("OPPI_HOPPI_PACKAGE_SPEC")
         .ok()
         .map(|value| value.trim().to_string())
@@ -1406,7 +1432,7 @@ fn oppi_home_dir() -> PathBuf {
         })
 }
 
-fn managed_packages_dir() -> PathBuf {
+pub(super) fn managed_packages_dir() -> PathBuf {
     oppi_home_dir().join("packages")
 }
 
@@ -1414,14 +1440,14 @@ fn meridian_bin_name() -> String {
     format!("meridian{}", if cfg!(windows) { ".cmd" } else { "" })
 }
 
-fn managed_meridian_bin_path() -> PathBuf {
+pub(super) fn managed_meridian_bin_path() -> PathBuf {
     managed_packages_dir()
         .join("node_modules")
         .join(".bin")
         .join(meridian_bin_name())
 }
 
-fn local_meridian_bin_path() -> PathBuf {
+pub(super) fn local_meridian_bin_path() -> PathBuf {
     env::current_dir()
         .unwrap_or_else(|_| PathBuf::from("."))
         .join("node_modules")
@@ -1429,7 +1455,7 @@ fn local_meridian_bin_path() -> PathBuf {
         .join(meridian_bin_name())
 }
 
-fn managed_meridian_module_path() -> PathBuf {
+pub(super) fn managed_meridian_module_path() -> PathBuf {
     managed_packages_dir()
         .join("node_modules")
         .join("@rynfar")
@@ -1446,7 +1472,7 @@ fn managed_hoppi_module_path_for(package_name: &str) -> PathBuf {
     path.join("dist").join("index.js")
 }
 
-fn managed_hoppi_module_path() -> PathBuf {
+pub(super) fn managed_hoppi_module_path() -> PathBuf {
     managed_hoppi_module_path_for(HOPPI_PACKAGE_NAME)
 }
 
@@ -1473,7 +1499,7 @@ fn local_sibling_hoppi_module_path() -> Option<PathBuf> {
         .map(|parent| parent.join("hoppi-memory").join("dist").join("index.js"))
 }
 
-fn hoppi_candidate_module_paths_for_startup_offer() -> Vec<PathBuf> {
+pub(super) fn hoppi_candidate_module_paths_for_startup_offer() -> Vec<PathBuf> {
     let mut paths = Vec::new();
     if let Some(path) = env::var_os("OPPI_HOPPI_MODULE")
         .filter(|value| !value.is_empty())
@@ -1490,20 +1516,20 @@ fn hoppi_candidate_module_paths_for_startup_offer() -> Vec<PathBuf> {
     paths
 }
 
-fn hoppi_backend_available_for_startup_offer() -> bool {
+pub(super) fn hoppi_backend_available_for_startup_offer() -> bool {
     hoppi_candidate_module_paths_for_startup_offer()
         .into_iter()
         .any(|path| path.exists())
 }
 
-fn should_offer_hoppi_first_start_install(
+pub(super) fn should_offer_hoppi_first_start_install(
     settings: &MemorySettings,
     backend_available: bool,
 ) -> bool {
     settings.enabled && settings.hoppi_install_offer != "dismissed" && !backend_available
 }
 
-fn hoppi_first_start_install_prompt() -> String {
+pub(super) fn hoppi_first_start_install_prompt() -> String {
     format!(
         "Install Hoppi memory?\n\
          OPPi memory is enabled, but {HOPPI_PACKAGE_NAME} is not installed. Install it now with npm into {}?\n\
@@ -1512,7 +1538,7 @@ fn hoppi_first_start_install_prompt() -> String {
     )
 }
 
-fn format_path_for_display(path: &Path) -> String {
+pub(super) fn format_path_for_display(path: &Path) -> String {
     let text = path.display().to_string();
     if let Some(home) = home_dir() {
         let home = home.display().to_string();
@@ -1523,7 +1549,7 @@ fn format_path_for_display(path: &Path) -> String {
     text
 }
 
-fn ensure_managed_packages_root() -> Result<PathBuf, String> {
+pub(super) fn ensure_managed_packages_root() -> Result<PathBuf, String> {
     let root = managed_packages_dir();
     fs::create_dir_all(&root)
         .map_err(|error| format!("create managed packages dir {}: {error}", root.display()))?;
@@ -1538,7 +1564,7 @@ fn ensure_managed_packages_root() -> Result<PathBuf, String> {
     Ok(root)
 }
 
-fn compact_process_output(output: &[u8]) -> String {
+pub(super) fn compact_process_output(output: &[u8]) -> String {
     let text = String::from_utf8_lossy(output).replace(['\r', '\n'], " ");
     let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
     if text.chars().count() > 800 {
@@ -1554,7 +1580,7 @@ fn compact_process_output(output: &[u8]) -> String {
     }
 }
 
-fn install_meridian_package() -> Result<String, String> {
+pub(super) fn install_meridian_package() -> Result<String, String> {
     let root = ensure_managed_packages_root()?;
     let spec = meridian_package_spec();
     let output = Command::new(if cfg!(windows) { "npm.cmd" } else { "npm" })
@@ -1585,7 +1611,7 @@ fn install_meridian_package() -> Result<String, String> {
     }
 }
 
-fn default_hoppi_sync_repo_path() -> PathBuf {
+pub(super) fn default_hoppi_sync_repo_path() -> PathBuf {
     oppi_home_dir()
         .join("oppi")
         .join("hoppi-sync")
@@ -1691,7 +1717,7 @@ fn hoppi_module_path_for_consolidate() -> Result<PathBuf, String> {
         })
 }
 
-fn memory_backend_recall_params_from_settings(
+pub(super) fn memory_backend_recall_params_from_settings(
     settings: &MemorySettings,
     thread_id: &str,
     prompt: &str,
@@ -1713,7 +1739,7 @@ fn memory_backend_recall_params_from_settings(
     }))
 }
 
-fn memory_backend_dashboard_params_from_settings(
+pub(super) fn memory_backend_dashboard_params_from_settings(
     settings: &MemorySettings,
     thread_id: &str,
 ) -> Result<Value, String> {
@@ -1723,7 +1749,7 @@ fn memory_backend_dashboard_params_from_settings(
     Ok(json!({ "threadId": thread_id }))
 }
 
-fn memory_backend_list_params_from_settings(
+pub(super) fn memory_backend_list_params_from_settings(
     settings: &MemorySettings,
     thread_id: &str,
     include_superseded: bool,
@@ -1744,7 +1770,7 @@ fn memory_backend_list_params_from_settings(
     Ok(params)
 }
 
-fn memory_backend_forget_params_from_settings(
+pub(super) fn memory_backend_forget_params_from_settings(
     settings: &MemorySettings,
     thread_id: &str,
     id: &str,
@@ -1759,7 +1785,7 @@ fn memory_backend_forget_params_from_settings(
     Ok(json!({ "threadId": thread_id, "id": id }))
 }
 
-fn memory_backend_pin_params_from_settings(
+pub(super) fn memory_backend_pin_params_from_settings(
     settings: &MemorySettings,
     thread_id: &str,
     id: &str,
@@ -1775,7 +1801,7 @@ fn memory_backend_pin_params_from_settings(
     Ok(json!({ "threadId": thread_id, "id": id, "pinned": pinned }))
 }
 
-fn memory_backend_update_params_from_settings(
+pub(super) fn memory_backend_update_params_from_settings(
     settings: &MemorySettings,
     thread_id: &str,
     id: &str,
@@ -1797,7 +1823,7 @@ fn memory_backend_update_params_from_settings(
     Ok(json!({ "threadId": thread_id, "id": id, "patch": patch }))
 }
 
-fn memory_backend_supersede_params_from_settings(
+pub(super) fn memory_backend_supersede_params_from_settings(
     settings: &MemorySettings,
     thread_id: &str,
     id: &str,
@@ -1818,7 +1844,7 @@ fn memory_backend_supersede_params_from_settings(
     }))
 }
 
-fn memory_backend_consolidate_params_from_settings(
+pub(super) fn memory_backend_consolidate_params_from_settings(
     settings: &MemorySettings,
     thread_id: &str,
     dry_run: bool,
@@ -1836,7 +1862,7 @@ fn memory_backend_consolidate_params_from_settings(
     }))
 }
 
-fn memory_backend_idle_consolidate_params_from_settings(
+pub(super) fn memory_backend_idle_consolidate_params_from_settings(
     settings: &MemorySettings,
     thread_id: &str,
 ) -> Result<Value, String> {
@@ -1856,7 +1882,7 @@ fn memory_backend_idle_consolidate_params_from_settings(
     }))
 }
 
-fn memory_backend_turn_remember_params_from_settings(
+pub(super) fn memory_backend_turn_remember_params_from_settings(
     settings: &MemorySettings,
     summary: &str,
     thread_id: &str,
@@ -1882,7 +1908,7 @@ fn memory_backend_turn_remember_params_from_settings(
     }))
 }
 
-fn memory_backend_session_recap_params_from_settings(
+pub(super) fn memory_backend_session_recap_params_from_settings(
     settings: &MemorySettings,
     recap: &str,
     thread_id: &str,
@@ -1910,7 +1936,7 @@ fn memory_backend_session_recap_params_from_settings(
     }))
 }
 
-fn memory_backend_sync_params_from_settings(
+pub(super) fn memory_backend_sync_params_from_settings(
     settings: &MemorySettings,
     thread_id: &str,
     direction: HoppiSyncDirection,
@@ -1943,7 +1969,7 @@ fn memory_backend_sync_params_from_settings(
     Ok(params)
 }
 
-fn hoppi_sync_display_invocation_from_settings(
+pub(super) fn hoppi_sync_display_invocation_from_settings(
     settings: &MemorySettings,
     direction: HoppiSyncDirection,
     reason: &str,
@@ -1970,14 +1996,14 @@ fn hoppi_sync_display_invocation_from_settings(
     })
 }
 
-fn memory_backend_normalized_value(value: Value, method: &str) -> Result<Value, String> {
+pub(super) fn memory_backend_normalized_value(value: Value, method: &str) -> Result<Value, String> {
     value
         .get("normalized")
         .cloned()
         .ok_or_else(|| format!("{method} response missing normalized result"))
 }
 
-fn hoppi_recall_invocation_from_settings(
+pub(super) fn hoppi_recall_invocation_from_settings(
     settings: &MemorySettings,
     cwd: &Path,
     prompt: &str,
@@ -2001,7 +2027,7 @@ fn hoppi_recall_invocation_from_settings(
     })
 }
 
-fn hoppi_dashboard_invocation_from_settings(
+pub(super) fn hoppi_dashboard_invocation_from_settings(
     settings: &MemorySettings,
     cwd: &Path,
     module_path: PathBuf,
@@ -2115,7 +2141,7 @@ fn memory_model_preference_or_auto(value: &str) -> String {
     }
 }
 
-fn hoppi_consolidate_invocation_from_settings(
+pub(super) fn hoppi_consolidate_invocation_from_settings(
     settings: &MemorySettings,
     cwd: &Path,
     module_path: PathBuf,
@@ -2136,7 +2162,7 @@ fn hoppi_consolidate_invocation_from_settings(
     })
 }
 
-fn hoppi_idle_consolidate_invocation_from_settings(
+pub(super) fn hoppi_idle_consolidate_invocation_from_settings(
     settings: &MemorySettings,
     cwd: &Path,
     module_path: PathBuf,
@@ -2159,7 +2185,7 @@ fn hoppi_idle_consolidate_invocation_from_settings(
     })
 }
 
-fn hoppi_remember_invocation_from_settings(
+pub(super) fn hoppi_remember_invocation_from_settings(
     settings: &MemorySettings,
     cwd: &Path,
     summary: &str,
@@ -2285,7 +2311,7 @@ fn hoppi_sync_passphrase(settings: &MemorySettings) -> Result<Option<String>, St
     Ok(Some(value))
 }
 
-fn hoppi_sync_invocation_from_settings(
+pub(super) fn hoppi_sync_invocation_from_settings(
     settings: &MemorySettings,
     direction: HoppiSyncDirection,
     reason: &str,
@@ -2313,7 +2339,7 @@ fn hoppi_sync_invocation_from_settings(
     })
 }
 
-fn hoppi_sync_lifecycle_direction(
+pub(super) fn hoppi_sync_lifecycle_direction(
     settings: &MemorySettings,
     lifecycle: HoppiSyncLifecycle,
 ) -> Option<HoppiSyncDirection> {
@@ -2330,7 +2356,7 @@ fn hoppi_sync_lifecycle_direction(
     }
 }
 
-fn hoppi_background_sync_interval(settings: &MemorySettings) -> Option<Duration> {
+pub(super) fn hoppi_background_sync_interval(settings: &MemorySettings) -> Option<Duration> {
     if !settings.enabled || !settings.sync_enabled {
         return None;
     }
@@ -2342,11 +2368,14 @@ fn hoppi_background_sync_interval(settings: &MemorySettings) -> Option<Duration>
     }
 }
 
-fn hoppi_next_background_sync_at(settings: &MemorySettings, now: Instant) -> Option<Instant> {
+pub(super) fn hoppi_next_background_sync_at(
+    settings: &MemorySettings,
+    now: Instant,
+) -> Option<Instant> {
     hoppi_background_sync_interval(settings).map(|interval| now + interval)
 }
 
-fn hoppi_background_sync_due(
+pub(super) fn hoppi_background_sync_due(
     settings: &MemorySettings,
     next_due: Option<Instant>,
     idle: bool,
@@ -2356,7 +2385,7 @@ fn hoppi_background_sync_due(
         && next_due.is_some_and(|due| now >= due)
 }
 
-fn hoppi_idle_consolidation_due(
+pub(super) fn hoppi_idle_consolidation_due(
     settings: &MemorySettings,
     dirty_version: u64,
     consolidated_version: u64,
@@ -2377,7 +2406,7 @@ fn hoppi_idle_consolidation_due(
         .is_some_and(|elapsed| elapsed >= HOPPI_IDLE_CONSOLIDATE_AFTER)
 }
 
-fn hoppi_turn_summary_timestamp() -> String {
+pub(super) fn hoppi_turn_summary_timestamp() -> String {
     let seconds = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_secs())
@@ -2428,7 +2457,7 @@ fn build_hoppi_turn_summary(
     )
 }
 
-fn build_hoppi_turn_summary_from_events(
+pub(super) fn build_hoppi_turn_summary_from_events(
     events: &[Event],
     thread_id: &str,
     turn_id: &str,
@@ -2516,7 +2545,8 @@ fn hoppi_turn_distill_texts_from_events(
         &compact_hoppi_summary_text(&assistant_parts.join("\n\n")),
         6_000,
     );
-    if is_low_signal_hoppi_memory_text(&user_text) || is_low_signal_hoppi_memory_text(&assistant_text)
+    if is_low_signal_hoppi_memory_text(&user_text)
+        || is_low_signal_hoppi_memory_text(&assistant_text)
     {
         return None;
     }
@@ -2529,7 +2559,7 @@ fn hoppi_turn_distill_texts_from_events(
     })
 }
 
-fn memory_distill_turn_params_from_events(
+pub(super) fn memory_distill_turn_params_from_events(
     settings: &MemorySettings,
     events: &[Event],
     cwd: &Path,
@@ -2546,8 +2576,8 @@ fn memory_distill_turn_params_from_events(
     }
     let texts = hoppi_turn_distill_texts_from_events(events, thread_id, turn_id, fallback_prompt)
         .ok_or_else(|| {
-            "Hoppi turn distillation skipped: no completed user/assistant turn text".to_string()
-        })?;
+        "Hoppi turn distillation skipped: no completed user/assistant turn text".to_string()
+    })?;
     Ok(json!({
         "threadId": thread_id,
         "userText": texts.user_text,
@@ -2592,7 +2622,7 @@ fn recent_unique_hoppi_texts(texts: &[String], limit: usize, max_chars: usize) -
     selected
 }
 
-fn build_hoppi_session_recap_from_events(
+pub(super) fn build_hoppi_session_recap_from_events(
     events: &[Event],
     thread_id: &str,
     timestamp: &str,
@@ -3347,7 +3377,7 @@ fn run_hoppi_dashboard(
     run_hoppi_dashboard_invocation(&invocation)
 }
 
-fn run_hoppi_dashboard_invocation(
+pub(super) fn run_hoppi_dashboard_invocation(
     invocation: &HoppiDashboardInvocation,
 ) -> Result<HoppiDashboardProcess, String> {
     let mut child = Command::new(if cfg!(windows) { "node.exe" } else { "node" })
@@ -3465,13 +3495,13 @@ fn parse_hoppi_dashboard_output(output: &str) -> Result<HoppiDashboardCommandRes
     })
 }
 
-fn run_hoppi_list_invocation(
+pub(super) fn run_hoppi_list_invocation(
     invocation: &HoppiListInvocation,
 ) -> Result<HoppiListCommandResult, String> {
     run_hoppi_list_invocation_with_timeout(invocation, HOPPI_BRIDGE_TIMEOUT)
 }
 
-fn run_hoppi_list_invocation_with_timeout(
+pub(super) fn run_hoppi_list_invocation_with_timeout(
     invocation: &HoppiListInvocation,
     timeout: Duration,
 ) -> Result<HoppiListCommandResult, String> {
@@ -3549,7 +3579,7 @@ fn parse_hoppi_list_output(output: &str) -> Result<HoppiListCommandResult, Strin
     })
 }
 
-fn run_hoppi_forget_invocation(
+pub(super) fn run_hoppi_forget_invocation(
     invocation: &HoppiForgetInvocation,
 ) -> Result<HoppiForgetCommandResult, String> {
     let mut command = Command::new(if cfg!(windows) { "node.exe" } else { "node" });
@@ -3601,7 +3631,7 @@ fn parse_hoppi_forget_output(output: &str) -> Result<HoppiForgetCommandResult, S
     })
 }
 
-fn run_hoppi_pin_invocation(
+pub(super) fn run_hoppi_pin_invocation(
     invocation: &HoppiPinInvocation,
 ) -> Result<HoppiPinCommandResult, String> {
     let mut command = Command::new(if cfg!(windows) { "node.exe" } else { "node" });
@@ -3668,7 +3698,7 @@ fn parse_hoppi_pin_output(output: &str) -> Result<HoppiPinCommandResult, String>
     })
 }
 
-fn run_hoppi_update_invocation(
+pub(super) fn run_hoppi_update_invocation(
     invocation: &HoppiUpdateInvocation,
 ) -> Result<HoppiUpdateCommandResult, String> {
     let patch_json = serde_json::to_string(&invocation.patch)
@@ -4028,7 +4058,7 @@ fn hoppi_sync_job_source(reason: &str) -> String {
     format!("hoppi-sync-{}", sanitize_memory_job_component(reason))
 }
 
-fn hoppi_sync_job_started_params(
+pub(super) fn hoppi_sync_job_started_params(
     thread_id: &str,
     job_id: &str,
     invocation: &HoppiSyncInvocation,
@@ -4046,7 +4076,7 @@ fn hoppi_sync_job_started_params(
     })
 }
 
-fn hoppi_sync_job_finished_params(
+pub(super) fn hoppi_sync_job_finished_params(
     thread_id: &str,
     job_id: &str,
     invocation: &HoppiSyncInvocation,
@@ -4066,7 +4096,7 @@ fn hoppi_sync_job_finished_params(
     })
 }
 
-fn hoppi_sync_job_failed_params(
+pub(super) fn hoppi_sync_job_failed_params(
     thread_id: &str,
     job_id: &str,
     invocation: &HoppiSyncInvocation,
@@ -4094,7 +4124,7 @@ fn hoppi_recall_job_stage(invocation: &HoppiRecallInvocation) -> String {
     }
 }
 
-fn hoppi_recall_job_started_params(
+pub(super) fn hoppi_recall_job_started_params(
     thread_id: &str,
     job_id: &str,
     invocation: &HoppiRecallInvocation,
@@ -4112,7 +4142,7 @@ fn hoppi_recall_job_started_params(
     })
 }
 
-fn hoppi_recall_job_finished_params(
+pub(super) fn hoppi_recall_job_finished_params(
     thread_id: &str,
     job_id: &str,
     invocation: &HoppiRecallInvocation,
@@ -4132,7 +4162,7 @@ fn hoppi_recall_job_finished_params(
     })
 }
 
-fn hoppi_recall_job_failed_params(
+pub(super) fn hoppi_recall_job_failed_params(
     thread_id: &str,
     job_id: &str,
     invocation: &HoppiRecallInvocation,
@@ -4290,7 +4320,7 @@ fn hoppi_record_mutation_job_failed_params(
     })
 }
 
-fn hoppi_consolidate_job_started_params(
+pub(super) fn hoppi_consolidate_job_started_params(
     thread_id: &str,
     job_id: &str,
     invocation: &HoppiConsolidateInvocation,
@@ -4309,7 +4339,7 @@ fn hoppi_consolidate_job_started_params(
     })
 }
 
-fn hoppi_consolidate_job_finished_params(
+pub(super) fn hoppi_consolidate_job_finished_params(
     thread_id: &str,
     job_id: &str,
     invocation: &HoppiConsolidateInvocation,
@@ -4332,7 +4362,7 @@ fn hoppi_consolidate_job_finished_params(
     })
 }
 
-fn hoppi_consolidate_job_failed_params(
+pub(super) fn hoppi_consolidate_job_failed_params(
     thread_id: &str,
     job_id: &str,
     invocation: &HoppiConsolidateInvocation,
@@ -4352,7 +4382,7 @@ fn hoppi_consolidate_job_failed_params(
     })
 }
 
-fn run_hoppi_consolidate_invocation(
+pub(super) fn run_hoppi_consolidate_invocation(
     invocation: &HoppiConsolidateInvocation,
 ) -> Result<HoppiConsolidateCommandResult, String> {
     let output = Command::new(if cfg!(windows) { "node.exe" } else { "node" })
@@ -4463,7 +4493,7 @@ fn parse_hoppi_consolidate_output(output: &str) -> Result<HoppiConsolidateComman
     })
 }
 
-fn run_hoppi_recall_invocation(
+pub(super) fn run_hoppi_recall_invocation(
     invocation: &HoppiRecallInvocation,
 ) -> Result<HoppiRecallCommandResult, String> {
     let mut command = Command::new(if cfg!(windows) { "node.exe" } else { "node" });
@@ -4685,7 +4715,7 @@ function normalizeRecord(entry, fallback) {
 });
 "#;
 
-fn run_hoppi_remember_invocation(
+pub(super) fn run_hoppi_remember_invocation(
     invocation: &HoppiRememberInvocation,
 ) -> Result<HoppiRememberCommandResult, String> {
     let mut command = Command::new(if cfg!(windows) { "node.exe" } else { "node" });
@@ -4771,7 +4801,7 @@ fn run_hoppi_sync(
     Ok(HoppiSyncRunResult { invocation, result })
 }
 
-fn run_hoppi_sync_invocation(
+pub(super) fn run_hoppi_sync_invocation(
     invocation: &HoppiSyncInvocation,
 ) -> Result<HoppiSyncCommandResult, String> {
     let mut command = Command::new(if cfg!(windows) { "node.exe" } else { "node" });
@@ -4849,7 +4879,7 @@ fn parse_hoppi_sync_output(output: &str) -> Result<HoppiSyncCommandResult, Strin
     })
 }
 
-fn hoppi_sync_result_from_value(value: &Value) -> HoppiSyncCommandResult {
+pub(super) fn hoppi_sync_result_from_value(value: &Value) -> HoppiSyncCommandResult {
     let conflicts = value
         .get("conflicts")
         .and_then(Value::as_array)
@@ -4887,7 +4917,7 @@ fn hoppi_sync_result_from_value(value: &Value) -> HoppiSyncCommandResult {
     }
 }
 
-fn hoppi_sync_result_json(result: &HoppiSyncCommandResult) -> Value {
+pub(super) fn hoppi_sync_result_json(result: &HoppiSyncCommandResult) -> Value {
     json!({
         "imported": result.imported,
         "exported": result.exported,
@@ -4899,7 +4929,7 @@ fn hoppi_sync_result_json(result: &HoppiSyncCommandResult) -> Value {
     })
 }
 
-fn format_hoppi_sync_report(
+pub(super) fn format_hoppi_sync_report(
     direction: HoppiSyncDirection,
     result: &HoppiSyncCommandResult,
 ) -> String {
@@ -4925,7 +4955,7 @@ fn format_hoppi_sync_report(
     parts.join(" · ")
 }
 
-fn base_url_host_port(base: &str) -> Option<(String, u16)> {
+pub(super) fn base_url_host_port(base: &str) -> Option<(String, u16)> {
     let (scheme, rest) = base
         .split_once("://")
         .map(|(scheme, rest)| (scheme, rest))

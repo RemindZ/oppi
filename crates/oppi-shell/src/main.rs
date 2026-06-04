@@ -19,6 +19,8 @@ mod auth_settings;
 mod commands;
 #[path = "shell_parts/interactive.rs"]
 mod interactive;
+#[path = "shell_parts/models_and_memory.rs"]
+mod models_and_memory;
 #[path = "shell_parts/provider_ui.rs"]
 mod provider_ui;
 mod ratatui_ui;
@@ -41,6 +43,7 @@ use interactive::{
     EditorAction, EditorInput, LineEditor, interactive_loop, maybe_offer_hoppi_install_on_startup,
     maybe_run_hoppi_exit_sync, maybe_run_hoppi_lifecycle_sync, maybe_run_hoppi_startup_sync,
 };
+use models_and_memory::*;
 use provider_ui::*;
 use rendering::*;
 use serde_json::{Value, json};
@@ -423,5 +426,3 @@ fn should_print_startup_banner(json_output: bool, quiet_startup: bool) -> bool {
 }
 
 include!("shell_parts/session.rs");
-
-include!("shell_parts/models_and_memory.rs");
