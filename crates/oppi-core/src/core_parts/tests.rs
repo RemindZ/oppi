@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::*;
     use serde_json::json;
 
     static TEST_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
@@ -7137,7 +7137,9 @@ mod tests {
                 stage: Some("turn-distillation".to_string()),
                 status: MemoryJobStatus::Running,
                 source: Some("memory-distiller".to_string()),
-                message: Some("Distilling completed turn memory through model provider.".to_string()),
+                message: Some(
+                    "Distilling completed turn memory through model provider.".to_string(),
+                ),
                 queued_at: None,
                 started_at: None,
                 finished_at: None,

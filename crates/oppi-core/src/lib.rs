@@ -912,4 +912,6 @@ fn subagent_system_prompt(
     prompt
 }
 
-include!("core_parts/tests.rs");
+#[cfg(test)]
+#[path = "core_parts/tests.rs"]
+mod tests;
